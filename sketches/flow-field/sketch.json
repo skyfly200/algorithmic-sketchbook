@@ -1,0 +1,7 @@
+{
+  "title": "Flow Field",
+  "description": "Thousands of particles drifting through a time-varying pseudo-noise vector field, drawn with additive trails on a 2D canvas.",
+  "tags": ["particles", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-08"
+}

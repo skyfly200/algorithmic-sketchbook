@@ -1,0 +1,7 @@
+{
+  "title": "Orbit Knots",
+  "description": "Glowing torus knots tumbling under orbit controls — demonstrates that embedded sketches can import npm packages (three.js) straight from the repo's dependencies.",
+  "tags": ["3d", "generative"],
+  "tech": ["three.js", "webgl"],
+  "created": "2026-07-08"
+}

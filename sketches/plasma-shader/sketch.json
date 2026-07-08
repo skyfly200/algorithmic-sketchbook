@@ -1,0 +1,7 @@
+{
+  "title": "Plasma Shader",
+  "description": "A classic plasma effect written as a raw GLSL fragment shader on a fullscreen quad — no libraries, just WebGL2.",
+  "tags": ["shader", "generative"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-07-08"
+}

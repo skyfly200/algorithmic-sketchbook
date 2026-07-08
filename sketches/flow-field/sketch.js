@@ -1,0 +1,73 @@
+const canvas = document.getElementById('canvas')
+const ctx = canvas.getContext('2d')
+
+const PARTICLE_COUNT = 2500
+const FIELD_SCALE = 0.0022
+const SPEED = 1.4
+
+let width, height
+let particles = []
+
+function resize() {
+  width = canvas.width = window.innerWidth * devicePixelRatio
+  height = canvas.height = window.innerHeight * devicePixelRatio
+  ctx.fillStyle = '#05060a'
+  ctx.fillRect(0, 0, width, height)
+  particles = Array.from({ length: PARTICLE_COUNT }, spawn)
+}
+
+function spawn() {
+  return {
+    x: Math.random() * width,
+    y: Math.random() * height,
+    hue: 190 + Math.random() * 90,
+    life: 100 + Math.random() * 300,
+  }
+}
+
+// Cheap value-noise-ish field: layered sines are good enough for pretty
+// swirls and keep the sketch dependency-free.
+function angleAt(x, y, t) {
+  const s = FIELD_SCALE
+  return (
+    Math.sin(x * s + t * 0.4) * 1.7 +
+    Math.cos(y * s * 1.3 - t * 0.3) * 1.7 +
+    Math.sin((x + y) * s * 0.6 + t * 0.15) * 2.2
+  )
+}
+
+function frame(now) {
+  const t = now * 0.001
+
+  // Fade previous frame slightly to leave trails.
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.fillStyle = 'rgba(5, 6, 10, 0.045)'
+  ctx.fillRect(0, 0, width, height)
+
+  ctx.globalCompositeOperation = 'lighter'
+  for (const p of particles) {
+    const a = angleAt(p.x, p.y, t)
+    const nx = p.x + Math.cos(a) * SPEED * devicePixelRatio
+    const ny = p.y + Math.sin(a) * SPEED * devicePixelRatio
+
+    ctx.strokeStyle = `hsla(${p.hue}, 85%, 60%, 0.28)`
+    ctx.beginPath()
+    ctx.moveTo(p.x, p.y)
+    ctx.lineTo(nx, ny)
+    ctx.stroke()
+
+    p.x = nx
+    p.y = ny
+    p.life--
+
+    if (p.life <= 0 || p.x < 0 || p.x > width || p.y < 0 || p.y > height) {
+      Object.assign(p, spawn())
+    }
+  }
+
+  requestAnimationFrame(frame)
+}
+
+window.addEventListener('resize', resize)
+resize()
+requestAnimationFrame(frame)

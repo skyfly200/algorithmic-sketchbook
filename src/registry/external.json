@@ -1,0 +1,13 @@
+[
+  {
+    "slug": "example-external",
+    "title": "Example External Project",
+    "description": "Placeholder showing how to link an experiment that lives in its own repo. Replace or delete this entry.",
+    "tags": ["example"],
+    "tech": ["webgl"],
+    "created": "2026-07-08",
+    "url": "https://threejs.org/examples/webgl_points_sprites.html",
+    "repo": "https://github.com/mrdoob/three.js",
+    "embed": true
+  }
+]
