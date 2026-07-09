@@ -1,10 +1,12 @@
 // Sketches go through Vite, so they can import any npm dependency declared
 // in the repo's package.json — here, three.js.
+import { createRuntime } from '../_lib/runtime.js'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 
 const renderer = new THREE.WebGLRenderer({ antialias: true })
-renderer.setPixelRatio(devicePixelRatio)
+const rt = createRuntime()
+renderer.setPixelRatio(rt.pixelRatio)
 document.body.appendChild(renderer.domElement)
 
 const scene = new THREE.Scene()
@@ -47,6 +49,7 @@ function resize() {
 }
 
 renderer.setAnimationLoop((now) => {
+  rt.tick(now)
   const t = now * 0.001
   knots.forEach((knot, i) => {
     knot.rotation.x = t * (0.2 + i * 0.1)

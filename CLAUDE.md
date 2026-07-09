@@ -30,6 +30,32 @@ Conventions for sketches: fill the viewport, dark background, handle window
 resize, no scrollbars (`overflow: hidden`), animate with
 `requestAnimationFrame` / `setAnimationLoop`.
 
+## The sketch runtime (sketches/_lib/runtime.js)
+
+All templates import it. In a sketch:
+
+- `const rt = createRuntime()` then use `rt.pixelRatio` (not
+  devicePixelRatio), scale workloads by `rt.detail`, and call `rt.tick(now)`
+  once per frame. This is what makes the viewer's FPS counter and graphics
+  quality options work.
+- Beat detection: `rt.onBeat(({ energy }) => ...)`, `rt.beat.state.pulse`
+  (decays 1→0 after each beat), `rt.beat.trigger()` for manual beats.
+- Tweakable params: `const params = rt.params({ name: { value, min, max,
+  step, label } })` (`type: 'bool'` for switches); read `params.name` in the
+  loop — it includes input modulation. `rt.mapInput('beat.pulse', 'name',
+  0.3)` adds a default input mapping. Declaring params gives the sketch a
+  controls panel in the viewer (sliders, mapping editor, saveable scenes) via
+  postMessage — no extra wiring needed.
+
+When adding a sketch, prefer declaring its interesting constants as params.
+
+## Scenes
+
+Named snapshots of param values + input mappings + display settings, stored
+in localStorage (`src/stores/scenes.js`), saved/applied from the viewer's
+controls panel, listed on the gallery page, deep-linked as
+`/#/sketch/<slug>?scene=<id>`.
+
 ## Other tasks
 
 - Link an external repo: add an entry to `src/registry/external.json`

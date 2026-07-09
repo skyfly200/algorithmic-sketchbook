@@ -1,0 +1,7 @@
+{
+  "title": "Beat Rings",
+  "description": "Audio-reactive rings that burst on every detected beat. Enable the mic button (bottom right) and play music — or click/tap anywhere to trigger beats by hand.",
+  "tags": ["audio-reactive", "beat", "generative"],
+  "tech": ["canvas2d", "web-audio"],
+  "created": "2026-07-08"
+}

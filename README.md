@@ -46,6 +46,72 @@ Vite, so they can `import` any npm package in this repo's `package.json`
 (three.js is already installed). Vite builds every `sketches/*/index.html` as
 its own page.
 
+## The sketch runtime: FPS, quality, beat detection
+
+`sketches/_lib/runtime.js` is a small opt-in helper every template already
+uses:
+
+```js
+import { createRuntime } from '../_lib/runtime.js'
+const rt = createRuntime()
+
+rt.pixelRatio        // use instead of devicePixelRatio when sizing canvases
+rt.detail            // 0..1 — scale particle counts etc. for lower quality
+rt.tick(now)         // call once per frame (drives FPS meter + beat detector)
+
+rt.onBeat(({ energy }) => { ... })  // fires on each detected beat
+rt.beat.state.pulse  // 1 on beat, decays to 0 — great for driving visuals
+rt.beat.state.level  // live bass energy 0..1
+rt.beat.trigger()    // fire a beat manually (click fallback, testing)
+```
+
+**FPS counter & graphics quality** are controlled from the sketch viewer's
+toolbar (speedometer and tune icons). Lowering quality renders at reduced
+resolution (½× or ¾×) and shrinks `rt.detail`, which is usually the difference
+between a stuttering and a buttery sketch on a hidpi display. Settings persist
+in localStorage and are passed to sketches as query params
+(`?fps=1&quality=low`), so they also work on a sketch opened directly.
+
+**Beat detection** uses the microphone (Web Audio): calling `rt.onBeat(...)`
+mounts a 🎤 toggle button in the sketch; once enabled, beats are detected as
+bass-energy spikes above the rolling average. See `sketches/beat-rings` for a
+complete audio-reactive example (click anywhere in it to fake beats without a
+mic).
+
+## Params, input mappings & scenes
+
+Sketches can declare tweakable parameters:
+
+```js
+const params = rt.params({
+  speed: { value: 1.4, min: 0.3, max: 4, step: 0.1, label: 'Particle speed' },
+  mirror: { value: false, type: 'bool', label: 'Mirror' },
+})
+// read params.speed in your frame loop — it's the live, modulated value
+rt.mapInput('beat.pulse', 'speed', 0.3) // default input→param mapping
+```
+
+Declaring params lights up the **controls panel** (tune icon) in the viewer:
+
+- **Parameters** — live sliders/switches for everything declared.
+- **Input mappings** — route inputs (`beat.pulse`, `beat.level`, `mouse.x`,
+  `mouse.y`, `time.sin`) into any numeric parameter with an amount from −1
+  to 1. Effective value = base + input × amount × (max − min). This is how
+  you "trigger changes on beat" without writing code — or use `rt.onBeat`
+  for full control.
+- **Scenes** — save the current parameter values + input mappings + display
+  settings under a name. Saved scenes appear alongside the gallery on the
+  home page and deep-link as `/#/sketch/<slug>?scene=<id>`. They're stored in
+  localStorage.
+
+The viewer and sketch talk over `postMessage` (`sketch:ready`,
+`sketch:set-param`, `sketch:set-mappings`, `sketch:apply-scene`) — see
+`sketches/_lib/runtime.js` and `src/views/SketchView.vue`.
+
+Example sketches: `flow-field` (params + a default beat→speed mapping),
+`beat-rings` (beat callbacks), `motion-extraction` (webcam motion extraction
+with delay/blend/freeze params — works without a camera via its demo source).
+
 ## Adding an embedded sketch
 
 ```bash

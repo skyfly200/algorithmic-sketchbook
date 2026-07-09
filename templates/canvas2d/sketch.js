@@ -1,12 +1,19 @@
+// Shared runtime: quality/FPS settings from the viewer + beat detection.
+// rt.onBeat(({ energy }) => { ... }) fires on detected beats (mounts a mic
+// toggle); rt.beat.state.pulse decays 1 -> 0 after each beat.
+import { createRuntime } from '../_lib/runtime.js'
+
+const rt = createRuntime()
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
 function resize() {
-  canvas.width = window.innerWidth * devicePixelRatio
-  canvas.height = window.innerHeight * devicePixelRatio
+  canvas.width = window.innerWidth * rt.pixelRatio
+  canvas.height = window.innerHeight * rt.pixelRatio
 }
 
 function frame(now) {
+  rt.tick(now)
   const t = now * 0.001
 
   ctx.fillStyle = '#05060a'
@@ -17,7 +24,7 @@ function frame(now) {
   ctx.beginPath()
   ctx.arc(canvas.width / 2, canvas.height / 2, r, 0, Math.PI * 2)
   ctx.strokeStyle = 'hsl(230, 80%, 70%)'
-  ctx.lineWidth = 3 * devicePixelRatio
+  ctx.lineWidth = 3 * rt.pixelRatio
   ctx.stroke()
 
   requestAnimationFrame(frame)

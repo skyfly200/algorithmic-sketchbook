@@ -1,16 +1,24 @@
+import { createRuntime } from '../_lib/runtime.js'
+
+const rt = createRuntime()
+const params = rt.params({
+  speed: { value: 1.4, min: 0.3, max: 4, step: 0.1, label: 'Particle speed' },
+  fade: { value: 0.045, min: 0.01, max: 0.15, step: 0.005, label: 'Trail fade' },
+})
+// Beats nudge the particle speed by default — remix in the controls panel.
+rt.mapInput('beat.pulse', 'speed', 0.3)
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
-const PARTICLE_COUNT = 2500
+const PARTICLE_COUNT = Math.round(2500 * rt.detail)
 const FIELD_SCALE = 0.0022
-const SPEED = 1.4
 
 let width, height
 let particles = []
 
 function resize() {
-  width = canvas.width = window.innerWidth * devicePixelRatio
-  height = canvas.height = window.innerHeight * devicePixelRatio
+  width = canvas.width = window.innerWidth * rt.pixelRatio
+  height = canvas.height = window.innerHeight * rt.pixelRatio
   ctx.fillStyle = '#05060a'
   ctx.fillRect(0, 0, width, height)
   particles = Array.from({ length: PARTICLE_COUNT }, spawn)
@@ -37,18 +45,19 @@ function angleAt(x, y, t) {
 }
 
 function frame(now) {
+  rt.tick(now)
   const t = now * 0.001
 
   // Fade previous frame slightly to leave trails.
   ctx.globalCompositeOperation = 'source-over'
-  ctx.fillStyle = 'rgba(5, 6, 10, 0.045)'
+  ctx.fillStyle = `rgba(5, 6, 10, ${params.fade})`
   ctx.fillRect(0, 0, width, height)
 
   ctx.globalCompositeOperation = 'lighter'
   for (const p of particles) {
     const a = angleAt(p.x, p.y, t)
-    const nx = p.x + Math.cos(a) * SPEED * devicePixelRatio
-    const ny = p.y + Math.sin(a) * SPEED * devicePixelRatio
+    const nx = p.x + Math.cos(a) * params.speed * rt.pixelRatio
+    const ny = p.y + Math.sin(a) * params.speed * rt.pixelRatio
 
     ctx.strokeStyle = `hsla(${p.hue}, 85%, 60%, 0.28)`
     ctx.beginPath()

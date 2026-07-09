@@ -1,8 +1,12 @@
+// Shared runtime: quality/FPS settings from the viewer + beat detection
+// (rt.onBeat / rt.beat.state.pulse).
+import { createRuntime } from '../_lib/runtime.js'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 
 const renderer = new THREE.WebGLRenderer({ antialias: true })
-renderer.setPixelRatio(devicePixelRatio)
+const rt = createRuntime()
+renderer.setPixelRatio(rt.pixelRatio)
 document.body.appendChild(renderer.domElement)
 
 const scene = new THREE.Scene()
@@ -31,6 +35,7 @@ function resize() {
 }
 
 renderer.setAnimationLoop((now) => {
+  rt.tick(now)
   mesh.rotation.y = now * 0.0004
   controls.update()
   renderer.render(scene, camera)

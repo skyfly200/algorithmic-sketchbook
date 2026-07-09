@@ -11,6 +11,15 @@
         </router-link>
       </v-app-bar-title>
       <v-btn
+        prepend-icon="mdi-projector-screen-outline"
+        variant="tonal"
+        size="small"
+        class="mr-2"
+        :to="{ name: 'present' }"
+      >
+        Display mode
+      </v-btn>
+      <v-btn
         icon="mdi-github"
         variant="text"
         href="https://github.com/skyfly200/algorithmic-sketchbook"

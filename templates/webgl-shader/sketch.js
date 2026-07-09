@@ -1,3 +1,8 @@
+// Shared runtime: quality/FPS settings from the viewer + beat detection
+// (rt.onBeat / rt.beat.state.pulse).
+import { createRuntime } from '../_lib/runtime.js'
+
+const rt = createRuntime()
 const canvas = document.getElementById('canvas')
 const gl = canvas.getContext('webgl2')
 
@@ -47,12 +52,13 @@ const uResolution = gl.getUniformLocation(program, 'u_resolution')
 const uTime = gl.getUniformLocation(program, 'u_time')
 
 function resize() {
-  canvas.width = window.innerWidth * devicePixelRatio
-  canvas.height = window.innerHeight * devicePixelRatio
+  canvas.width = window.innerWidth * rt.pixelRatio
+  canvas.height = window.innerHeight * rt.pixelRatio
   gl.viewport(0, 0, canvas.width, canvas.height)
 }
 
 function frame(now) {
+  rt.tick(now)
   gl.uniform2f(uResolution, canvas.width, canvas.height)
   gl.uniform1f(uTime, now * 0.001)
   gl.drawArrays(gl.TRIANGLES, 0, 3)
