@@ -1,0 +1,7 @@
+{
+  "title": "Tessellation Drift",
+  "description": "A tiling grid of hexagons (or squares) that each grow and shrink as they pass through a moving noise field, while the whole lattice domain-warps and drifts. Every constant is a live parameter, and beats pump the cell growth by default.",
+  "tags": ["tessellation", "grid", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-09"
+}
