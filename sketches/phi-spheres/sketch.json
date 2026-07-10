@@ -1,6 +1,6 @@
 {
   "title": "Phi Spheres",
-  "description": "A phyllotaxis spiral of spheres placed by the golden angle (φ). Three modes: animate the spiral in and out, ripple it with a radial wave, or scatter it with random displacement. Orbit with the mouse; beats give it a pulse.",
+  "description": "A phyllotaxis spiral of spheres placed by the golden angle (φ). Three modes — animate in/out, radial wave, random scatter — with every driver (pulse, wave amplitude/speed, scatter, spin, size) exposed as a param you can map the music onto from the controls panel. Ships with default beat mappings; orbit with the mouse.",
   "tags": ["3d", "phyllotaxis", "golden-ratio", "generative"],
   "tech": ["three.js", "webgl"],
   "created": "2026-07-10"

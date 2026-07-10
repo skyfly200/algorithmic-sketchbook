@@ -4,13 +4,29 @@
  *   - Animate In/Out : grow the spiral outward one sphere at a time, then back
  *   - Wave           : a radial sine wave ripples the spiral along z
  *   - Random Displacement : each sphere shivers along z by its own random amount
+ *
+ * Every animation driver is a runtime param, so the music (beat.pulse /
+ * beat.level) can be mapped onto any of them from the controls panel and saved
+ * in scenes. Default mappings make it react to sound out of the box.
  */
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
-rt.onBeat(() => {}) // mounts the mic toggle so it can pulse to sound
+const params = rt.params({
+  pulse: { value: 0, min: 0, max: 1, step: 0.01, label: 'Pulse (scale)' },
+  waveAmp: { value: 0.6, min: 0, max: 3, step: 0.05, label: 'Wave amplitude' },
+  waveSpeed: { value: 1, min: 0, max: 4, step: 0.05, label: 'Wave speed' },
+  scatter: { value: 1.2, min: 0, max: 4, step: 0.05, label: 'Scatter amount' },
+  spin: { value: 0.15, min: 0, max: 2, step: 0.01, label: 'Auto-spin' },
+  sphereSize: { value: 1, min: 0.4, max: 2, step: 0.05, label: 'Sphere size' },
+})
+// Default music → animation mappings (remix or add more in the controls panel).
+// These also mount the mic toggle so the piece reacts to sound.
+rt.mapInput('beat.pulse', 'pulse', 0.7) // beats pop the whole spiral
+rt.mapInput('beat.level', 'waveAmp', 0.9) // loudness swells the wave
+rt.mapInput('beat.level', 'scatter', 0.8) // and the scatter
 
 const scene = new THREE.Scene()
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
@@ -113,9 +129,11 @@ function resize() {
 }
 
 renderer.setAnimationLoop(() => {
+  // rt.tick() folds live input (beat/mouse/time) into the params below, so
+  // reading params.waveAmp etc. already includes any mapped music reactivity.
   rt.tick(performance.now())
 
-  if (mode !== 'Animate In/Out') frameCount++
+  if (mode !== 'Animate In/Out') frameCount += params.waveSpeed
 
   if (mode === 'Animate In/Out') {
     // Grow the spiral outward, then unwind it — one sphere per frame.
@@ -127,18 +145,20 @@ renderer.setAnimationLoop(() => {
       if (spheres.length <= 0) growing = true
     }
   } else if (mode === 'Wave') {
+    // Radial wave whose amplitude/speed are params — map beat.level onto them.
     for (const sp of spheres) {
-      sp.position.z = Math.sin(sp.userData.radius * 1.4 - frameCount * 0.06) * 1.3
+      sp.position.z = Math.sin(sp.userData.radius * 1.4 - frameCount * 0.06) * params.waveAmp
     }
   } else if (mode === 'Random Displacement') {
     for (const sp of spheres) {
-      sp.position.z = sp.userData.rand * Math.sin(frameCount * 0.05) * 2.4
+      sp.position.z = sp.userData.rand * Math.sin(frameCount * 0.05) * params.scatter
     }
   }
 
-  // Beat pulse: gently scale the whole spiral.
-  const pulse = 1 + rt.beat.state.pulse * 0.12
-  group.scale.setScalar(pulse)
+  // Auto-spin and the overall pulse/size apply in every mode, so music mapped
+  // to `pulse` reacts even during Animate In/Out.
+  group.rotation.z += params.spin * 0.008
+  group.scale.setScalar(params.sphereSize * (1 + params.pulse * 0.5))
 
   controls.update()
   renderer.render(scene, camera)
