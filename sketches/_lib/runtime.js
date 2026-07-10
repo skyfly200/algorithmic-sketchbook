@@ -33,7 +33,17 @@
  */
 import { createBeatDetector } from './beat.js'
 
-export const INPUT_SOURCES = ['beat.pulse', 'beat.level', 'mouse.x', 'mouse.y', 'time.sin']
+export const INPUT_SOURCES = [
+  'beat.pulse', // 1 on each detected beat, decays to 0
+  'beat.level', // bass energy (alias of beat.low)
+  'beat.low', // bass band
+  'beat.mid', // mids — vocals / snares
+  'beat.high', // highs — hats / cymbals
+  'beat.volume', // broadband loudness
+  'mouse.x',
+  'mouse.y',
+  'time.sin', // slow 10 s oscillation
+]
 
 const QUALITY = {
   low: { pixelRatio: 0.5, detail: 0.4 },
@@ -165,6 +175,10 @@ export function createRuntime() {
     switch (source) {
       case 'beat.pulse': return beat.state.pulse
       case 'beat.level': return beat.state.level
+      case 'beat.low': return beat.state.low
+      case 'beat.mid': return beat.state.mid
+      case 'beat.high': return beat.state.high
+      case 'beat.volume': return beat.state.volume
       case 'mouse.x': return mouse.x
       case 'mouse.y': return mouse.y
       case 'time.sin': return 0.5 + 0.5 * Math.sin(now * 0.001 * Math.PI * 0.2) // 10 s period

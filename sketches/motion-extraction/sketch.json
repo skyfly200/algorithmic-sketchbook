@@ -1,6 +1,6 @@
 {
   "title": "Motion Extraction",
-  "description": "Reveals only what moves: the current camera frame is blended with an inverted copy of itself from a few frames ago, so static pixels cancel to gray while motion pops out. Works with your webcam or a built-in demo source; tune the frame delay and blend live.",
+  "description": "Reveals only what moves: the current frame is blended with an inverted copy of itself from a few frames ago, so static pixels cancel to gray while motion pops out. Feed it your webcam, an uploaded video or image, or the built-in demo source; tune the frame delay and blend live.",
   "tags": ["video", "motion", "computer-vision"],
   "tech": ["canvas2d", "webcam"],
   "created": "2026-07-09"

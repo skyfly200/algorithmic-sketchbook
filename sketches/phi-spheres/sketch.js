@@ -19,14 +19,16 @@ const params = rt.params({
   waveAmp: { value: 0.6, min: 0, max: 3, step: 0.05, label: 'Wave amplitude' },
   waveSpeed: { value: 1, min: 0, max: 4, step: 0.05, label: 'Wave speed' },
   scatter: { value: 1.2, min: 0, max: 4, step: 0.05, label: 'Scatter amount' },
-  spin: { value: 0.15, min: 0, max: 2, step: 0.01, label: 'Auto-spin' },
+  spin: { value: 0.15, min: 0, max: 2, step: 0.01, label: 'Auto-spin (in-plane)' },
+  orbit: { value: 0.6, min: 0, max: 6, step: 0.05, label: 'Camera orbit speed' },
   sphereSize: { value: 1, min: 0.4, max: 2, step: 0.05, label: 'Sphere size' },
 })
 // Default music → animation mappings (remix or add more in the controls panel).
 // These also mount the mic toggle so the piece reacts to sound.
 rt.mapInput('beat.pulse', 'pulse', 0.7) // beats pop the whole spiral
-rt.mapInput('beat.level', 'waveAmp', 0.9) // loudness swells the wave
-rt.mapInput('beat.level', 'scatter', 0.8) // and the scatter
+rt.mapInput('beat.level', 'waveAmp', 0.9) // bass swells the wave
+rt.mapInput('beat.high', 'scatter', 0.8) // highs shiver the scatter
+rt.mapInput('beat.volume', 'orbit', 0.7) // loudness spins the camera orbit
 
 const scene = new THREE.Scene()
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
@@ -102,6 +104,9 @@ const controls = new OrbitControls(camera, renderer.domElement)
 controls.enableDamping = true
 controls.dampingFactor = 0.05
 controls.rotateSpeed = 0.5
+// Auto-orbit the camera; its speed is the `orbit` param, so the music can be
+// mapped onto it (beat.volume by default). Dragging still works and blends in.
+controls.autoRotate = true
 
 // Mode buttons
 const modesEl = document.getElementById('modes')
@@ -155,10 +160,11 @@ renderer.setAnimationLoop(() => {
     }
   }
 
-  // Auto-spin and the overall pulse/size apply in every mode, so music mapped
-  // to `pulse` reacts even during Animate In/Out.
+  // Auto-spin, camera orbit, and the overall pulse/size apply in every mode,
+  // so music mapped to `pulse`/`orbit` reacts even during Animate In/Out.
   group.rotation.z += params.spin * 0.008
   group.scale.setScalar(params.sphereSize * (1 + params.pulse * 0.5))
+  controls.autoRotateSpeed = params.orbit
 
   controls.update()
   renderer.render(scene, camera)

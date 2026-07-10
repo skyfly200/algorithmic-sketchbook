@@ -27,7 +27,9 @@ export function createBeatDetector({
   let lastBeat = 0
   const callbacks = []
 
-  const state = { active: false, level: 0, pulse: 0 }
+  // level = bass energy (kept for existing beat.level mappings); low/mid/high
+  // are per-band energies and volume is the broadband average — all 0..1.
+  const state = { active: false, level: 0, pulse: 0, low: 0, mid: 0, high: 0, volume: 0 }
 
   async function start() {
     if (state.active) return
@@ -57,7 +59,14 @@ export function createBeatDetector({
     audioCtx?.close()
     audioCtx = analyser = stream = bins = null
     state.active = false
-    state.level = 0
+    state.level = state.low = state.mid = state.high = state.volume = 0
+  }
+
+  // Average a contiguous FFT-bin range, normalized to 0..1.
+  function bandEnergy(lo, hi) {
+    let sum = 0
+    for (let i = lo; i <= hi; i++) sum += bins[i]
+    return sum / ((hi - lo + 1) * 255)
   }
 
   function trigger(energy = 1) {
@@ -71,11 +80,13 @@ export function createBeatDetector({
     if (!state.active) return
 
     analyser.getByteFrequencyData(bins)
-    // Bass band: bins 1–8 ≈ 90–750 Hz at a 48 kHz sample rate — where kicks live.
-    let energy = 0
-    for (let i = 1; i <= 8; i++) energy += bins[i]
-    energy /= 8 * 255
+    // Split the spectrum into bands (bin width ≈ sampleRate/fftSize ≈ 86 Hz).
+    const energy = bandEnergy(1, 8) // bass ~90–750 Hz — where kicks live
     state.level = energy
+    state.low = energy
+    state.mid = bandEnergy(9, 48) // ~0.8–4 kHz — vocals, snares
+    state.high = bandEnergy(49, 160) // ~4–14 kHz — hats, cymbals, air
+    state.volume = bandEnergy(1, 200) // broadband loudness
 
     history.push(energy)
     if (history.length > 45) history.shift() // ~0.75 s at 60 fps

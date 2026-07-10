@@ -5,7 +5,17 @@ import { useSketchStore } from '../stores/sketches'
 import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
 import { useSceneStore } from '../stores/scenes'
 
-const INPUT_SOURCES = ['beat.pulse', 'beat.level', 'mouse.x', 'mouse.y', 'time.sin']
+const INPUT_SOURCES = [
+  'beat.pulse',
+  'beat.level',
+  'beat.low',
+  'beat.mid',
+  'beat.high',
+  'beat.volume',
+  'mouse.x',
+  'mouse.y',
+  'time.sin',
+]
 
 const props = defineProps({
   slug: { type: String, required: true },

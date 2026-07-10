@@ -1,13 +1,35 @@
 [
   {
-    "slug": "example-external",
-    "title": "Example External Project",
-    "description": "Placeholder showing how to link an experiment that lives in its own repo. Replace or delete this entry.",
-    "tags": ["example"],
-    "tech": ["webgl"],
-    "created": "2026-07-08",
-    "url": "https://threejs.org/examples/webgl_points_sprites.html",
-    "repo": "https://github.com/mrdoob/three.js",
+    "slug": "caustics-art",
+    "title": "Cymatic Caustic Caster",
+    "description": "Generative simulation of a water surface and the caustics it casts — rain, wind, and cymatic (sound-driven) ripples, with mouse interaction and randomized settings on each load. Load 3D geometry to catch the caustics.",
+    "tags": ["caustics", "water", "audio-reactive", "generative"],
+    "tech": ["three.js", "webgl", "glsl"],
+    "created": "2026-07-10",
+    "url": "https://causticsart.netlify.app/",
+    "repo": "https://github.com/skyfly200/caustics-art",
     "embed": true
+  },
+  {
+    "slug": "moire-patterns",
+    "title": "Moiré Pattern Generator",
+    "description": "Interactive moiré interference tool rendered entirely in a fragment shader: ten grating types plus custom GLSL, up to 8 layers with per-layer combine ops, SDF shape masks, color modes, and anti-aliasing controls.",
+    "tags": ["moire", "interference", "shader", "generative"],
+    "tech": ["vue", "three.js", "glsl"],
+    "created": "2026-07-10",
+    "url": null,
+    "repo": "https://github.com/skyfly200/moire-patterns",
+    "embed": false
+  },
+  {
+    "slug": "holographic-diffraction-gratings",
+    "title": "Holographic Diffraction Gratings",
+    "description": "Design, visualize, and export holographic diffraction grating patterns: linear, radial, Fresnel zone-plate, spiral, crossed, starburst, and carbon-fiber weave gratings, with a live diffracted-spectrum preview from the grating equation and PNG/SVG export.",
+    "tags": ["diffraction", "optics", "generative", "tool"],
+    "tech": ["canvas", "svg", "javascript"],
+    "created": "2026-07-10",
+    "url": null,
+    "repo": "https://github.com/skyfly200/holographic-diffraction-gratings",
+    "embed": false
   }
 ]

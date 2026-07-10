@@ -120,6 +120,56 @@ function useDemo() {
   sourceH = 540
 }
 
+// Load an uploaded video (looped) or image as the motion-extraction source.
+function loadFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    demoTick = null
+    if (file.type.startsWith('image/')) {
+      const img = new Image()
+      img.onload = () => {
+        source = img
+        sourceW = img.naturalWidth
+        sourceH = img.naturalHeight
+        resolve()
+      }
+      img.onerror = reject
+      img.src = url
+    } else {
+      const video = document.createElement('video')
+      video.src = url
+      video.loop = true
+      video.muted = true
+      video.playsInline = true
+      video.onloadeddata = async () => {
+        try {
+          await video.play()
+        } catch {
+          /* autoplay may need the user gesture we already have; ignore */
+        }
+        source = video
+        sourceW = video.videoWidth
+        sourceH = video.videoHeight
+        resolve()
+      }
+      video.onerror = () => reject(new Error('Could not decode that file'))
+    }
+  })
+}
+
+const fileInput = document.getElementById('file-input')
+document.getElementById('use-upload').addEventListener('click', () => fileInput.click())
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files?.[0]
+  if (!file) return
+  try {
+    await loadFile(file)
+    chooser.style.display = 'none'
+  } catch {
+    chooser.querySelector('p').textContent = 'Could not load that file — try another video or image.'
+  }
+})
+
 for (const [id, fn] of [
   ['use-camera', useCamera],
   ['use-demo', useDemo],
