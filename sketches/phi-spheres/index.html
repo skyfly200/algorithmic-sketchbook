@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Phi Spheres</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #111119; }
+      canvas { display: block; }
+      #modes {
+        position: fixed; top: 12px; left: 12px; z-index: 10;
+        display: flex; gap: 8px; flex-wrap: wrap;
+      }
+      #modes button {
+        font: 13px system-ui, sans-serif; color: #fff; cursor: pointer;
+        padding: 7px 13px; border-radius: 999px;
+        background: rgba(128, 0, 128, 0.25);
+        border: 1px solid rgba(180, 120, 220, 0.6);
+      }
+      #modes button.active { background: rgba(170, 90, 200, 0.7); }
+    </style>
+  </head>
+  <body>
+    <div id="modes"></div>
+    <script type="module" src="./sketch.js"></script>
+  </body>
+</html>

@@ -1,33 +1,71 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const props = defineProps({
   sketch: { type: Object, required: true },
 })
 
-// Deterministic gradient per slug so cards without a thumbnail still look
-// distinct and intentional.
+// Deterministic gradient per slug — the last-resort fallback when a sketch
+// can't be previewed live and has no thumbnail.
 const fallbackGradient = computed(() => {
   let hash = 0
   for (const c of props.sketch.slug) hash = (hash * 31 + c.charCodeAt(0)) % 360
-  const h1 = hash
-  const h2 = (hash + 60) % 360
-  return `linear-gradient(135deg, hsl(${h1}, 55%, 22%), hsl(${h2}, 65%, 40%))`
+  return `linear-gradient(135deg, hsl(${hash}, 55%, 22%), hsl(${(hash + 60) % 360}, 65%, 40%))`
 })
+
+// A live preview runs the real sketch in the card. Embeddable sketches with a
+// URL qualify; local ones get low quality so a wall of them stays smooth.
+const canPreview = computed(() => props.sketch.embed && props.sketch.url)
+const previewSrc = computed(() =>
+  props.sketch.type === 'local' ? `${props.sketch.url}?quality=low` : props.sketch.url,
+)
+
+// Mount the iframe only once the card scrolls into view, so off-screen cards
+// don't all animate at once.
+const root = ref(null)
+const inView = ref(false)
+let observer = null
+
+onMounted(() => {
+  if (!canPreview.value || props.sketch.thumbnail) return
+  observer = new IntersectionObserver(
+    (entries) => {
+      if (entries[0].isIntersecting) {
+        inView.value = true
+        observer.disconnect()
+      }
+    },
+    { rootMargin: '200px' },
+  )
+  const el = root.value?.$el ?? root.value
+  if (el) observer.observe(el)
+})
+onBeforeUnmount(() => observer?.disconnect())
 </script>
 
 <template>
   <v-card
+    ref="root"
     :to="{ name: 'sketch', params: { slug: sketch.slug } }"
     class="sketch-card"
     hover
   >
     <div
       class="card-preview"
-      :style="sketch.thumbnail ? {} : { background: fallbackGradient }"
+      :style="sketch.thumbnail || (canPreview && inView) ? {} : { background: fallbackGradient }"
     >
       <v-img v-if="sketch.thumbnail" :src="sketch.thumbnail" cover height="160" />
+      <iframe
+        v-else-if="canPreview && inView"
+        :src="previewSrc"
+        class="preview-frame"
+        loading="lazy"
+        scrolling="no"
+        tabindex="-1"
+        aria-hidden="true"
+      />
       <v-icon v-else icon="mdi-shimmer" size="42" class="preview-icon" />
+
       <v-chip
         size="x-small"
         class="type-chip"
@@ -67,6 +105,15 @@ const fallbackGradient = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+  background: #05060a;
+}
+.preview-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  /* Let clicks fall through to the card (which is the router link). */
+  pointer-events: none;
 }
 .preview-icon {
   opacity: 0.5;

@@ -1,0 +1,7 @@
+{
+  "title": "Hex Cascade",
+  "description": "A hash-seeded generative piece (Art Blocks style): a grid of hexagons filled with concentric hex strokes whose depth blooms with cursor distance from center. Deterministic from a token hash; made mouse- and beat-reactive.",
+  "tags": ["hexagons", "generative", "token-art"],
+  "tech": ["p5.js"],
+  "created": "2026-07-10"
+}

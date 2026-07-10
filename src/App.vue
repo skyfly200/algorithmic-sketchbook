@@ -1,4 +1,5 @@
 <script setup>
+import BrandLogo from './components/BrandLogo.vue'
 </script>
 
 <template>
@@ -6,8 +7,8 @@
     <v-app-bar flat density="comfortable" color="background">
       <v-app-bar-title>
         <router-link to="/" class="app-title">
-          <v-icon icon="mdi-drawing" class="mr-2" color="primary" />
-          Algorithmic Sketchbook
+          <BrandLogo :size="34" uid="bar" class="mr-3" />
+          <span class="brand-name">Bright Waves</span>
         </router-link>
       </v-app-bar-title>
       <v-btn
@@ -36,9 +37,18 @@
 
 <style>
 .app-title {
+  display: inline-flex;
+  align-items: center;
   color: inherit;
   text-decoration: none;
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+.brand-name {
+  background: linear-gradient(90deg, #d789d7, #f2ad00 40%, #5bbcd6 80%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
 }
 </style>
