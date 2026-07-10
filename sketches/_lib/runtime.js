@@ -65,12 +65,48 @@ function mountFpsMeter() {
   }
 }
 
+// Turn a getUserMedia failure into a short, actionable message.
+function micErrorMessage(err) {
+  switch (err?.name) {
+    case 'InsecureContextError':
+      return 'Mic needs HTTPS (or localhost)'
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'Mic permission blocked — allow it and retry'
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return 'No microphone found'
+    case 'NotReadableError':
+      return 'Mic is in use by another app'
+    default:
+      return `Mic unavailable (${err?.name || 'error'})`
+  }
+}
+
+function showToast(message) {
+  let toast = document.getElementById('rt-toast')
+  if (!toast) {
+    toast = document.createElement('div')
+    toast.id = 'rt-toast'
+    toast.style.cssText = `
+      position: fixed; bottom: 62px; right: 12px; z-index: 1001; max-width: 240px;
+      padding: 8px 12px; border-radius: 8px; font: 13px/1.35 system-ui, sans-serif;
+      color: #fff; background: rgba(20, 20, 28, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.18); transition: opacity 0.3s; opacity: 0;`
+    document.body.appendChild(toast)
+  }
+  toast.textContent = message
+  requestAnimationFrame(() => (toast.style.opacity = 1))
+  clearTimeout(showToast._t)
+  showToast._t = setTimeout(() => (toast.style.opacity = 0), 4000)
+}
+
 function mountMicButton(beat) {
   if (document.getElementById('mic-toggle')) return
   const btn = document.createElement('button')
   btn.id = 'mic-toggle'
   btn.textContent = '🎤'
-  btn.title = 'Toggle microphone beat detection'
+  btn.title = 'Enable microphone beat detection'
   btn.style.cssText = `
     position: fixed; bottom: 12px; right: 12px; z-index: 1000;
     width: 42px; height: 42px; border-radius: 50%;
@@ -81,14 +117,21 @@ function mountMicButton(beat) {
     if (beat.state.active) {
       beat.stop()
       btn.style.opacity = 0.45
-    } else {
-      try {
-        await beat.start()
-        btn.style.opacity = 1
-      } catch {
-        btn.textContent = '🚫'
-        btn.title = 'Microphone unavailable or permission denied'
-      }
+      btn.textContent = '🎤'
+      btn.title = 'Enable microphone beat detection'
+      return
+    }
+    try {
+      await beat.start()
+      btn.style.opacity = 1
+      btn.textContent = '🎧'
+      btn.title = 'Listening — click to stop'
+    } catch (err) {
+      // Stay retryable: keep the mic icon, explain why, let the user try again.
+      btn.textContent = '🎤'
+      const msg = micErrorMessage(err)
+      btn.title = msg + ' (click to retry)'
+      showToast(msg)
     }
   })
   document.body.appendChild(btn)
@@ -99,7 +142,9 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
 export function createRuntime() {
   const urlParams = new URLSearchParams(location.search)
   const quality = QUALITY[urlParams.get('quality')] ?? QUALITY.native
-  const fpsTick = urlParams.get('fps') === '1' ? mountFpsMeter() : null
+  // Preview mode (gallery thumbnail iframes): no overlay chrome, no mic button.
+  const preview = urlParams.get('preview') === '1'
+  const fpsTick = !preview && urlParams.get('fps') === '1' ? mountFpsMeter() : null
 
   const beat = createBeatDetector()
 
@@ -142,7 +187,7 @@ export function createRuntime() {
 
   function setMappings(next) {
     mappings = (next ?? []).filter((m) => m && m.source && m.param)
-    if (mappings.some((m) => m.source.startsWith('beat.'))) mountMicButton(beat)
+    if (!preview && mappings.some((m) => m.source.startsWith('beat.'))) mountMicButton(beat)
   }
 
   function announce() {
@@ -177,7 +222,7 @@ export function createRuntime() {
     beat,
 
     onBeat(cb) {
-      mountMicButton(beat)
+      if (!preview) mountMicButton(beat)
       beat.onBeat(cb)
     },
 

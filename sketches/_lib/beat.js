@@ -31,8 +31,18 @@ export function createBeatDetector({
 
   async function start() {
     if (state.active) return
+    // getUserMedia only exists in a secure context (https:// or localhost).
+    // Surface that clearly instead of letting a bare TypeError bubble up.
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      const err = new Error('Microphone needs a secure context (https or localhost).')
+      err.name = 'InsecureContextError'
+      throw err
+    }
     stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    audioCtx = new AudioContext()
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    // Autoplay policies can leave the context suspended until a user gesture;
+    // start() is called from a click, so resume() here is allowed.
+    if (audioCtx.state === 'suspended') await audioCtx.resume()
     analyser = audioCtx.createAnalyser()
     analyser.fftSize = 512
     analyser.smoothingTimeConstant = 0.4

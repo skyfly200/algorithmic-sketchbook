@@ -17,7 +17,7 @@ const fallbackGradient = computed(() => {
 // URL qualify; local ones get low quality so a wall of them stays smooth.
 const canPreview = computed(() => props.sketch.embed && props.sketch.url)
 const previewSrc = computed(() =>
-  props.sketch.type === 'local' ? `${props.sketch.url}?quality=low` : props.sketch.url,
+  props.sketch.type === 'local' ? `${props.sketch.url}?quality=low&preview=1` : props.sketch.url,
 )
 
 // Mount the iframe only once the card scrolls into view, so off-screen cards
