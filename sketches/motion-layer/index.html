@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Motion Layer</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #05060a; }
+      canvas { display: block; width: 100vw; height: 100vh; }
+      #hint {
+        position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        max-width: 460px; text-align: center; color: rgba(255, 255, 255, 0.75);
+        font: 15px/1.5 system-ui, sans-serif; pointer-events: none;
+        transition: opacity 0.6s;
+      }
+      #hint b { color: #7c8cff; }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <div id="hint">
+      Open <b>Motion Extraction</b> in another tab or window and pick a source —
+      its detected motion is broadcast here and used as a mask for this flowing
+      color field.
+    </div>
+    <script type="module" src="./sketch.js"></script>
+  </body>
+</html>

@@ -17,9 +17,9 @@
     "tags": ["moire", "interference", "shader", "generative"],
     "tech": ["vue", "three.js", "glsl"],
     "created": "2026-07-10",
-    "url": null,
+    "url": "https://moire-patterns.netlify.app/",
     "repo": "https://github.com/skyfly200/moire-patterns",
-    "embed": false
+    "embed": true
   },
   {
     "slug": "holographic-diffraction-gratings",
@@ -28,8 +28,8 @@
     "tags": ["diffraction", "optics", "generative", "tool"],
     "tech": ["canvas", "svg", "javascript"],
     "created": "2026-07-10",
-    "url": null,
+    "url": "https://holographic-diffraction.netlify.app/",
     "repo": "https://github.com/skyfly200/holographic-diffraction-gratings",
-    "embed": false
+    "embed": true
   }
 ]

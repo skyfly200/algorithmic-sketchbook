@@ -29,7 +29,22 @@ export function createBeatDetector({
 
   // level = bass energy (kept for existing beat.level mappings); low/mid/high
   // are per-band energies and volume is the broadband average — all 0..1.
-  const state = { active: false, level: 0, pulse: 0, low: 0, mid: 0, high: 0, volume: 0 }
+  // interval = smoothed ms between recent beats; bpm derived from it.
+  const state = { active: false, level: 0, pulse: 0, low: 0, mid: 0, high: 0, volume: 0, interval: 0, bpm: 0 }
+  let prevBeatAt = 0
+
+  // Record a beat's timing to estimate tempo (used by beat-synced effects).
+  function noteBeat(now) {
+    if (prevBeatAt) {
+      const dt = now - prevBeatAt
+      if (dt > 100 && dt < 2000) {
+        // 30–600 BPM
+        state.interval = state.interval ? state.interval * 0.7 + dt * 0.3 : dt
+        state.bpm = Math.round(60000 / state.interval)
+      }
+    }
+    prevBeatAt = now
+  }
 
   async function start() {
     if (state.active) return
@@ -60,6 +75,8 @@ export function createBeatDetector({
     audioCtx = analyser = stream = bins = null
     state.active = false
     state.level = state.low = state.mid = state.high = state.volume = 0
+    state.interval = state.bpm = 0
+    prevBeatAt = 0
   }
 
   // Average a contiguous FFT-bin range, normalized to 0..1.
@@ -70,7 +87,9 @@ export function createBeatDetector({
   }
 
   function trigger(energy = 1) {
-    lastBeat = performance.now()
+    const now = performance.now()
+    lastBeat = now
+    noteBeat(now)
     state.pulse = 1
     for (const cb of callbacks) cb({ energy })
   }
@@ -99,6 +118,7 @@ export function createBeatDetector({
       now - lastBeat > minIntervalMs
     ) {
       lastBeat = now
+      noteBeat(now)
       state.pulse = 1
       for (const cb of callbacks) cb({ energy })
     }
