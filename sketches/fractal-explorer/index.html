@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fractal Explorer</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+      canvas { display: block; width: 100vw; height: 100vh; cursor: grab; }
+      canvas:active { cursor: grabbing; }
+      #hint {
+        position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+        color: rgba(255, 255, 255, 0.5); font: 13px system-ui, sans-serif;
+        pointer-events: none; transition: opacity 1s;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <div id="hint">drag to pan · scroll to zoom · double-click resets · Julia mode in controls</div>
+    <script type="module" src="./sketch.js"></script>
+  </body>
+</html>

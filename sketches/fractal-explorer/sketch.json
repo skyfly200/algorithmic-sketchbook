@@ -1,0 +1,7 @@
+{
+  "title": "Fractal Explorer",
+  "description": "A Mandelbrot / Julia set explorer with smooth escape-time coloring. Drag to pan, scroll to zoom, double-click to reset. Flip to Julia mode and its seed c becomes a live parameter — map it to tilt or the music to morph the set. Animated palette.",
+  "tags": ["fractal", "mandelbrot", "julia", "zoom", "generative"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-07-11"
+}
