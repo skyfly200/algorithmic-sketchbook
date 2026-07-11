@@ -1,0 +1,7 @@
+{
+  "title": "Foam Cells",
+  "description": "A bubble raft: bubbles nucleate, grow, and jostle into a packed foam with bright soap-film (Plateau) borders and specular glints on a dark wet surface — the froth on top of a rolling boil. Big bubbles pop and churn the packing.",
+  "tags": ["foam", "bubbles", "packing", "boiling", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-11"
+}

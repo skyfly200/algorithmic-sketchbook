@@ -1,0 +1,7 @@
+{
+  "title": "Condensation",
+  "description": "Dropwise condensation (breath figures): droplets nucleate in the gaps, grow, and coalesce when they touch — merging with conserved volume — building the dense packed-droplet field you see on a lid over boiling water. Light-shaded lenses with rim glints; optional gravity drip.",
+  "tags": ["condensation", "droplets", "simulation", "boiling", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-11"
+}
