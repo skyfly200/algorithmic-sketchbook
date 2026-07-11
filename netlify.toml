@@ -1,0 +1,9 @@
+# Optional Netlify hosting (alongside the GitHub Pages workflow). Connect this
+# repo in Netlify and it builds on every push to main. The Vite base is './'
+# (relative), so the site works from any host or subpath.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
