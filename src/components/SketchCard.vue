@@ -13,14 +13,12 @@ const fallbackGradient = computed(() => {
   return `linear-gradient(135deg, hsl(${hash}, 55%, 22%), hsl(${(hash + 60) % 360}, 65%, 40%))`
 })
 
-// A live preview runs the real sketch in the card. Only local (same-origin)
-// sketches qualify: they're lightweight at low quality and always frame. For
-// external projects we show a cover instead — a remote site may refuse to be
-// framed (blank card) and three full apps on the gallery would be heavy; the
-// live embed still happens in the full viewer.
-const canPreview = computed(
-  () => props.sketch.type === 'local' && props.sketch.embed && props.sketch.url,
-)
+// A live preview runs the real sketch in the card. Any embeddable sketch with
+// a URL qualifies — local sketches at low quality, external projects at their
+// live URL. It mounts lazily (IntersectionObserver) so off-screen cards don't
+// all run at once. If a particular external site refuses to be framed it'll
+// look blank; set "embed": false for that entry to fall back to the cover.
+const canPreview = computed(() => props.sketch.embed && props.sketch.url)
 const previewSrc = computed(() =>
   props.sketch.type === 'local' ? `${props.sketch.url}?quality=low&preview=1` : props.sketch.url,
 )

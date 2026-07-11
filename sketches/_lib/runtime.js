@@ -26,8 +26,9 @@
  * Declaring params connects the sketch to the viewer over postMessage: the
  * viewer renders sliders, edits mappings, and saves/applies scenes
  * (param values + input mappings + display settings). Input sources:
- * beat.pulse, beat.level, mouse.x, mouse.y, time.sin — each 0..1; a mapping's
- * amount (-1..1) adds source × amount × (max − min) to the param's base value.
+ * beat.pulse/level/low/mid/high/volume, mouse.x/y, tilt.x/y + shake
+ * (accelerometer/gyro), time.sin — each 0..1; a mapping's amount (-1..1) adds
+ * source × amount × (max − min) to the param's base value.
  *
  * Everything is opt-in — sketches that ignore all of this still work.
  */
@@ -42,6 +43,9 @@ export const INPUT_SOURCES = [
   'beat.volume', // broadband loudness
   'mouse.x',
   'mouse.y',
+  'tilt.x', // device tilt left–right (accelerometer/gyro)
+  'tilt.y', // device tilt front–back
+  'shake', // device shake intensity (accelerometer), decays
   'time.sin', // slow 10 s oscillation
 ]
 
@@ -147,6 +151,31 @@ function mountMicButton(beat) {
   document.body.appendChild(btn)
 }
 
+// Permission button for device motion (iOS). onGrant returns true on success.
+function mountMotionButton(onGrant) {
+  if (document.getElementById('motion-toggle')) return
+  const btn = document.createElement('button')
+  btn.id = 'motion-toggle'
+  btn.textContent = '📱'
+  btn.title = 'Enable motion / tilt input'
+  btn.style.cssText = `
+    position: fixed; bottom: 12px; right: 62px; z-index: 1000;
+    width: 42px; height: 42px; border-radius: 50%;
+    font-size: 18px; cursor: pointer; opacity: 0.45;
+    color: #fff; background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.3);`
+  btn.addEventListener('click', async () => {
+    const ok = await onGrant()
+    if (ok) {
+      btn.style.opacity = 1
+      btn.title = 'Motion enabled'
+    } else {
+      showToast('Motion permission denied')
+    }
+  })
+  document.body.appendChild(btn)
+}
+
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
 
 export function createRuntime() {
@@ -171,6 +200,49 @@ export function createRuntime() {
     mouse.y = 1 - e.clientY / window.innerHeight
   })
 
+  // Device motion (accelerometer + gyroscope): tilt.x/y are orientation, shake
+  // is acceleration magnitude. Enabled lazily when a tilt/shake mapping is used
+  // (iOS needs a permission gesture — handled by a mounted button).
+  const motion = { x: 0.5, y: 0.5, shake: 0 }
+  let motionStarted = false
+  function startMotion() {
+    if (motionStarted) return
+    motionStarted = true
+    window.addEventListener('deviceorientation', (e) => {
+      if (e.gamma != null) motion.x = clamp(0.5 + e.gamma / 90, 0, 1) // left–right
+      if (e.beta != null) motion.y = clamp(0.5 + e.beta / 90, 0, 1) // front–back
+    })
+    window.addEventListener('devicemotion', (e) => {
+      const a = e.acceleration || e.accelerationIncludingGravity
+      if (a) {
+        const mag = Math.hypot(a.x || 0, a.y || 0, a.z || 0)
+        motion.shake = Math.max(motion.shake, Math.min(1, mag / 22))
+      }
+    })
+  }
+  function enableMotion() {
+    const DOE = window.DeviceOrientationEvent
+    const DME = window.DeviceMotionEvent
+    // iOS 13+ gates the sensors behind a permission request from a user gesture.
+    const needsPrompt =
+      (DOE && typeof DOE.requestPermission === 'function') ||
+      (DME && typeof DME.requestPermission === 'function')
+    if (needsPrompt) {
+      mountMotionButton(async () => {
+        try {
+          if (DOE && typeof DOE.requestPermission === 'function') await DOE.requestPermission()
+          if (DME && typeof DME.requestPermission === 'function') await DME.requestPermission()
+          startMotion()
+          return true
+        } catch {
+          return false
+        }
+      })
+    } else {
+      startMotion()
+    }
+  }
+
   function sourceValue(source, now) {
     switch (source) {
       case 'beat.pulse': return beat.state.pulse
@@ -181,6 +253,9 @@ export function createRuntime() {
       case 'beat.volume': return beat.state.volume
       case 'mouse.x': return mouse.x
       case 'mouse.y': return mouse.y
+      case 'tilt.x': return motion.x
+      case 'tilt.y': return motion.y
+      case 'shake': return motion.shake
       case 'time.sin': return 0.5 + 0.5 * Math.sin(now * 0.001 * Math.PI * 0.2) // 10 s period
       default: return 0
     }
@@ -201,7 +276,9 @@ export function createRuntime() {
 
   function setMappings(next) {
     mappings = (next ?? []).filter((m) => m && m.source && m.param)
-    if (!preview && mappings.some((m) => m.source.startsWith('beat.'))) mountMicButton(beat)
+    if (preview) return
+    if (mappings.some((m) => m.source.startsWith('beat.'))) mountMicButton(beat)
+    if (mappings.some((m) => m.source.startsWith('tilt.') || m.source === 'shake')) enableMotion()
   }
 
   function announce() {
@@ -240,6 +317,12 @@ export function createRuntime() {
       beat.onBeat(cb)
     },
 
+    // Opt in to accelerometer/gyro without a mapping (prompts on iOS).
+    enableMotion() {
+      if (!preview) enableMotion()
+    },
+    motion,
+
     params(def) {
       const view = {}
       for (const [name, spec] of Object.entries(def)) {
@@ -259,6 +342,7 @@ export function createRuntime() {
     tick(now = performance.now()) {
       fpsTick?.(now)
       beat.update(now)
+      motion.shake *= 0.9 // shake decays like beat.pulse
       applyModulation(now)
     },
   }

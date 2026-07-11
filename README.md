@@ -94,11 +94,13 @@ rt.mapInput('beat.pulse', 'speed', 0.3) // default input→param mapping
 Declaring params lights up the **controls panel** (tune icon) in the viewer:
 
 - **Parameters** — live sliders/switches for everything declared.
-- **Input mappings** — route inputs (`beat.pulse`, `beat.level`, `mouse.x`,
-  `mouse.y`, `time.sin`) into any numeric parameter with an amount from −1
-  to 1. Effective value = base + input × amount × (max − min). This is how
-  you "trigger changes on beat" without writing code — or use `rt.onBeat`
-  for full control.
+- **Input mappings** — route inputs into any numeric parameter with an amount
+  from −1 to 1. Sources: audio (`beat.pulse`, `beat.level`/`low`/`mid`/`high`,
+  `beat.volume`), pointer (`mouse.x`, `mouse.y`), device motion (`tilt.x`,
+  `tilt.y`, `shake` — accelerometer/gyro; iOS shows a permission button), and
+  `time.sin`. Effective value = base + input × amount × (max − min). This is
+  how you "trigger changes on beat" (or tilt) without writing code — or use
+  `rt.onBeat` / `rt.motion` for full control.
 - **Scenes** — save the current parameter values + input mappings + display
   settings under a name. Saved scenes appear alongside the gallery on the
   home page and deep-link as `/#/sketch/<slug>?scene=<id>`. They're stored in

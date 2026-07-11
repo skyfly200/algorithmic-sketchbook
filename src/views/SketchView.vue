@@ -14,6 +14,9 @@ const INPUT_SOURCES = [
   'beat.volume',
   'mouse.x',
   'mouse.y',
+  'tilt.x',
+  'tilt.y',
+  'shake',
   'time.sin',
 ]
 
