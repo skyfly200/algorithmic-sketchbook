@@ -1,0 +1,7 @@
+{
+  "title": "Interference Rings",
+  "description": "Overlapping zone plates — sin(r²) concentric-ring gratings — summed across a lattice so they beat into moiré interference, like the diffraction-grating patterns. 1-bit crisp or smooth, with drift and zoom you can map to the music.",
+  "tags": ["interference", "moire", "zone-plate", "diffraction", "generative", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-07-11"
+}
