@@ -8,10 +8,10 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  density: { value: 1.2, min: 0.4, max: 2.5, step: 0.05, label: 'Bubble density' },
-  growth: { value: 0.7, min: 0, max: 2, step: 0.05, label: 'Growth speed' },
+  density: { value: 1.7, min: 0.4, max: 3, step: 0.05, label: 'Bubble density' },
+  growth: { value: 0.5, min: 0, max: 2, step: 0.05, label: 'Growth speed' },
   jiggle: { value: 0.4, min: 0, max: 2, step: 0.05, label: 'Jiggle' },
-  popRate: { value: 0.3, min: 0, max: 2, step: 0.05, label: 'Pop rate' },
+  popRate: { value: 0.2, min: 0, max: 2, step: 0.05, label: 'Pop rate' },
   tint: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Film tint' },
 })
 // Music: beats pop bubbles and shake the raft; loudness drives growth.
@@ -98,6 +98,49 @@ function resize() {
   bubbles = Array.from({ length: target }, () => newBubble())
 }
 
+// Clip a polygon to the half-plane { p : (p - b)·dir <= dist } (Sutherland–
+// Hodgman). Used to cut a bubble along the flat wall it shares with a neighbor.
+function clipHalfplane(poly, bx, by, dx, dy, dist) {
+  const out = []
+  const n = poly.length
+  for (let i = 0; i < n; i++) {
+    const cur = poly[i]
+    const nxt = poly[(i + 1) % n]
+    const dc = (cur.x - bx) * dx + (cur.y - by) * dy - dist
+    const dn = (nxt.x - bx) * dx + (nxt.y - by) * dy - dist
+    if (dc <= 0) out.push(cur)
+    if (dc <= 0 !== dn <= 0) {
+      const t = dc / (dc - dn)
+      out.push({ x: cur.x + t * (nxt.x - cur.x), y: cur.y + t * (nxt.y - cur.y) })
+    }
+  }
+  return out
+}
+
+// A bubble's foam cell: its circle, cut by the radical axis against every
+// neighbour it actually touches. Touching pairs get a flat shared wall (like a
+// power/Laguerre Voronoi); free edges stay round. This is what makes foam tile.
+function cellPoly(b, nbrs) {
+  const N = 72
+  let poly = new Array(N)
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2
+    poly[i] = { x: b.x + Math.cos(a) * b.r, y: b.y + Math.sin(a) * b.r }
+  }
+  for (const o of nbrs) {
+    const dx = o.x - b.x
+    const dy = o.y - b.y
+    const d = Math.hypot(dx, dy) || 0.001
+    if (d >= b.r + o.r) continue // not touching → no flat wall
+    // Radical-axis distance from b's centre along the line to o (bigger bubbles
+    // push the wall toward smaller ones — realistic foam).
+    const dist = (d * d + b.r * b.r - o.r * o.r) / (2 * d)
+    poly = clipHalfplane(poly, b.x, b.y, dx / d, dy / d, dist)
+    if (poly.length < 3) break
+  }
+  return poly
+}
+
 function frame(now) {
   rt.tick(now)
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
@@ -125,7 +168,7 @@ function frame(now) {
       if (overlap > 0) {
         const nx = dx / d
         const ny = dy / d
-        const push = overlap * 0.06
+        const push = overlap * 0.028
         a.vx -= nx * push
         a.vy -= ny * push
         b.vx += nx * push
@@ -183,9 +226,45 @@ function frame(now) {
   ctx.fillRect(0, 0, width, height)
 
   bubbles.sort((a, b) => b.r - a.r) // big first, small rims sit on top
+
+  // Film-wall colour (matches the sprite's Plateau-border tint).
+  const filmA = [255, 246, 232]
+  const filmB = [232, 244, 255]
+  const film = filmA.map((a, i) => Math.round(a + (filmB[i] - a) * params.tint))
+  ctx.lineJoin = 'round'
+
   for (const b of bubbles) {
-    const s = b.r * 2.04
+    // Neighbours this bubble actually touches.
+    const nbrs = []
+    for (const o of bubbles) {
+      if (o === b) continue
+      const dx = o.x - b.x
+      const dy = o.y - b.y
+      const rr = b.r + o.r
+      if (dx * dx + dy * dy < rr * rr) nbrs.push(o)
+    }
+    const poly = cellPoly(b, nbrs)
+    if (poly.length < 3) continue
+
+    // Fill: the shaded dome, clipped to the (flattened) cell.
+    ctx.save()
+    ctx.beginPath()
+    ctx.moveTo(poly[0].x, poly[0].y)
+    for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y)
+    ctx.closePath()
+    ctx.clip()
+    const s = b.r * 2.06
     ctx.drawImage(SPRITE, b.x - s / 2, b.y - s / 2, s, s)
+    ctx.restore()
+
+    // The bright soap-film wall along every edge (flat or round).
+    ctx.beginPath()
+    ctx.moveTo(poly[0].x, poly[0].y)
+    for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y)
+    ctx.closePath()
+    ctx.strokeStyle = `rgba(${film[0]}, ${film[1]}, ${film[2]}, 0.75)`
+    ctx.lineWidth = 1.4 * rt.pixelRatio
+    ctx.stroke()
   }
 
   requestAnimationFrame(frame)
