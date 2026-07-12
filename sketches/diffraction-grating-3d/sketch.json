@@ -1,0 +1,7 @@
+{
+  "title": "Diffraction Grating 3D",
+  "description": "A 3D render of a holographic diffraction grating — micro-grooves split reflected light into spectral orders via the grating equation, throwing the shifting rainbow sheen of a CD, hologram, or diffraction foil. Linear, radial, or spiral grooves on a disc, torus-knot, or sphere; orbit with the mouse. Grating type, pitch, and shape are randomized each load and mappable to audio.",
+  "tags": ["diffraction", "optics", "holographic", "generative", "audio-reactive"],
+  "tech": ["three.js", "webgl", "glsl"],
+  "created": "2026-07-12"
+}
