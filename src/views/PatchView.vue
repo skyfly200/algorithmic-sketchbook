@@ -145,9 +145,50 @@ const wires = computed(() =>
 const drag = reactive({ node: null, dx: 0, dy: 0 })
 const wire = reactive({ active: false, from: null, x: 0, y: 0 })
 
+// --- pan & zoom: the graph lives in a transformed "space" so it can be
+// scrolled and scaled without moving any node's stored coordinates.
+const view = reactive({ zoom: 1, panX: 0, panY: 0 })
+const pan = reactive({ active: false, sx: 0, sy: 0, ox: 0, oy: 0 })
+const spaceStyle = computed(() => ({
+  transform: `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`,
+  transformOrigin: '0 0',
+}))
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
+
 function boardXY(e) {
   const r = board.value.getBoundingClientRect()
-  return { x: e.clientX - r.left, y: e.clientY - r.top }
+  // Screen point -> untransformed space coordinate.
+  return {
+    x: (e.clientX - r.left - view.panX) / view.zoom,
+    y: (e.clientY - r.top - view.panY) / view.zoom,
+  }
+}
+function zoomAround(cx, cy, factor) {
+  const z = clamp(view.zoom * factor, 0.25, 2.5)
+  view.panX = cx - ((cx - view.panX) / view.zoom) * z
+  view.panY = cy - ((cy - view.panY) / view.zoom) * z
+  view.zoom = z
+}
+function onWheel(e) {
+  const r = board.value.getBoundingClientRect()
+  zoomAround(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.1 : 1 / 1.1)
+}
+function zoomStep(factor) {
+  const r = board.value.getBoundingClientRect()
+  zoomAround(r.width / 2, r.height / 2, factor)
+}
+function resetView() {
+  view.zoom = 1
+  view.panX = 0
+  view.panY = 0
+}
+function onBoardDown(e) {
+  if (e.target.closest('.node')) return // let node/port handlers run
+  pan.active = true
+  pan.sx = e.clientX
+  pan.sy = e.clientY
+  pan.ox = view.panX
+  pan.oy = view.panY
 }
 function startDrag(n, e) {
   const p = boardXY(e)
@@ -173,6 +214,11 @@ function endWire(n, port) {
   persist()
 }
 function onMove(e) {
+  if (pan.active) {
+    view.panX = pan.ox + (e.clientX - pan.sx)
+    view.panY = pan.oy + (e.clientY - pan.sy)
+    return
+  }
   const p = boardXY(e)
   if (drag.node != null) {
     const n = nodes.find((x) => x.id === drag.node)
@@ -190,6 +236,7 @@ function onUp() {
   if (drag.node != null) persist()
   drag.node = null
   wire.active = false
+  pan.active = false
 }
 function removeEdge(idx) {
   edges.splice(idx, 1)
@@ -518,7 +565,16 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- node board -->
-    <div v-show="!outputOnly" ref="board" class="board" @pointermove="onMove" @pointerup="onUp">
+    <div
+      v-show="!outputOnly"
+      ref="board"
+      class="board"
+      @pointermove="onMove"
+      @pointerup="onUp"
+      @pointerdown="onBoardDown"
+      @wheel.prevent="onWheel"
+    >
+      <div class="space" :style="spaceStyle">
       <svg class="wires">
         <path
           v-for="w in wires"
@@ -595,6 +651,14 @@ onBeforeUnmount(() => {
           </select>
         </div>
       </div>
+      </div>
+    </div>
+
+    <div v-show="!outputOnly" class="zoom-ctrls">
+      <v-btn icon="mdi-magnify-minus-outline" size="x-small" variant="text" title="Zoom out" @click="zoomStep(1 / 1.2)" />
+      <span class="zoom-pct">{{ Math.round(view.zoom * 100) }}%</span>
+      <v-btn icon="mdi-magnify-plus-outline" size="x-small" variant="text" title="Zoom in" @click="zoomStep(1.2)" />
+      <v-btn icon="mdi-fit-to-page-outline" size="x-small" variant="text" title="Reset view" @click="resetView" />
     </div>
 
     <div v-show="!outputOnly" class="hint">Drag a node's right port to another node's left port to wire it. Click a wire to remove it. ◆ ports/dashed wires carry a matte or mask.</div>
@@ -611,7 +675,15 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; gap: 6px; padding: 8px 12px;
   background: linear-gradient(to bottom, rgba(0,0,0,0.75), rgba(0,0,0,0.1));
 }
-.board { position: absolute; inset: 0; z-index: 10; }
+.board { position: absolute; inset: 0; z-index: 10; cursor: grab; }
+.board:active { cursor: grabbing; }
+.space { position: absolute; inset: 0; transform-origin: 0 0; }
+.zoom-ctrls {
+  position: absolute; bottom: 8px; left: 8px; z-index: 30;
+  display: flex; align-items: center; gap: 2px;
+  background: rgba(20,22,30,0.85); border-radius: 8px; padding: 2px 4px;
+}
+.zoom-pct { font: 11px system-ui, sans-serif; color: #cdd3e0; min-width: 38px; text-align: center; }
 .wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 11; }
 .wire { pointer-events: stroke; cursor: pointer; opacity: 0.9; }
 .wire:hover { stroke-width: 4; }
