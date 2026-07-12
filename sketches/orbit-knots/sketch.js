@@ -4,7 +4,7 @@ import { createRuntime } from '../_lib/runtime.js'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 
-const renderer = new THREE.WebGLRenderer({ antialias: true })
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: new URLSearchParams(location.search).get('capture') === '1' })
 const rt = createRuntime()
 renderer.setPixelRatio(rt.pixelRatio)
 document.body.appendChild(renderer.domElement)

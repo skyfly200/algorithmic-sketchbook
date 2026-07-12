@@ -19,7 +19,8 @@ const params = rt.params({
 rt.mapInput('beat.volume', 'colorCycle', 0.6)
 
 const canvas = document.getElementById('canvas')
-const gl = canvas.getContext('webgl2')
+const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
+const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: CAPTURE })
 const hint = document.getElementById('hint')
 
 // View state (complex plane). scale = half-height in complex units.

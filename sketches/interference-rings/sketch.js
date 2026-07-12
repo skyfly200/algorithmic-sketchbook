@@ -23,7 +23,8 @@ rt.mapInput('beat.volume', 'drift', 0.9) // louder = faster drift
 rt.mapInput('beat.pulse', 'zoom', 0.25) // beats breathe the zoom
 
 const canvas = document.getElementById('canvas')
-const gl = canvas.getContext('webgl2')
+const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
+const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: CAPTURE })
 
 const VERT = `#version 300 es
 in vec2 position;

@@ -12,6 +12,15 @@ import BrandLogo from './components/BrandLogo.vue'
         </router-link>
       </v-app-bar-title>
       <v-btn
+        prepend-icon="mdi-vector-polyline"
+        variant="tonal"
+        size="small"
+        class="mr-2"
+        :to="{ name: 'patch' }"
+      >
+        Patch
+      </v-btn>
+      <v-btn
         prepend-icon="mdi-layers-triple-outline"
         variant="tonal"
         size="small"
