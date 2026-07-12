@@ -9,14 +9,18 @@
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
+// Seeded generative variation: the mandala (symmetry, twist, detail), the zoom
+// depth, and the palette are drawn from the runtime's seeded RNG, so every load
+// — and the viewer's 🎲 (which reloads with a new ?seed=) — is a fresh piece,
+// while a given seed always reproduces the same one.
 const params = rt.params({
-  speed: { value: 0.2, min: -1, max: 1, step: 0.01, label: 'Zoom speed (±)' },
-  zoom: { value: 4, min: 1.5, max: 12, step: 0.1, label: 'Zoom ratio' },
-  layers: { value: 6, min: 2, max: 8, step: 1, label: 'Layers' },
-  twist: { value: 0.6, min: -3, max: 3, step: 0.05, label: 'Spiral twist' },
-  sectors: { value: 6, min: 2, max: 16, step: 1, label: 'Symmetry' },
-  detail: { value: 8, min: 2, max: 24, step: 0.5, label: 'Ring detail' },
-  hue: { value: 0.6, min: 0, max: 1, step: 0.01, label: 'Hue' },
+  speed: { value: +rt.random(0.12, 0.32).toFixed(2), min: -1, max: 1, step: 0.01, label: 'Zoom speed (±)' },
+  zoom: { value: +rt.random(2.5, 8).toFixed(1), min: 1.5, max: 12, step: 0.1, label: 'Zoom ratio' },
+  layers: { value: Math.round(rt.random(4, 7)), min: 2, max: 8, step: 1, label: 'Layers' },
+  twist: { value: +rt.random(-1.8, 1.8).toFixed(2), min: -3, max: 3, step: 0.05, label: 'Spiral twist' },
+  sectors: { value: Math.round(rt.random(3, 12)), min: 2, max: 16, step: 1, label: 'Symmetry' },
+  detail: { value: +rt.random(4, 16).toFixed(1), min: 2, max: 24, step: 0.5, label: 'Ring detail' },
+  hue: { value: +rt.rng().toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
 })
 // Music: loudness drives the zoom, beats kick the spiral.
 rt.mapInput('beat.volume', 'speed', 0.5)
