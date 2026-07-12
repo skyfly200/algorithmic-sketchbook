@@ -25,15 +25,15 @@ const store = useSketchStore()
 
     <div>
       <v-chip
-        v-for="tag in store.allTags"
-        :key="tag"
+        v-for="cat in store.categories"
+        :key="cat"
         size="small"
         class="mr-1 mb-1"
-        :variant="store.selectedTags.includes(tag) ? 'flat' : 'outlined'"
-        :color="store.selectedTags.includes(tag) ? 'primary' : undefined"
-        @click="store.toggleTag(tag)"
+        :variant="store.selectedCategories.includes(cat) ? 'flat' : 'outlined'"
+        :color="store.selectedCategories.includes(cat) ? 'primary' : undefined"
+        @click="store.toggleCategory(cat)"
       >
-        {{ tag }}
+        {{ cat }}
       </v-chip>
     </div>
   </div>

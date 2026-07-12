@@ -1,30 +1,53 @@
 import { defineStore } from 'pinia'
 import { allSketches } from '../registry'
 
+// Curated theme filters. Raw tags+tech produced ~50 chips (most on a single
+// project); instead each chip is a theme backed by a set of keywords matched
+// against a project's tags + tech, so one chip reliably catches every project
+// it should even when their tag wording differs. Order = display order.
+export const CATEGORIES = [
+  { label: '3D', keys: ['3d', 'three.js', 'phyllotaxis', 'holographic'] },
+  { label: 'Shader', keys: ['shader', 'glsl'] },
+  { label: 'Optics', keys: ['optics', 'diffraction', 'interference', 'moire', 'caustics', 'holographic', 'zone-plate'] },
+  { label: 'Simulation', keys: ['simulation', 'boiling', 'bubbles', 'foam', 'condensation', 'droplets', 'fluid', 'water', 'packing', 'particles'] },
+  { label: 'Fractal', keys: ['fractal', 'mandelbrot', 'julia', 'zoom', 'kaleidoscope', 'loop'] },
+  { label: 'Geometric', keys: ['tessellation', 'grid', 'hexagons', 'token-art'] },
+  { label: 'Motion', keys: ['motion', 'video', 'computer-vision', 'webcam', 'mask', 'compositing'] },
+  { label: 'Audio-reactive', keys: ['audio-reactive', 'beat', 'web-audio'] },
+]
+
+function matchesCategory(sketch, label) {
+  const cat = CATEGORIES.find((c) => c.label === label)
+  if (!cat) return false
+  const terms = [...sketch.tags, ...sketch.tech]
+  return cat.keys.some((k) => terms.includes(k))
+}
+
 export const useSketchStore = defineStore('sketches', {
   state: () => ({
     sketches: allSketches,
     search: '',
-    selectedTags: [],
+    selectedCategories: [],
     typeFilter: 'all', // 'all' | 'local' | 'external'
   }),
 
   getters: {
-    allTags(state) {
-      const tags = new Set()
-      for (const s of state.sketches) {
-        for (const t of [...s.tags, ...s.tech]) tags.add(t)
-      }
-      return [...tags].sort()
+    // Only show category chips that actually match at least one project.
+    categories(state) {
+      return CATEGORIES.filter((c) => state.sketches.some((s) => matchesCategory(s, c.label))).map(
+        (c) => c.label,
+      )
     },
 
     filtered(state) {
       const q = state.search.trim().toLowerCase()
       return state.sketches.filter((s) => {
         if (state.typeFilter !== 'all' && s.type !== state.typeFilter) return false
+        // Union: a project shows if it matches ANY selected theme, so combining
+        // chips broadens the view instead of narrowing it to nothing.
         if (
-          state.selectedTags.length &&
-          !state.selectedTags.every((t) => s.tags.includes(t) || s.tech.includes(t))
+          state.selectedCategories.length &&
+          !state.selectedCategories.some((c) => matchesCategory(s, c))
         )
           return false
         if (q) {
@@ -40,9 +63,9 @@ export const useSketchStore = defineStore('sketches', {
     bySlug(slug) {
       return this.sketches.find((s) => s.slug === slug) ?? null
     },
-    toggleTag(tag) {
-      const i = this.selectedTags.indexOf(tag)
-      i === -1 ? this.selectedTags.push(tag) : this.selectedTags.splice(i, 1)
+    toggleCategory(label) {
+      const i = this.selectedCategories.indexOf(label)
+      i === -1 ? this.selectedCategories.push(label) : this.selectedCategories.splice(i, 1)
     },
   },
 })
