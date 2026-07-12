@@ -10,10 +10,12 @@ import { createRuntime } from '../_lib/runtime.js'
 const rt = createRuntime()
 rt.onBeat(() => {}) // mounts the mic toggle so the piece can react to sound
 
-const tokenData = {
-  hash: '0xaa00a4fe8d5c262fb94461ae759cbd4cca7e5c90e63488d53cb5a635716914b6',
-  tokenId: '4000266',
-}
+// The original piece is hash-seeded; here the "token hash" is generated from
+// the runtime's seeded RNG, so every load (and the viewer's 🎲) is a fresh
+// deterministic token, while a given ?seed= always reproduces the same one.
+const hash =
+  '0x' + Array.from({ length: 64 }, () => Math.floor(rt.rng() * 16).toString(16)).join('')
+const tokenData = { hash, tokenId: String(Math.floor(rt.rng() * 1e7)) }
 
 let seed = parseInt(tokenData.hash.slice(0, 16), 16)
 const initialSeed = seed
@@ -56,8 +58,8 @@ function rnd_outcome(input, values, outcome, fallback) {
 }
 
 // --- hash-driven configuration (resolution independent) ---
-const cp_r = 6
-const bg_r = 1
+const cp_r = Math.floor(rt.rng() * palette_choices.length) // random palette per seed
+const bg_r = rt.rng() > 0.5 ? 1 : 0
 const pal = palette_choices[cp_r]
 let bg = pal[bg_r ? pal.length - 1 : 0]
 let fg = bg_r ? pal.slice(0, pal.length - 1) : pal.slice(1)

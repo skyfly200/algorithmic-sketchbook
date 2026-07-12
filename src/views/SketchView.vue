@@ -32,9 +32,16 @@ const sketch = computed(() => store.bySlug(props.slug))
 
 // Local sketches understand the runtime's display params; external URLs are
 // left untouched. Changing a setting changes the src, which reloads the frame.
-const frameSrc = computed(() =>
-  sketch.value?.type === 'local' ? sketch.value.url + viewer.sketchParams : sketch.value?.url,
-)
+const seed = ref(null)
+const frameSrc = computed(() => {
+  if (sketch.value?.type !== 'local') return sketch.value?.url
+  let s = sketch.value.url + viewer.sketchParams
+  if (seed.value != null) s += (s.includes('?') ? '&' : '?') + 'seed=' + seed.value
+  return s
+})
+function randomize() {
+  seed.value = Math.floor(Math.random() * 1e9).toString(36)
+}
 
 const frame = ref(null)
 const reloadKey = ref(0)
@@ -228,6 +235,13 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
             @click="showControls = !showControls"
           />
         </template>
+        <v-btn
+          icon="mdi-dice-5-outline"
+          variant="text"
+          size="small"
+          title="Randomize — new generative variation"
+          @click="randomize"
+        />
         <v-btn icon="mdi-refresh" variant="text" size="small" @click="reloadKey++" />
         <v-btn
           icon="mdi-projector-screen-outline"

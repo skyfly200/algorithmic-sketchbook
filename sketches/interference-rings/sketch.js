@@ -9,14 +9,14 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  freq: { value: 40, min: 5, max: 160, step: 1, label: 'Ring frequency' },
-  ratio: { value: 0.6, min: 0, max: 2, step: 0.01, label: 'Satellite strength' },
-  spread: { value: 0.8, min: 0.1, max: 2, step: 0.05, label: 'Satellite spread' },
+  freq: { value: Math.round(rt.random(22, 85)), min: 5, max: 160, step: 1, label: 'Ring frequency' },
+  ratio: { value: +rt.random(0.25, 1.25).toFixed(2), min: 0, max: 2, step: 0.01, label: 'Satellite strength' },
+  spread: { value: +rt.random(0.5, 1.3).toFixed(2), min: 0.1, max: 2, step: 0.05, label: 'Satellite spread' },
   zoom: { value: 1, min: 0.3, max: 3, step: 0.05, label: 'Zoom' },
   drift: { value: 0.5, min: 0, max: 4, step: 0.05, label: 'Drift' },
-  binary: { value: true, type: 'bool', label: '1-bit (crisp)' },
+  binary: { value: rt.rng() > 0.35, type: 'bool', label: '1-bit (crisp)' },
   softness: { value: 0.4, min: 0, max: 2, step: 0.05, label: 'Edge softness' },
-  hue: { value: 0, min: 0, max: 1, step: 0.01, label: 'Hue tint (0 = mono)' },
+  hue: { value: +rt.rng().toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue tint (0 = mono)' },
 })
 // Map the music onto the motion by default (remix in the controls panel).
 rt.mapInput('beat.volume', 'drift', 0.9) // louder = faster drift

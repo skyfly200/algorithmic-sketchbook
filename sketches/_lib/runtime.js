@@ -185,6 +185,19 @@ export function createRuntime() {
   const preview = urlParams.get('preview') === '1'
   const fpsTick = !preview && urlParams.get('fps') === '1' ? mountFpsMeter() : null
 
+  // Seeded RNG (mulberry32): a sketch that derives its look from rt.rng() gets
+  // a fresh variation per ?seed= (the viewer's 🎲 button re-seeds), while the
+  // same seed always reproduces — so a look can be saved/shared.
+  const seedParam = urlParams.get('seed')
+  const seed = (seedParam ? parseInt(seedParam, 36) : (Math.random() * 4294967296) >>> 0) >>> 0
+  let _s = seed
+  function rng() {
+    _s = (_s + 0x6d2b79f5) | 0
+    let t = Math.imul(_s ^ (_s >>> 15), 1 | _s)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+
   const beat = createBeatDetector()
 
   // --- param engine ------------------------------------------------------
@@ -311,6 +324,12 @@ export function createRuntime() {
     pixelRatio: quality.pixelRatio,
     detail: quality.detail,
     beat,
+
+    // Seeded randomness for generative variation (see note above).
+    seed,
+    rng,
+    random: (min = 0, max = 1) => min + (max - min) * rng(),
+    pick: (arr) => arr[Math.floor(rng() * arr.length)],
 
     onBeat(cb) {
       if (!preview) mountMicButton(beat)

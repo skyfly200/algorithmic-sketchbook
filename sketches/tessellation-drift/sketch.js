@@ -8,18 +8,22 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  cellSize: { value: 54, min: 22, max: 120, step: 1, label: 'Cell size' },
-  hexagonal: { value: true, type: 'bool', label: 'Hexagons (off = squares)' },
-  grow: { value: 0.45, min: 0, max: 0.9, step: 0.01, label: 'Grow / shrink' },
+  cellSize: { value: Math.round(rt.random(32, 88)), min: 22, max: 120, step: 1, label: 'Cell size' },
+  hexagonal: { value: rt.rng() > 0.5, type: 'bool', label: 'Hexagons (off = squares)' },
+  grow: { value: +rt.random(0.28, 0.72).toFixed(2), min: 0, max: 0.9, step: 0.01, label: 'Grow / shrink' },
   growSpeed: { value: 0.6, min: 0.05, max: 2.5, step: 0.05, label: 'Grow speed' },
-  warp: { value: 26, min: 0, max: 90, step: 1, label: 'Warp amount' },
-  warpScale: { value: 1, min: 0.2, max: 3, step: 0.1, label: 'Warp scale' },
-  drift: { value: 0.5, min: 0, max: 3, step: 0.05, label: 'Drift speed' },
+  warp: { value: Math.round(rt.random(8, 60)), min: 0, max: 90, step: 1, label: 'Warp amount' },
+  warpScale: { value: +rt.random(0.5, 1.9).toFixed(2), min: 0.2, max: 3, step: 0.1, label: 'Warp scale' },
+  drift: { value: +rt.random(0.2, 1.3).toFixed(2), min: 0, max: 3, step: 0.05, label: 'Drift speed' },
   fill: { value: true, type: 'bool', label: 'Fill cells' },
   trail: { value: 1, min: 0.08, max: 1, step: 0.01, label: 'Clear (1 = crisp)' },
 })
 // Beats pump the cell growth by default — remix in the controls panel.
 rt.mapInput('beat.pulse', 'grow', 0.35)
+
+// Seeded generative variation: phase-shift the noise field and the palette.
+const NSEED = rt.random(0, 100)
+const hueBase = rt.random(0, 360)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
@@ -37,8 +41,8 @@ function noise(x, y, t) {
   return (
     0.5 +
     0.5 *
-      (0.5 * Math.sin(x * 1.7 + t) * Math.cos(y * 1.3 - t * 0.7) +
-        0.5 * Math.sin((x + y) * 0.9 - t * 0.4))
+      (0.5 * Math.sin(x * 1.7 + t + NSEED) * Math.cos(y * 1.3 - t * 0.7 + NSEED) +
+        0.5 * Math.sin((x + y) * 0.9 - t * 0.4 + NSEED))
   )
 }
 
@@ -101,7 +105,7 @@ function frame(now) {
       const growth = 1 - params.grow + params.grow * 2 * n // ~[1-grow, 1+grow]
       const r = size * 0.52 * growth
 
-      const hue = (200 + wx * 0.05 + wy * 0.04 + t * 12) % 360
+      const hue = (hueBase + wx * 0.05 + wy * 0.04 + t * 12) % 360
       const light = 42 + n * 28
       const alpha = 0.25 + 0.6 * n
 
