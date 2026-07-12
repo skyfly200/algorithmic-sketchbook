@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bright Waves Logo</title>
+    <style>
+      /* Transparent by default so this composites as an overlay layer in the
+         Mixer / Patch; the sketch toggles a solid backdrop on with a param. */
+      html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+      #bg { position: fixed; inset: 0; background: #0a0b10; opacity: 0; transition: opacity 0.2s; }
+      #stage {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      }
+      #stage svg { display: block; width: min(100vw, 100vh); height: min(100vw, 100vh); }
+    </style>
+  </head>
+  <body>
+    <div id="bg"></div>
+    <div id="stage"></div>
+    <script type="module" src="./sketch.js"></script>
+  </body>
+</html>
