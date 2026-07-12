@@ -48,10 +48,32 @@ const maskCtx = maskCanvas.getContext('2d')
 let lastNow = 0
 let frameDt = 16.7
 
-let source = null // <video> or demo <canvas>
+let source = null // <video>, demo <canvas>, or the Mixer feed <canvas>
 let sourceW = 0
 let sourceH = 0
 let demoTick = null
+
+// In the Mixer, the parent streams the composite of the layers stacked below
+// this one as frames — auto-select that as the source (no camera needed) so
+// motion extraction processes the effects beneath it.
+let mixerFeed = null
+let isMixerFeed = false
+window.addEventListener('message', (e) => {
+  const d = e.data
+  if (!d || d.type !== 'mixer:frame' || !d.bitmap) return
+  const bmp = d.bitmap
+  if (!mixerFeed) mixerFeed = document.createElement('canvas')
+  if (mixerFeed.width !== bmp.width) mixerFeed.width = bmp.width
+  if (mixerFeed.height !== bmp.height) mixerFeed.height = bmp.height
+  mixerFeed.getContext('2d').drawImage(bmp, 0, 0)
+  bmp.close?.()
+  demoTick = null
+  source = mixerFeed
+  sourceW = mixerFeed.width
+  sourceH = mixerFeed.height
+  isMixerFeed = true
+  if (chooser) chooser.style.display = 'none'
+})
 
 // Ring buffer of past frames for the delay line.
 const MAX_DELAY = 30
@@ -82,7 +104,8 @@ function drawSource(target, tw = canvas.width, th = canvas.height, img = source)
   const h = sourceH * scale
   const x = (tw - w) / 2
   const y = (th - h) / 2
-  if (params.mirror) {
+  // Mirror is a selfie convenience for the camera — never flip the Mixer feed.
+  if (params.mirror && !isMixerFeed) {
     target.save()
     target.translate(tw, 0)
     target.scale(-1, 1)

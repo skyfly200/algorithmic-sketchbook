@@ -8,7 +8,7 @@
  * Each layer keeps its own runtime, so its params/input-mappings still drive it
  * — the composite is therefore input-reactive through its layers.
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSketchStore } from '../stores/sketches'
 import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
 
@@ -50,7 +50,9 @@ function srcFor(slug) {
   if (!s) return ''
   if (s.type !== 'local') return s.url
   const q = viewer.quality !== 'native' ? `&quality=${viewer.quality}` : ''
-  return `${s.url}?preview=1${q}` // preview=1 hides each layer's own overlay chrome
+  // preview=1 hides each layer's overlay chrome; capture=1 makes WebGL layers'
+  // buffers readable so a Motion Extraction layer can ingest the stack below it.
+  return `${s.url}?preview=1&capture=1${q}`
 }
 function title(slug) {
   return store.bySlug(slug)?.title ?? slug
@@ -71,6 +73,90 @@ function move(i, d) {
 function fullscreen() {
   stage.value?.requestFullscreen?.()
 }
+
+// --- Motion Extraction feed ----------------------------------------------
+// A Motion Extraction layer processes the layers stacked below it: each frame
+// we composite those below (same-origin local canvases, with their blend +
+// opacity) into an offscreen canvas and stream it into that layer's iframe,
+// which uses it as its source in place of the webcam. Cross-origin (external)
+// layers can't be read, so they're skipped — same limit as Patch.
+const layerEls = new Map() // layer object -> iframe element
+function bindLayerEl(layer, el) {
+  if (el) layerEls.set(layer, el)
+  else layerEls.delete(layer)
+}
+
+const feeds = new Map() // layer object -> { canvas, ctx }
+function feedFor(layer) {
+  let f = feeds.get(layer)
+  if (!f) {
+    const canvas = new OffscreenCanvas(480, 270)
+    f = { canvas, ctx: canvas.getContext('2d') }
+    feeds.set(layer, f)
+  }
+  return f
+}
+// Blend name -> canvas 2D composite op ('add' is additive 'lighter').
+function canvasBlend(b) {
+  if (b === 'add') return 'lighter'
+  if (b === 'normal') return 'source-over'
+  return b
+}
+function coverDraw(ctx, src, sw, sh, W, H) {
+  const scale = Math.max(W / sw, H / sh)
+  const w = sw * scale
+  const h = sh * scale
+  ctx.drawImage(src, (W - w) / 2, (H - h) / 2, w, h)
+}
+
+let raf = 0
+function captureLoop() {
+  const L = layers.value
+  for (let i = 0; i < L.length; i++) {
+    const lay = L[i]
+    if (!lay.on || lay.slug !== 'motion-extraction') continue
+    const el = layerEls.get(lay)
+    if (!el?.contentWindow) continue
+
+    const { canvas, ctx } = feedFor(lay)
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.globalAlpha = 1
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+    let drew = false
+    let first = true
+    for (let j = 0; j < i; j++) {
+      const below = L[j]
+      if (!below.on || !below.slug) continue
+      let cv = null
+      try {
+        cv = layerEls.get(below)?.contentDocument?.querySelector('canvas')
+      } catch {
+        cv = null // cross-origin layer — can't capture
+      }
+      if (!cv || !cv.width) continue
+      ctx.globalAlpha = below.opacity ?? 1
+      ctx.globalCompositeOperation = first ? 'source-over' : canvasBlend(below.blend)
+      coverDraw(ctx, cv, cv.width, cv.height, canvas.width, canvas.height)
+      first = false
+      drew = true
+    }
+    ctx.globalAlpha = 1
+    ctx.globalCompositeOperation = 'source-over'
+
+    if (drew) {
+      const bmp = canvas.transferToImageBitmap()
+      el.contentWindow.postMessage({ type: 'mixer:frame', bitmap: bmp }, '*', [bmp])
+    }
+  }
+  raf = requestAnimationFrame(captureLoop)
+}
+
+onMounted(() => {
+  raf = requestAnimationFrame(captureLoop)
+})
+onBeforeUnmount(() => cancelAnimationFrame(raf))
 </script>
 
 <template>
@@ -79,6 +165,7 @@ function fullscreen() {
       <template v-for="(layer, i) in layers" :key="`${i}-${layer.slug}`">
         <iframe
           v-if="layer.on && layer.slug"
+          :ref="(el) => bindLayerEl(layer, el)"
           :src="srcFor(layer.slug)"
           class="layer"
           :style="{
