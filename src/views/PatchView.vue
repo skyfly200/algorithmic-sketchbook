@@ -115,12 +115,30 @@ function wirePath(a, b) {
   const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5)
   return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`
 }
+
+// Connection data-role, so ports/wires can carry a shape per type: image
+// streams are round, mattes/masks (a Motion output or a Mask's matte input)
+// are diamonds. A wire is a matte if either end is a matte.
+function inKind(node, port) {
+  if (node.type === 'mask') return port === 1 ? 'matte' : 'image'
+  return 'image'
+}
+function outKind(node) {
+  return node.type === 'motion' ? 'matte' : 'image'
+}
+
 const wires = computed(() =>
   edges.map((e, idx) => {
     const from = nodes.find((n) => n.id === e.from)
     const to = nodes.find((n) => n.id === e.to)
     if (!from || !to) return null
-    return { idx, d: wirePath(outPort(from), inPort(to, e.port)), color: TYPES[from.type].color }
+    const matte = outKind(from) === 'matte' || inKind(to, e.port) === 'matte'
+    return {
+      idx,
+      d: wirePath(outPort(from), inPort(to, e.port)),
+      color: TYPES[from.type].color,
+      matte,
+    }
   }).filter(Boolean),
 )
 
@@ -423,6 +441,7 @@ onBeforeUnmount(() => {
           :stroke="w.color"
           fill="none"
           stroke-width="2.5"
+          :stroke-dasharray="w.matte ? '7 5' : undefined"
           class="wire"
           @click="removeEdge(w.idx)"
         />
@@ -453,20 +472,25 @@ onBeforeUnmount(() => {
 
         <div class="node-thumb" :ref="(el) => bindThumb(n.id, el)" :style="{ height: THUMB_H + 'px' }" />
 
-        <!-- input ports -->
+        <!-- input ports (centered on the wire endpoint; diamond = matte/mask) -->
         <div
           v-for="i in TYPES[n.type].ins"
           :key="'in' + i"
-          class="port port-in"
-          :style="{ top: HEAD_H + (THUMB_H * i) / (TYPES[n.type].ins + 1) + 'px' }"
-          :title="n.type === 'mask' ? (i === 1 ? 'content' : 'mask') : 'input'"
+          class="port"
+          :class="inKind(n, i - 1) === 'matte' ? 'port--matte' : 'port--image'"
+          :style="{
+            left: '-7px',
+            top: HEAD_H + (THUMB_H * i) / (TYPES[n.type].ins + 1) - 7 + 'px',
+          }"
+          :title="n.type === 'mask' ? (i === 1 ? 'content' : 'mask (matte)') : 'input'"
           @pointerup="endWire(n, i - 1)"
         />
         <!-- output port -->
         <div
           v-if="n.type !== 'output'"
-          class="port port-out"
-          :style="{ top: HEAD_H + THUMB_H / 2 + 'px' }"
+          class="port"
+          :class="outKind(n) === 'matte' ? 'port--matte' : 'port--image'"
+          :style="{ left: NODE_W - 7 + 'px', top: HEAD_H + THUMB_H / 2 - 7 + 'px' }"
           @pointerdown="startWire(n, $event)"
         />
 
@@ -487,7 +511,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="hint">Drag a node's right dot to another node's left dot to wire it. Click a wire to remove it.</div>
+    <div class="hint">Drag a node's right port to another node's left port to wire it. Click a wire to remove it. ◆ ports/dashed wires carry a matte or mask.</div>
   </div>
 </template>
 
@@ -524,12 +548,13 @@ onBeforeUnmount(() => {
 .node-body input[type=range] { width: 100%; }
 .node-body .chk { display: flex; align-items: center; gap: 4px; }
 .port {
-  position: absolute; width: 14px; height: 14px; border-radius: 50%;
+  position: absolute; box-sizing: border-box; width: 14px; height: 14px;
   background: #12141c; border: 2px solid #9aa4c0; cursor: crosshair; z-index: 13;
 }
 .port:hover { border-color: #fff; background: #2a2f40; }
-.port-in { left: -8px; }
-.port-out { right: -8px; }
+/* image stream = round; matte / mask = diamond */
+.port--image { border-radius: 50%; }
+.port--matte { border-radius: 2px; transform: rotate(45deg); }
 .hint {
   position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 30;
   color: rgba(255,255,255,0.5); font: 12px system-ui, sans-serif; pointer-events: none;
