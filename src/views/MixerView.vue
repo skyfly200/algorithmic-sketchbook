@@ -57,7 +57,7 @@ function title(slug) {
 }
 
 function addLayer() {
-  layers.value.push({ slug: options.value[0]?.slug, blend: 'screen', opacity: 0.8, on: true })
+  layers.value.push({ slug: options.value[0]?.slug, blend: 'screen', opacity: 0.8, zoom: 1, on: true })
 }
 function removeLayer(i) {
   layers.value.splice(i, 1)
@@ -85,6 +85,7 @@ function fullscreen() {
             zIndex: i,
             opacity: layer.opacity,
             mixBlendMode: cssBlend(layer.blend),
+            transform: `scale(${layer.zoom ?? 1})`,
           }"
           allow="fullscreen; microphone; camera; accelerometer; gyroscope; xr-spatial-tracking"
         />
@@ -127,8 +128,9 @@ function fullscreen() {
         <v-btn icon="mdi-plus" size="x-small" variant="tonal" title="Add layer" @click="addLayer" />
       </div>
       <p class="text-caption text-medium-emphasis mb-3">
-        Bottom of the list is the back layer. Screen/lighten/add combine light;
-        multiply/difference let one effect process the one below.
+        Top of the list is the back layer; each row below stacks in front of it.
+        Screen/lighten/add combine light; multiply/difference let a layer process
+        the one behind it.
       </p>
 
       <v-card v-for="(layer, i) in layers" :key="i" variant="tonal" class="pa-2 mb-2">
@@ -148,8 +150,8 @@ function fullscreen() {
             hide-details
             class="flex-grow-1"
           />
-          <v-btn icon="mdi-chevron-up" size="x-small" variant="text" @click="move(i, 1)" />
-          <v-btn icon="mdi-chevron-down" size="x-small" variant="text" @click="move(i, -1)" />
+          <v-btn icon="mdi-chevron-up" size="x-small" variant="text" @click="move(i, -1)" />
+          <v-btn icon="mdi-chevron-down" size="x-small" variant="text" @click="move(i, 1)" />
           <v-btn icon="mdi-close" size="x-small" variant="text" @click="removeLayer(i)" />
         </div>
         <div class="d-flex align-center ga-2">
@@ -171,6 +173,26 @@ function fullscreen() {
             label="opacity"
           />
         </div>
+        <div class="d-flex align-center ga-2 mt-1">
+          <v-slider
+            :model-value="layer.zoom ?? 1"
+            :min="0.5"
+            :max="3"
+            :step="0.05"
+            density="compact"
+            hide-details
+            label="zoom"
+            @update:model-value="layer.zoom = $event"
+          />
+          <v-btn
+            v-if="(layer.zoom ?? 1) !== 1"
+            icon="mdi-backup-restore"
+            size="x-small"
+            variant="text"
+            title="Reset zoom"
+            @click="layer.zoom = 1"
+          />
+        </div>
       </v-card>
     </v-card>
   </div>
@@ -188,6 +210,7 @@ function fullscreen() {
   inset: 0;
   background: #000;
   isolation: isolate; /* contain blend modes to the stage */
+  overflow: hidden; /* clip zoomed-in (scaled) layers to the stage */
 }
 .layer {
   position: absolute;

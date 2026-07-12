@@ -20,16 +20,5 @@
     "url": "https://moire-patterns.netlify.app/",
     "repo": "https://github.com/skyfly200/moire-patterns",
     "embed": true
-  },
-  {
-    "slug": "holographic-diffraction-gratings",
-    "title": "Holographic Diffraction Gratings",
-    "description": "Design, visualize, and export holographic diffraction grating patterns: linear, radial, Fresnel zone-plate, spiral, crossed, starburst, and carbon-fiber weave gratings, with a live diffracted-spectrum preview from the grating equation and PNG/SVG export.",
-    "tags": ["diffraction", "optics", "generative", "tool"],
-    "tech": ["canvas", "svg", "javascript"],
-    "created": "2026-07-10",
-    "url": "https://holographic-diffraction.netlify.app/",
-    "repo": "https://github.com/skyfly200/holographic-diffraction-gratings",
-    "embed": true
   }
 ]

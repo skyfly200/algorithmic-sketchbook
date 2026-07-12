@@ -11,6 +11,7 @@ import { createRuntime } from '../_lib/runtime.js'
 const rt = createRuntime()
 const params = rt.params({
   scale: { value: 0.7, min: 0.15, max: 1.4, step: 0.01, label: 'Logo size' },
+  opacity: { value: 1, min: 0, max: 1, step: 0.01, label: 'Opacity' },
   spin: { value: 0, min: -60, max: 60, step: 1, label: 'Spin (°/s)' },
   pulse: { value: 0.14, min: 0, max: 0.6, step: 0.01, label: 'Beat pulse' },
   art: { value: true, type: 'bool', label: 'Tiled art disc' },
@@ -76,6 +77,7 @@ const artDisc = document.getElementById(`art-${uid}`)
 function frame(now) {
   rt.tick(now)
   bg.style.opacity = params.backdrop ? 1 : 0
+  stage.style.opacity = params.opacity
   artDisc.style.display = params.art ? '' : 'none'
 
   const s = params.scale * (1 + rt.beat.state.pulse * params.pulse)
