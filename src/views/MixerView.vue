@@ -241,15 +241,19 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
           <v-btn icon="mdi-chevron-down" size="x-small" variant="text" @click="move(i, 1)" />
           <v-btn icon="mdi-close" size="x-small" variant="text" @click="removeLayer(i)" />
         </div>
-        <div class="d-flex align-center ga-2">
+        <!-- Each control's label sits above a full-width input so blend,
+             opacity, and zoom all line up at the same width. -->
+        <div class="ctrl">
+          <span class="ctrl-label">Blend</span>
           <v-select
             v-model="layer.blend"
             :items="BLENDS"
             density="compact"
             hide-details
-            label="blend"
-            style="max-width: 140px"
           />
+        </div>
+        <div class="ctrl">
+          <span class="ctrl-label">Opacity</span>
           <v-slider
             v-model="layer.opacity"
             :min="0"
@@ -257,10 +261,20 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
             :step="0.01"
             density="compact"
             hide-details
-            label="opacity"
           />
         </div>
-        <div class="d-flex align-center ga-2 mt-1">
+        <div class="ctrl">
+          <div class="d-flex align-center">
+            <span class="ctrl-label mr-auto">Zoom</span>
+            <v-btn
+              v-if="(layer.zoom ?? 1) !== 1"
+              icon="mdi-backup-restore"
+              size="x-small"
+              variant="text"
+              title="Reset zoom"
+              @click="layer.zoom = 1"
+            />
+          </div>
           <v-slider
             :model-value="layer.zoom ?? 1"
             :min="0.5"
@@ -268,16 +282,7 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
             :step="0.05"
             density="compact"
             hide-details
-            label="zoom"
             @update:model-value="layer.zoom = $event"
-          />
-          <v-btn
-            v-if="(layer.zoom ?? 1) !== 1"
-            icon="mdi-backup-restore"
-            size="x-small"
-            variant="text"
-            title="Reset zoom"
-            @click="layer.zoom = 1"
           />
         </div>
       </v-card>
@@ -333,5 +338,16 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
   width: 320px;
   overflow-y: auto;
   background: rgba(16, 18, 24, 0.92) !important;
+}
+.ctrl {
+  margin-top: 6px;
+}
+.ctrl-label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 2px;
 }
 </style>
