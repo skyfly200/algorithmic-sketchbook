@@ -37,36 +37,60 @@ function bakeSprite() {
   g.clearRect(0, 0, SPR, SPR)
   const c = SPR / 2
   const R = c * 0.97
-  // Translucent vapor bubble: clear body, bright thin rim, twin glints.
-  let grad = g.createRadialGradient(c, c, 0, c, c, R)
-  grad.addColorStop(0, 'rgba(200, 225, 245, 0.05)')
-  grad.addColorStop(0.75, 'rgba(200, 225, 245, 0.08)')
-  grad.addColorStop(0.9, 'rgba(220, 240, 255, 0.22)')
-  grad.addColorStop(0.97, 'rgba(255, 255, 255, 0.8)')
+
+  // A glassy 3D vapor sphere (drawn with 'screen' over the water, so dark =
+  // transparent, bright = the lit glass). Layers build the sense of curvature:
+  //   1. a broad soft sheen filling the upper-left hemisphere (the lit side)
+  //   2. a Fresnel rim that brightens toward the silhouette
+  //   3. a bright refracted caustic on the far (lower-right) edge — light
+  //      focused through the sphere
+  //   4. a small sharp specular hotspot
+  // 1. upper-left sheen — gives the sphere its rounded, shaded body.
+  let grad = g.createRadialGradient(c - R * 0.3, c - R * 0.32, R * 0.1, c - R * 0.1, c - R * 0.1, R * 1.15)
+  grad.addColorStop(0, 'rgba(210, 232, 250, 0.5)')
+  grad.addColorStop(0.5, 'rgba(150, 185, 220, 0.16)')
   grad.addColorStop(1, 'rgba(255,255,255,0)')
   g.fillStyle = grad
   g.beginPath()
   g.arc(c, c, R, 0, Math.PI * 2)
   g.fill()
-  // Bottom bright caustic crescent (light through the bubble).
-  grad = g.createRadialGradient(c, c + R * 0.35, R * 0.2, c, c + R * 0.3, R)
+
+  // 2. Fresnel rim (bright near the whole edge, brighter on the shadow side).
+  grad = g.createRadialGradient(c, c, R * 0.72, c, c, R)
   grad.addColorStop(0, 'rgba(255,255,255,0)')
-  grad.addColorStop(0.85, 'rgba(255,255,255,0)')
-  grad.addColorStop(0.97, 'rgba(255,255,255,0.5)')
+  grad.addColorStop(0.86, 'rgba(210, 235, 255, 0.28)')
+  grad.addColorStop(0.965, 'rgba(255,255,255,0.85)')
   grad.addColorStop(1, 'rgba(255,255,255,0)')
   g.fillStyle = grad
   g.beginPath()
   g.arc(c, c, R, 0, Math.PI * 2)
   g.fill()
-  // Upper-left specular dot.
-  const sx = c - R * 0.32
-  const sy = c - R * 0.34
-  grad = g.createRadialGradient(sx, sy, 0, sx, sy, R * 0.3)
-  grad.addColorStop(0, 'rgba(255,255,255,0.9)')
+
+  // 3. Refracted caustic on the lower-right rim.
+  const cx = c + R * 0.5
+  const cy = c + R * 0.52
+  grad = g.createRadialGradient(cx, cy, 0, cx, cy, R * 0.5)
+  grad.addColorStop(0, 'rgba(255, 250, 235, 0.9)')
+  grad.addColorStop(0.5, 'rgba(255, 245, 220, 0.25)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  g.save()
+  g.beginPath()
+  g.arc(c, c, R * 0.98, 0, Math.PI * 2)
+  g.clip()
+  g.fillStyle = grad
+  g.fillRect(0, 0, SPR, SPR)
+  g.restore()
+
+  // 4. Sharp specular hotspot, upper-left.
+  const sx = c - R * 0.36
+  const sy = c - R * 0.4
+  grad = g.createRadialGradient(sx, sy, 0, sx, sy, R * 0.22)
+  grad.addColorStop(0, 'rgba(255,255,255,1)')
+  grad.addColorStop(0.4, 'rgba(255,255,255,0.5)')
   grad.addColorStop(1, 'rgba(255,255,255,0)')
   g.fillStyle = grad
   g.beginPath()
-  g.arc(sx, sy, R * 0.3, 0, Math.PI * 2)
+  g.arc(sx, sy, R * 0.22, 0, Math.PI * 2)
   g.fill()
 }
 bakeSprite()
@@ -84,8 +108,11 @@ function resize() {
 }
 
 function drawBubble(b) {
-  const s = b.r * 2.06
+  const d = b.depth ?? 1 // fake depth: nearer bubbles are bigger and brighter
+  const s = b.r * 2.06 * d
+  ctx.globalAlpha = 0.45 + 0.55 * d
   ctx.drawImage(SPRITE, b.x - s / 2, b.y - s / 2, s, s)
+  ctx.globalAlpha = 1
 }
 
 function frame(now) {
@@ -113,7 +140,7 @@ function frame(now) {
     b.y = floor - b.r * 0.4
     if (b.r >= critR * (0.7 + Math.random() * 0.5)) {
       pinned.splice(i, 1)
-      rising.push({ x: b.x, y: floor - b.r, r: b.r, vx: 0, vy: 0, phase: Math.random() * 6.28 })
+      rising.push({ x: b.x, y: floor - b.r, r: b.r, vx: 0, vy: 0, phase: Math.random() * 6.28, depth: 0.55 + Math.random() * 0.7 })
     }
   }
 

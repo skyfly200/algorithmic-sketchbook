@@ -40,48 +40,52 @@ function bakeSprite(tint) {
   const cool = [210, 224, 235]
   const body = warm.map((w, i) => Math.round(w + (cool[i] - w) * tint))
 
-  // Refraction body: darker center, brighter toward the rim.
-  let grad = g.createRadialGradient(c, c, 0, c, c, R)
-  grad.addColorStop(0, 'rgba(30, 33, 40, 0.30)')
-  grad.addColorStop(0.55, 'rgba(60, 64, 72, 0.14)')
-  grad.addColorStop(0.86, `rgba(${body[0]}, ${body[1]}, ${body[2]}, 0.10)`)
+  // Glassy lens: the droplet refracts the darker backing at center and bends
+  // light bright around the lower rim (where a real bead focuses light).
+  let grad = g.createRadialGradient(c - R * 0.18, c - R * 0.18, R * 0.1, c, c, R)
+  grad.addColorStop(0, 'rgba(15, 17, 22, 0.42)') // dark refracted core
+  grad.addColorStop(0.6, 'rgba(35, 40, 48, 0.22)')
+  grad.addColorStop(0.85, `rgba(${body[0]}, ${body[1]}, ${body[2]}, 0.12)`)
   grad.addColorStop(1, 'rgba(255,255,255,0)')
   g.fillStyle = grad
   g.beginPath()
   g.arc(c, c, R, 0, Math.PI * 2)
   g.fill()
 
-  // Bright meniscus ring near the edge.
-  grad = g.createRadialGradient(c, c, R * 0.7, c, c, R)
+  // Bright refracted crescent on the lower-right (light focused through it).
+  grad = g.createRadialGradient(c + R * 0.28, c + R * 0.34, R * 0.15, c, c, R)
+  grad.addColorStop(0, `rgba(${body[0]}, ${body[1]}, ${body[2]}, 0.85)`)
+  grad.addColorStop(0.55, `rgba(${body[0]}, ${body[1]}, ${body[2]}, 0.18)`)
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  g.save()
+  g.beginPath()
+  g.arc(c, c, R, 0, Math.PI * 2)
+  g.clip()
+  g.fillStyle = grad
+  g.fillRect(0, 0, SPR, SPR)
+  g.restore()
+
+  // Crisp Fresnel rim.
+  grad = g.createRadialGradient(c, c, R * 0.78, c, c, R)
   grad.addColorStop(0, 'rgba(255,255,255,0)')
-  grad.addColorStop(0.82, `rgba(${body[0]}, ${body[1]}, ${body[2]}, 0.55)`)
-  grad.addColorStop(0.96, 'rgba(255,255,255,0.65)')
+  grad.addColorStop(0.9, 'rgba(255,255,255,0.18)')
+  grad.addColorStop(0.98, 'rgba(255,255,255,0.7)')
   grad.addColorStop(1, 'rgba(255,255,255,0)')
   g.fillStyle = grad
   g.beginPath()
   g.arc(c, c, R, 0, Math.PI * 2)
   g.fill()
 
-  // Contact shadow on the lower-right for separation.
-  grad = g.createRadialGradient(c + R * 0.25, c + R * 0.3, R * 0.4, c, c, R)
-  grad.addColorStop(0, 'rgba(0,0,0,0)')
-  grad.addColorStop(0.9, 'rgba(0,0,0,0.20)')
-  grad.addColorStop(1, 'rgba(0,0,0,0)')
-  g.fillStyle = grad
-  g.beginPath()
-  g.arc(c, c, R, 0, Math.PI * 2)
-  g.fill()
-
-  // Specular glint, upper-left.
-  const sx = c - R * 0.34
+  // Sharp specular hotspot, upper-left.
+  const sx = c - R * 0.32
   const sy = c - R * 0.36
-  grad = g.createRadialGradient(sx, sy, 0, sx, sy, R * 0.42)
-  grad.addColorStop(0, 'rgba(255,255,255,0.95)')
-  grad.addColorStop(0.4, 'rgba(255,255,255,0.35)')
+  grad = g.createRadialGradient(sx, sy, 0, sx, sy, R * 0.3)
+  grad.addColorStop(0, 'rgba(255,255,255,1)')
+  grad.addColorStop(0.35, 'rgba(255,255,255,0.4)')
   grad.addColorStop(1, 'rgba(255,255,255,0)')
   g.fillStyle = grad
   g.beginPath()
-  g.arc(sx, sy, R * 0.42, 0, Math.PI * 2)
+  g.arc(sx, sy, R * 0.3, 0, Math.PI * 2)
   g.fill()
 }
 
@@ -104,6 +108,7 @@ function resize() {
       x: Math.random() * width,
       y: Math.random() * height,
       r: (1.5 + Math.random() * 3) * rt.pixelRatio,
+      g: 0.4 + Math.random() * 1.4,
     })
   }
 }
@@ -145,7 +150,7 @@ function frame(now) {
 
   // Grow every droplet a little (bigger ones grow slightly faster: more area).
   const grow = params.growth * rt.pixelRatio * 7 * dt
-  for (const d of drops) d.r += grow * (0.5 + d.r / (maxR * 2))
+  for (const d of drops) d.r += grow * (0.5 + d.r / (maxR * 2)) * (d.g ?? 1)
 
   // Gravity drip: big droplets slide down and sweep up what they touch.
   if (params.drip > 0) {
@@ -205,7 +210,7 @@ function frame(now) {
           break
         }
       }
-      if (open) drops.push({ x, y, r: (2 + Math.random() * 2) * rt.pixelRatio })
+      if (open) drops.push({ x, y, r: (2 + Math.random() * 2) * rt.pixelRatio, g: 0.4 + Math.random() * 1.4 })
     }
   }
 

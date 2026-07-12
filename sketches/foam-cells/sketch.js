@@ -83,7 +83,8 @@ function newBubble(x, y, r) {
   return {
     x: x ?? Math.random() * width,
     y: y ?? Math.random() * height,
-    r: r ?? minDim * (0.02 + Math.random() * 0.03),
+    // Power-law size: lots of small bubbles, a few big ones (real foam).
+    r: r ?? minDim * (0.012 + 0.13 * Math.random() ** 2.6),
     vx: 0,
     vy: 0,
   }
