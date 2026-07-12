@@ -374,6 +374,52 @@ function fullscreen() {
   board.value?.parentElement?.requestFullscreen?.()
 }
 
+// --- output-only view: hide the routing UI, show just the composite -------
+// Sources/graph keep running (only the graph UI is hidden), so the Output
+// node still composites live.
+const outputOnly = ref(false)
+
+// --- saved routings: named snapshots of the node graph in localStorage ----
+const SAVED_KEY = 'sketchbook-patch-saved'
+function loadSaved() {
+  try {
+    return JSON.parse(localStorage.getItem(SAVED_KEY)) || []
+  } catch {
+    return []
+  }
+}
+const savedRoutings = ref(loadSaved())
+const newName = ref('')
+function persistSaved() {
+  localStorage.setItem(SAVED_KEY, JSON.stringify(savedRoutings.value))
+}
+function saveRouting() {
+  const name = newName.value.trim() || `Routing ${savedRoutings.value.length + 1}`
+  savedRoutings.value.push({
+    id: Date.now().toString(36),
+    name,
+    nodes: JSON.parse(JSON.stringify(nodes)),
+    edges: JSON.parse(JSON.stringify(edges)),
+  })
+  persistSaved()
+  newName.value = ''
+}
+function loadRouting(r) {
+  rtState.clear()
+  nodes.splice(0, nodes.length, ...r.nodes.map((n) => reactive(structuredClone(n))))
+  edges.splice(0, edges.length, ...structuredClone(r.edges))
+  nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
+  for (const n of nodes) st(n.id)
+  persist()
+}
+function deleteRouting(r) {
+  const i = savedRoutings.value.findIndex((x) => x.id === r.id)
+  if (i >= 0) {
+    savedRoutings.value.splice(i, 1)
+    persistSaved()
+  }
+}
+
 onMounted(async () => {
   // Seed a starter graph the first time.
   if (!nodes.length) {
@@ -417,7 +463,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- toolbar -->
-    <div class="toolbar">
+    <div v-show="!outputOnly" class="toolbar">
       <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
       <span class="text-subtitle-2 mr-2">Patch</span>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('effect')">Effect</v-btn>
@@ -427,12 +473,52 @@ onBeforeUnmount(() => {
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('blend')">Blend</v-btn>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('output')">Output</v-btn>
       <v-spacer />
+
+      <!-- save / load named routings -->
+      <v-menu :close-on-content-click="false">
+        <template #activator="{ props }">
+          <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-content-save-outline">Routings</v-btn>
+        </template>
+        <v-card class="pa-2" min-width="250">
+          <div class="d-flex ga-1 mb-2">
+            <v-text-field
+              v-model="newName"
+              density="compact"
+              hide-details
+              placeholder="Name this routing"
+              @keyup.enter="saveRouting"
+            />
+            <v-btn size="small" variant="tonal" @click="saveRouting">Save</v-btn>
+          </div>
+          <v-list density="compact" max-height="260">
+            <v-list-item
+              v-for="r in savedRoutings"
+              :key="r.id"
+              :title="r.name"
+              @click="loadRouting(r)"
+            >
+              <template #append>
+                <v-icon icon="mdi-delete" size="16" @click.stop="deleteRouting(r)" />
+              </template>
+            </v-list-item>
+            <v-list-item v-if="!savedRoutings.length" title="No saved routings yet" disabled />
+          </v-list>
+        </v-card>
+      </v-menu>
+
+      <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
       <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
     </div>
 
+    <!-- output-only: floating controls to exit / go fullscreen -->
+    <div v-if="outputOnly" class="output-ctrls">
+      <v-btn icon="mdi-tune-variant" size="small" variant="flat" title="Show routing" @click="outputOnly = false" />
+      <v-btn icon="mdi-fullscreen" size="small" variant="flat" title="Fullscreen" @click="fullscreen" />
+    </div>
+
     <!-- node board -->
-    <div ref="board" class="board" @pointermove="onMove" @pointerup="onUp">
+    <div v-show="!outputOnly" ref="board" class="board" @pointermove="onMove" @pointerup="onUp">
       <svg class="wires">
         <path
           v-for="w in wires"
@@ -511,7 +597,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="hint">Drag a node's right port to another node's left port to wire it. Click a wire to remove it. ◆ ports/dashed wires carry a matte or mask.</div>
+    <div v-show="!outputOnly" class="hint">Drag a node's right port to another node's left port to wire it. Click a wire to remove it. ◆ ports/dashed wires carry a matte or mask.</div>
   </div>
 </template>
 
@@ -559,4 +645,9 @@ onBeforeUnmount(() => {
   position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 30;
   color: rgba(255,255,255,0.5); font: 12px system-ui, sans-serif; pointer-events: none;
 }
+.output-ctrls {
+  position: absolute; top: 10px; right: 10px; z-index: 40;
+  display: flex; gap: 6px; opacity: 0.35; transition: opacity 0.2s;
+}
+.output-ctrls:hover { opacity: 1; }
 </style>
