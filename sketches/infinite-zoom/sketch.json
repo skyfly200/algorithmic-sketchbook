@@ -1,7 +1,7 @@
 {
   "title": "Infinite Zoom",
-  "description": "A seamless, endless zoom into a kaleidoscopic mandala. Several exponentially-scaled copies of the motif are cross-faded so new detail blooms from the center forever — a true infinite loop. Spiral twist, symmetry, and zoom speed are live and mappable to the music.",
-  "tags": ["fractal", "zoom", "loop", "kaleidoscope", "generative", "audio-reactive"],
+  "description": "An endless dive through nested, changing geometric structures. Each level of the log-polar tunnel is a different polygonal frame — sides, rotation, and per-cell stamps are all hashed from the level, so you fall through a new structure forever in a true seamless loop. Zoom speed, twist, and structure variation are live and mappable to the music.",
+  "tags": ["zoom", "loop", "geometric", "generative", "audio-reactive"],
   "tech": ["webgl", "glsl"],
   "created": "2026-07-11"
 }

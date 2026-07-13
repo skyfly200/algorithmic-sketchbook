@@ -1,0 +1,7 @@
+{
+  "title": "Light Mandala",
+  "description": "A seamless, endless zoom into a kaleidoscopic mandala of light. Several exponentially-scaled copies of a glowing motif are cross-faded so new detail blooms from the center forever — a true infinite loop. Spiral twist, symmetry, and zoom speed are live and mappable to the music.",
+  "tags": ["kaleidoscope", "zoom", "loop", "generative", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-07-13"
+}
