@@ -1,7 +1,7 @@
 {
   "title": "Fractal Explorer",
-  "description": "A Mandelbrot / Julia set explorer with smooth escape-time coloring. Drag to pan, scroll to zoom, double-click to reset. Flip to Julia mode and its seed c becomes a live parameter — map it to tilt or the music to morph the set. Animated palette.",
-  "tags": ["fractal", "mandelbrot", "julia", "zoom", "generative"],
+  "description": "An escape-time fractal explorer: Mandelbrot, Burning Ship, Tricorn, Multibrot, and Celtic sets, each with an optional Julia mode. Drag to pan, scroll to zoom, double-click to reset — or switch on Auto-zoom for an endless dive that ramps iterations with depth. Flip to Julia and its seed c becomes a live parameter to map to tilt or the music. Animated palette.",
+  "tags": ["fractal", "mandelbrot", "julia", "burning-ship", "zoom", "generative"],
   "tech": ["webgl", "glsl"],
   "created": "2026-07-11"
 }
