@@ -15,10 +15,15 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
+// Grating groove fields and the surface it's etched on — both picked from
+// dropdowns. SHAPES spans a flat disc, a knot, a sphere, and the five
+// Platonic polytopes (whose flat faces each catch their own rainbow).
+const GTYPES = ['linear', 'radial', 'spiral']
+const SHAPES = ['disc', 'torus knot', 'sphere', 'tetrahedron', 'cube', 'octahedron', 'dodecahedron', 'icosahedron']
 const params = rt.params({
   freq: { value: +rt.random(1.4, 4.2).toFixed(2), min: 0.5, max: 8, step: 0.05, label: 'Groove frequency' },
-  gtype: { value: Math.floor(rt.random(0, 3)), min: 0, max: 2, step: 1, label: 'Grating (0 linear·1 radial·2 spiral)' },
-  shape: { value: Math.floor(rt.random(0, 3)), min: 0, max: 2, step: 1, label: 'Shape (0 disc·1 knot·2 sphere)' },
+  gtype: { value: rt.pick(GTYPES), type: 'select', options: GTYPES, label: 'Grating' },
+  shape: { value: rt.pick(SHAPES), type: 'select', options: SHAPES, label: 'Shape' },
   swirl: { value: +rt.random(1, 5).toFixed(2), min: 0, max: 12, step: 0.1, label: 'Spiral swirl' },
   orders: { value: 4, min: 1, max: 6, step: 1, label: 'Diffraction orders' },
   gain: { value: 1, min: 0.2, max: 2.5, step: 0.05, label: 'Rainbow brightness' },
@@ -51,7 +56,7 @@ const uniforms = {
   u_lightDir: { value: new THREE.Vector3(0.4, 0.7, 0.6).normalize() },
   u_center: { value: new THREE.Vector3(0, 0, 0) },
   u_freq: { value: params.freq },
-  u_gtype: { value: params.gtype },
+  u_gtype: { value: GTYPES.indexOf(params.gtype) },
   u_swirl: { value: params.swirl },
   u_orders: { value: params.orders },
   u_gain: { value: params.gain },
@@ -161,19 +166,24 @@ const material = new THREE.ShaderMaterial({
   side: THREE.DoubleSide,
 })
 
-const GEOMS = [
-  () => new THREE.CircleGeometry(2, 128), // disc — the classic grating sample
-  () => new THREE.TorusKnotGeometry(1.3, 0.42, 220, 32), // continuous rainbow
-  () => new THREE.SphereGeometry(1.7, 128, 96),
-]
+const GEOMS = {
+  disc: () => new THREE.CircleGeometry(2, 128), // classic grating sample
+  'torus knot': () => new THREE.TorusKnotGeometry(1.3, 0.42, 220, 32), // continuous rainbow
+  sphere: () => new THREE.SphereGeometry(1.7, 128, 96),
+  tetrahedron: () => new THREE.TetrahedronGeometry(2.2, 0),
+  cube: () => new THREE.BoxGeometry(2.4, 2.4, 2.4),
+  octahedron: () => new THREE.OctahedronGeometry(2.1, 0),
+  dodecahedron: () => new THREE.DodecahedronGeometry(1.9, 0),
+  icosahedron: () => new THREE.IcosahedronGeometry(1.9, 0),
+}
 let mesh = null
-let builtShape = -1
+let builtShape = null
 function buildMesh(shape) {
   if (mesh) {
     scene.remove(mesh)
     mesh.geometry.dispose()
   }
-  mesh = new THREE.Mesh(GEOMS[shape](), material)
+  mesh = new THREE.Mesh((GEOMS[shape] ?? GEOMS.sphere)(), material)
   scene.add(mesh)
   builtShape = shape
 }
@@ -190,7 +200,7 @@ renderer.setAnimationLoop((now) => {
   if (params.shape !== builtShape) buildMesh(params.shape)
 
   uniforms.u_freq.value = params.freq
-  uniforms.u_gtype.value = params.gtype
+  uniforms.u_gtype.value = GTYPES.indexOf(params.gtype)
   uniforms.u_swirl.value = params.swirl
   uniforms.u_orders.value = params.orders
   uniforms.u_gain.value = params.gain

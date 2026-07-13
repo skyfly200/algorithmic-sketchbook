@@ -49,6 +49,7 @@ const showControls = ref(false)
 
 // Populated when the sketch announces its params over postMessage.
 const controls = ref(null) // { schema, values, mappings }
+const openPanels = ref(['params']) // which controls sections are expanded
 let pendingScene = null
 
 const savedScenes = computed(() => scenes.forSlug(props.slug))
@@ -274,128 +275,168 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
         :text="`Use the buttons above to open ${sketch.title} in its own tab.`"
       />
 
-      <v-card v-if="showControls" class="controls-panel pa-4" variant="outlined">
-        <template v-if="controls && Object.keys(controls.schema).length">
-          <h2 class="text-subtitle-2 mb-2">Parameters</h2>
-          <template v-for="(spec, name) in controls.schema" :key="name">
-            <v-switch
-              v-if="spec.type === 'bool'"
-              :model-value="controls.values[name]"
-              :label="spec.label ?? name"
-              density="compact"
-              hide-details
-              color="primary"
-              @update:model-value="(v) => setParam(name, v)"
-            />
-            <v-slider
-              v-else
-              :model-value="controls.values[name]"
-              :label="spec.label ?? name"
-              :min="spec.min"
-              :max="spec.max"
-              :step="spec.step ?? 0.01"
-              density="compact"
-              hide-details
-              thumb-label
-              class="mb-1"
-              @update:model-value="(v) => setParam(name, v)"
-            />
-          </template>
+      <v-card v-if="showControls" class="controls-panel pa-2" variant="outlined">
+        <v-expansion-panels v-model="openPanels" multiple variant="accordion">
+          <!-- Parameters -->
+          <v-expansion-panel v-if="controls && Object.keys(controls.schema).length" value="params">
+            <v-expansion-panel-title class="text-subtitle-2">Parameters</v-expansion-panel-title>
+            <v-expansion-panel-text>
+              <div v-for="(spec, name) in controls.schema" :key="name" class="param">
+                <v-switch
+                  v-if="spec.type === 'bool'"
+                  :model-value="controls.values[name]"
+                  :label="spec.label ?? name"
+                  density="compact"
+                  hide-details
+                  color="primary"
+                  @update:model-value="(v) => setParam(name, v)"
+                />
+                <template v-else-if="spec.type === 'select'">
+                  <span class="param-label">{{ spec.label ?? name }}</span>
+                  <v-select
+                    :model-value="controls.values[name]"
+                    :items="spec.options"
+                    density="compact"
+                    hide-details
+                    @update:model-value="(v) => setParam(name, v)"
+                  />
+                </template>
+                <template v-else>
+                  <span class="param-label">{{ spec.label ?? name }}</span>
+                  <v-slider
+                    :model-value="controls.values[name]"
+                    :min="spec.min"
+                    :max="spec.max"
+                    :step="spec.step ?? 0.01"
+                    density="compact"
+                    hide-details
+                    thumb-label
+                    @update:model-value="(v) => setParam(name, v)"
+                  />
+                </template>
+              </div>
+            </v-expansion-panel-text>
+          </v-expansion-panel>
 
-          <div class="d-flex align-center mt-4 mb-2">
-            <h2 class="text-subtitle-2 mr-auto">Input mappings</h2>
-            <v-btn
-              icon="mdi-plus"
-              size="x-small"
-              variant="tonal"
-              title="Add mapping"
-              @click="addMapping"
-            />
-          </div>
-          <p class="text-caption text-medium-emphasis mb-2">
-            Route beat, mouse, or time inputs into parameters.
-          </p>
-          <v-card
-            v-for="(m, i) in controls.mappings"
-            :key="i"
-            variant="tonal"
-            class="pa-2 mb-2"
-          >
-            <div class="d-flex ga-2 align-center">
-              <v-select
-                v-model="m.source"
-                :items="INPUT_SOURCES"
-                density="compact"
-                hide-details
-                @update:model-value="syncMappings"
-              />
-              <v-icon icon="mdi-arrow-right" size="small" />
-              <v-select
-                v-model="m.param"
-                :items="numericParams"
-                density="compact"
-                hide-details
-                @update:model-value="syncMappings"
-              />
+          <!-- Input mappings (its own section) -->
+          <v-expansion-panel v-if="controls && Object.keys(controls.schema).length" value="mappings">
+            <v-expansion-panel-title class="text-subtitle-2">
+              Input mappings
+              <v-spacer />
               <v-btn
-                icon="mdi-close"
+                icon="mdi-plus"
                 size="x-small"
-                variant="text"
-                @click="removeMapping(i)"
+                variant="tonal"
+                title="Add mapping"
+                class="mr-2"
+                @click.stop="addMapping"
               />
-            </div>
-            <v-slider
-              v-model="m.amount"
-              :min="-1"
-              :max="1"
-              :step="0.05"
-              density="compact"
-              hide-details
-              thumb-label
-              label="amount"
-              @update:model-value="syncMappings"
-            />
-          </v-card>
-        </template>
-        <p v-else class="text-caption text-medium-emphasis">
+            </v-expansion-panel-title>
+            <v-expansion-panel-text>
+              <p class="text-caption text-medium-emphasis mb-2">
+                Route beat, mouse, tilt, or time inputs into parameters. With no
+                mappings a parameter just holds its slider value.
+              </p>
+              <p v-if="!controls.mappings.length" class="text-caption text-disabled mb-1">
+                No mappings yet — add one to drive a parameter from an input.
+              </p>
+              <v-card
+                v-for="(m, i) in controls.mappings"
+                :key="i"
+                variant="tonal"
+                class="pa-2 mb-2"
+              >
+                <div class="d-flex ga-2 align-center">
+                  <v-select
+                    v-model="m.source"
+                    :items="INPUT_SOURCES"
+                    density="compact"
+                    hide-details
+                    @update:model-value="syncMappings"
+                  />
+                  <v-icon icon="mdi-arrow-right" size="small" />
+                  <v-select
+                    v-model="m.param"
+                    :items="numericParams"
+                    density="compact"
+                    hide-details
+                    @update:model-value="syncMappings"
+                  />
+                  <v-btn
+                    icon="mdi-close"
+                    size="x-small"
+                    variant="text"
+                    @click="removeMapping(i)"
+                  />
+                </div>
+                <v-slider
+                  v-model="m.amount"
+                  :min="-1"
+                  :max="1"
+                  :step="0.05"
+                  density="compact"
+                  hide-details
+                  thumb-label
+                  label="amount"
+                  @update:model-value="syncMappings"
+                />
+              </v-card>
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+
+          <!-- Scenes -->
+          <v-expansion-panel value="scenes">
+            <v-expansion-panel-title class="text-subtitle-2">Scenes</v-expansion-panel-title>
+            <v-expansion-panel-text>
+              <div v-if="controls" class="d-flex ga-2 align-center mb-2">
+                <v-text-field
+                  v-model="sceneName"
+                  placeholder="Scene name"
+                  density="compact"
+                  hide-details
+                  @keyup.enter="saveScene"
+                />
+                <v-btn size="small" color="primary" variant="tonal" @click="saveScene">Save</v-btn>
+              </div>
+              <p class="text-caption text-medium-emphasis mb-2">
+                A scene snapshots parameter values, input mappings, and display
+                settings.
+              </p>
+              <v-list density="compact" class="bg-transparent">
+                <v-list-item
+                  v-for="scene in savedScenes"
+                  :key="scene.id"
+                  :title="scene.name"
+                  :subtitle="scene.created"
+                  class="px-1"
+                  @click="applyScene(scene)"
+                >
+                  <template #append>
+                    <v-btn
+                      icon="mdi-delete-outline"
+                      size="x-small"
+                      variant="text"
+                      @click.stop="scenes.remove(scene.id)"
+                    />
+                  </template>
+                </v-list-item>
+                <v-list-item
+                  v-if="!savedScenes.length"
+                  title="No saved scenes"
+                  class="px-1 text-disabled"
+                />
+              </v-list>
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+        </v-expansion-panels>
+
+        <p
+          v-if="controls && !Object.keys(controls.schema).length"
+          class="text-caption text-medium-emphasis pa-2"
+        >
           This sketch doesn't expose parameters (see rt.params in
           sketches/_lib/runtime.js).
         </p>
-
-        <h2 class="text-subtitle-2 mt-4 mb-2">Scenes</h2>
-        <div v-if="controls" class="d-flex ga-2 align-center mb-2">
-          <v-text-field
-            v-model="sceneName"
-            placeholder="Scene name"
-            density="compact"
-            hide-details
-            @keyup.enter="saveScene"
-          />
-          <v-btn size="small" color="primary" variant="tonal" @click="saveScene">Save</v-btn>
-        </div>
-        <p class="text-caption text-medium-emphasis mb-2">
-          A scene snapshots parameter values, input mappings, and display
-          settings.
-        </p>
-        <v-list density="compact" class="bg-transparent">
-          <v-list-item
-            v-for="scene in savedScenes"
-            :key="scene.id"
-            :title="scene.name"
-            :subtitle="scene.created"
-            class="px-1"
-            @click="applyScene(scene)"
-          >
-            <template #append>
-              <v-btn
-                icon="mdi-delete-outline"
-                size="x-small"
-                variant="text"
-                @click.stop="scenes.remove(scene.id)"
-              />
-            </template>
-          </v-list-item>
-        </v-list>
       </v-card>
     </div>
   </v-container>
@@ -431,5 +472,20 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
   width: 320px;
   flex-shrink: 0;
   overflow-y: auto;
+}
+.param {
+  margin-bottom: 10px;
+}
+.param-label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 2px;
+}
+/* tighten the accordion so more controls fit */
+.controls-panel :deep(.v-expansion-panel-text__wrapper) {
+  padding: 8px 12px 12px;
 }
 </style>
