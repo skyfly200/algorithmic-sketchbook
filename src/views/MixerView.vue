@@ -188,7 +188,7 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
 
     <!-- top controls -->
     <div class="topbar">
-      <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
+      <v-btn icon="mdi-arrow-left" variant="text" size="small" title="Back to gallery" :to="{ name: 'gallery' }" />
       <span class="text-subtitle-2 mr-auto">Mixer</span>
       <v-menu>
         <template #activator="{ props }">
@@ -204,8 +204,8 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
           />
         </v-list>
       </v-menu>
-      <v-btn icon="mdi-tune-variant" variant="text" size="small" :color="showPanel ? 'primary' : undefined" @click="showPanel = !showPanel" />
-      <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
+      <v-btn icon="mdi-tune-variant" variant="text" size="small" title="Toggle layers panel" :color="showPanel ? 'primary' : undefined" @click="showPanel = !showPanel" />
+      <v-btn icon="mdi-fullscreen" variant="text" size="small" title="Fullscreen" @click="fullscreen" />
     </div>
 
     <!-- layer panel -->
@@ -226,6 +226,7 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
             :icon="layer.on ? 'mdi-eye' : 'mdi-eye-off'"
             size="x-small"
             variant="text"
+            :title="layer.on ? 'Hide layer' : 'Show layer'"
             @click="layer.on = !layer.on"
           />
           <v-select
@@ -237,9 +238,9 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
             hide-details
             class="flex-grow-1"
           />
-          <v-btn icon="mdi-chevron-up" size="x-small" variant="text" @click="move(i, -1)" />
-          <v-btn icon="mdi-chevron-down" size="x-small" variant="text" @click="move(i, 1)" />
-          <v-btn icon="mdi-close" size="x-small" variant="text" @click="removeLayer(i)" />
+          <v-btn icon="mdi-chevron-up" size="x-small" variant="text" title="Move layer back" @click="move(i, -1)" />
+          <v-btn icon="mdi-chevron-down" size="x-small" variant="text" title="Move layer forward" @click="move(i, 1)" />
+          <v-btn icon="mdi-close" size="x-small" variant="text" title="Remove layer" @click="removeLayer(i)" />
         </div>
         <!-- Each control's label sits above a full-width input so blend,
              opacity, and zoom all line up at the same width. -->

@@ -243,7 +243,7 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
           title="Randomize — new generative variation"
           @click="randomize"
         />
-        <v-btn icon="mdi-refresh" variant="text" size="small" @click="reloadKey++" />
+        <v-btn icon="mdi-refresh" variant="text" size="small" title="Reload the sketch" @click="reloadKey++" />
         <v-btn
           icon="mdi-projector-screen-outline"
           variant="text"
@@ -251,7 +251,7 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
           title="Display mode — fullscreen, switch between effects"
           :to="{ name: 'present-slug', params: { slug: sketch.slug } }"
         />
-        <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
+        <v-btn icon="mdi-fullscreen" variant="text" size="small" title="Fullscreen" @click="fullscreen" />
       </template>
     </div>
 

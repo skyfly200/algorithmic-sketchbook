@@ -16,6 +16,7 @@ import BrandLogo from './components/BrandLogo.vue'
         variant="tonal"
         size="small"
         class="mr-2"
+        title="Patch — wire effects into a live node graph"
         :to="{ name: 'patch' }"
       >
         Patch
@@ -25,6 +26,7 @@ import BrandLogo from './components/BrandLogo.vue'
         variant="tonal"
         size="small"
         class="mr-2"
+        title="Mixer — blend multiple effects into one composite"
         :to="{ name: 'mixer' }"
       >
         Mixer
@@ -34,6 +36,7 @@ import BrandLogo from './components/BrandLogo.vue'
         variant="tonal"
         size="small"
         class="mr-2"
+        title="Display mode — fullscreen projection view"
         :to="{ name: 'present' }"
       >
         Display mode
@@ -41,6 +44,7 @@ import BrandLogo from './components/BrandLogo.vue'
       <v-btn
         icon="mdi-github"
         variant="text"
+        title="View the source on GitHub"
         href="https://github.com/skyfly200/algorithmic-sketchbook"
         target="_blank"
         rel="noopener"
