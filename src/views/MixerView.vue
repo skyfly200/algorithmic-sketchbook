@@ -8,9 +8,16 @@
  * Each layer keeps its own runtime, so its params/input-mappings still drive it
  * — the composite is therefore input-reactive through its layers.
  */
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSketchStore } from '../stores/sketches'
 import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
+import { createBeatDetector } from '../../sketches/_lib/beat.js'
+
+// Same source list the sketch runtime resolves (keep in sync with runtime.js).
+const INPUT_SOURCES = [
+  'beat.pulse', 'beat.level', 'beat.low', 'beat.mid', 'beat.high', 'beat.volume',
+  'mouse.x', 'mouse.y', 'tilt.x', 'tilt.y', 'shake', 'time.sin',
+]
 
 const store = useSketchStore()
 const viewer = useViewerStore()
@@ -109,8 +116,105 @@ function coverDraw(ctx, src, sw, sh, W, H) {
   ctx.drawImage(src, (W - w) / 2, (H - h) / 2, w, h)
 }
 
+// --- audio reactivity ------------------------------------------------------
+// Layers run in preview mode (no per-layer mic button), so the Mixer runs ONE
+// beat engine and feeds its state into every layer each frame; each layer's
+// input mappings (beat.pulse → param, etc.) then react exactly as they do in
+// the solo viewer. The pulse button fires a manual beat (no mic needed).
+const beat = createBeatDetector()
+const micOn = ref(false)
+const micError = ref('')
+let pendingBeat = false
+let pendingEnergy = 1
+beat.onBeat(({ energy }) => {
+  pendingBeat = true
+  pendingEnergy = energy
+})
+async function toggleMic() {
+  micError.value = ''
+  if (micOn.value) {
+    beat.stop()
+    micOn.value = false
+    return
+  }
+  try {
+    await beat.start()
+    micOn.value = true
+  } catch {
+    micError.value = 'Microphone unavailable — use the pulse button instead.'
+  }
+}
+function pulse() {
+  beat.trigger()
+  pendingBeat = true
+  pendingEnergy = 1
+}
+
+// --- per-layer parameter & mapping controls --------------------------------
+// Each local layer's runtime announces { schema, values, mappings } on load;
+// edits post straight back into that iframe (sketch:set-param/set-mappings) —
+// the exact protocol the solo viewer uses.
+const layerControls = reactive(new Map()) // layer object -> { schema, values, mappings }
+const openControls = reactive(new Map()) // layer object -> bool
+function onMessage(e) {
+  if (e.data?.type !== 'sketch:ready') return
+  for (const [layer, el] of layerEls) {
+    if (el.contentWindow === e.source) {
+      layerControls.set(layer, {
+        schema: e.data.schema,
+        values: { ...e.data.values },
+        mappings: (e.data.mappings ?? []).map((m) => ({ ...m })),
+      })
+      break
+    }
+  }
+}
+function postToLayer(layer, msg) {
+  layerEls.get(layer)?.contentWindow?.postMessage(msg, '*')
+}
+function setLayerParam(layer, name, value) {
+  const c = layerControls.get(layer)
+  if (c) c.values[name] = value
+  postToLayer(layer, { type: 'sketch:set-param', name, value })
+}
+function syncLayerMappings(layer) {
+  const c = layerControls.get(layer)
+  if (c) postToLayer(layer, { type: 'sketch:set-mappings', mappings: c.mappings })
+}
+function addLayerMapping(layer) {
+  const c = layerControls.get(layer)
+  if (!c) return
+  const firstNumeric = Object.keys(c.schema).find((k) => typeof c.schema[k].min === 'number')
+  if (!firstNumeric) return
+  c.mappings.push({ source: 'beat.pulse', param: firstNumeric, amount: 0.5 })
+  syncLayerMappings(layer)
+}
+function removeLayerMapping(layer, i) {
+  const c = layerControls.get(layer)
+  if (!c) return
+  c.mappings.splice(i, 1)
+  syncLayerMappings(layer)
+}
+function numericParamsOf(layer) {
+  const c = layerControls.get(layer)
+  return c ? Object.keys(c.schema).filter((k) => typeof c.schema[k].min === 'number') : []
+}
+
 let raf = 0
-function captureLoop() {
+function captureLoop(ts) {
+  beat.update(ts)
+  // Feed beat state to every live layer (pulse is derived per-layer from the
+  // beat flag, so it is not sent).
+  const bs = beat.state
+  const beatMsg = {
+    type: 'input:beat',
+    state: { level: bs.level, low: bs.low, mid: bs.mid, high: bs.high, volume: bs.volume, interval: bs.interval, bpm: bs.bpm },
+    beat: pendingBeat,
+    energy: pendingEnergy,
+  }
+  pendingBeat = false
+  for (const el of layerEls.values()) el.contentWindow?.postMessage(beatMsg, '*')
+
   const L = layers.value
   for (let i = 0; i < L.length; i++) {
     const lay = L[i]
@@ -154,9 +258,14 @@ function captureLoop() {
 }
 
 onMounted(() => {
+  window.addEventListener('message', onMessage)
   raf = requestAnimationFrame(captureLoop)
 })
-onBeforeUnmount(() => cancelAnimationFrame(raf))
+onBeforeUnmount(() => {
+  cancelAnimationFrame(raf)
+  window.removeEventListener('message', onMessage)
+  beat.stop()
+})
 </script>
 
 <template>
@@ -190,6 +299,21 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
     <div class="topbar">
       <v-btn icon="mdi-arrow-left" variant="text" size="small" title="Back to gallery" :to="{ name: 'gallery' }" />
       <span class="text-subtitle-2 mr-auto">Mixer</span>
+      <v-btn
+        :icon="micOn ? 'mdi-microphone' : 'mdi-microphone-off'"
+        variant="text"
+        size="small"
+        :color="micOn ? 'primary' : undefined"
+        :title="micOn ? 'Mic on — layers react to sound' : 'Enable mic — feed music into every layer'"
+        @click="toggleMic"
+      />
+      <v-btn
+        icon="mdi-heart-pulse"
+        variant="text"
+        size="small"
+        title="Fire a manual beat into all layers"
+        @click="pulse"
+      />
       <v-menu>
         <template #activator="{ props }">
           <v-btn v-bind="props" icon="mdi-quality-high" variant="text" size="small" title="Quality" />
@@ -217,8 +341,12 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
       <p class="text-caption text-medium-emphasis mb-3">
         Top of the list is the back layer; each row below stacks in front of it.
         Screen/lighten/add combine light; multiply/difference let a layer process
-        the one behind it.
+        the one behind it. Enable the mic 🎤 in the top bar and every layer's
+        beat mappings react to the music.
       </p>
+      <v-alert v-if="micError" type="warning" density="compact" variant="tonal" class="mb-3 text-caption">
+        {{ micError }}
+      </v-alert>
 
       <v-card v-for="(layer, i) in layers" :key="i" variant="tonal" class="pa-2 mb-2">
         <div class="d-flex align-center ga-1 mb-1">
@@ -237,6 +365,15 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
             density="compact"
             hide-details
             class="flex-grow-1"
+          />
+          <v-btn
+            v-if="layerControls.has(layer)"
+            icon="mdi-knob"
+            size="x-small"
+            variant="text"
+            :color="openControls.get(layer) ? 'primary' : undefined"
+            title="Effect parameters & input mappings"
+            @click="openControls.set(layer, !openControls.get(layer))"
           />
           <v-btn icon="mdi-chevron-up" size="x-small" variant="text" title="Move layer back" @click="move(i, -1)" />
           <v-btn icon="mdi-chevron-down" size="x-small" variant="text" title="Move layer forward" @click="move(i, 1)" />
@@ -286,6 +423,100 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
             @update:model-value="layer.zoom = $event"
           />
         </div>
+
+        <!-- effect params + input mappings, driven over the same postMessage
+             protocol the solo viewer uses -->
+        <template v-if="openControls.get(layer) && layerControls.get(layer)">
+          <v-divider class="my-2" />
+          <div
+            v-for="(spec, name) in layerControls.get(layer).schema"
+            :key="name"
+            class="ctrl"
+          >
+            <v-switch
+              v-if="spec.type === 'bool'"
+              :model-value="layerControls.get(layer).values[name]"
+              :label="spec.label ?? name"
+              density="compact"
+              hide-details
+              color="primary"
+              @update:model-value="(v) => setLayerParam(layer, name, v)"
+            />
+            <template v-else-if="spec.type === 'select'">
+              <span class="ctrl-label">{{ spec.label ?? name }}</span>
+              <v-select
+                :model-value="layerControls.get(layer).values[name]"
+                :items="spec.options"
+                density="compact"
+                hide-details
+                @update:model-value="(v) => setLayerParam(layer, name, v)"
+              />
+            </template>
+            <template v-else>
+              <span class="ctrl-label">{{ spec.label ?? name }}</span>
+              <v-slider
+                :model-value="layerControls.get(layer).values[name]"
+                :min="spec.min"
+                :max="spec.max"
+                :step="spec.step ?? 0.01"
+                density="compact"
+                hide-details
+                thumb-label
+                @update:model-value="(v) => setLayerParam(layer, name, v)"
+              />
+            </template>
+          </div>
+
+          <div class="d-flex align-center mt-2 mb-1">
+            <span class="ctrl-label mr-auto mb-0">Input mappings</span>
+            <v-btn
+              icon="mdi-plus"
+              size="x-small"
+              variant="tonal"
+              title="Add input mapping"
+              @click="addLayerMapping(layer)"
+            />
+          </div>
+          <div
+            v-for="(m, mi) in layerControls.get(layer).mappings"
+            :key="mi"
+            class="mb-2"
+          >
+            <div class="d-flex ga-1 align-center">
+              <v-select
+                v-model="m.source"
+                :items="INPUT_SOURCES"
+                density="compact"
+                hide-details
+                @update:model-value="syncLayerMappings(layer)"
+              />
+              <v-icon icon="mdi-arrow-right" size="x-small" />
+              <v-select
+                v-model="m.param"
+                :items="numericParamsOf(layer)"
+                density="compact"
+                hide-details
+                @update:model-value="syncLayerMappings(layer)"
+              />
+              <v-btn
+                icon="mdi-close"
+                size="x-small"
+                variant="text"
+                title="Remove mapping"
+                @click="removeLayerMapping(layer, mi)"
+              />
+            </div>
+            <v-slider
+              v-model="m.amount"
+              :min="-1"
+              :max="1"
+              :step="0.05"
+              density="compact"
+              hide-details
+              @update:model-value="syncLayerMappings(layer)"
+            />
+          </div>
+        </template>
       </v-card>
     </v-card>
   </div>

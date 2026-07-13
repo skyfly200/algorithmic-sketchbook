@@ -317,6 +317,12 @@ export function createRuntime() {
       for (const [k, v] of Object.entries(msg.values ?? {})) if (k in base) base[k] = v
       setMappings(msg.mappings)
       applyModulation(performance.now())
+    } else if (msg.type === 'input:beat' && msg.state) {
+      // A parent compositor (Mixer/Patch) runs its own mic and feeds beat
+      // state into embedded layers, which run in preview mode without their
+      // own mic button. Pulse stays locally-driven via trigger()+decay.
+      Object.assign(beat.state, msg.state)
+      if (msg.beat) beat.trigger(msg.energy ?? 1)
     }
   })
 
