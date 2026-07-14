@@ -14,13 +14,47 @@
  */
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useSketchStore } from '../stores/sketches'
+import { createBeatDetector } from '../../sketches/_lib/beat.js'
+import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 
 const store = useSketchStore()
-// Only local, same-origin sketches can be captured for piping.
-const effectOptions = computed(() => store.sketches.filter((s) => s.type === 'local' && s.embed))
+// Only local, same-origin sketches can be captured for piping. Motion Extraction
+// has its own dedicated node type, so it's excluded from the Effect source list.
+const effectOptions = computed(() =>
+  store.sketches.filter((s) => s.type === 'local' && s.embed && s.slug !== 'motion-extraction'),
+)
 
-const W = 384
-const H = 216
+// Internal compositor resolution — a user setting (all node canvases and the
+// ring buffers are sized to it). Higher = sharper piping, more GPU/CPU.
+const RESOLUTIONS = [
+  { label: '384 × 216', w: 384, h: 216 },
+  { label: '640 × 360', w: 640, h: 360 },
+  { label: '960 × 540', w: 960, h: 540 },
+  { label: '1280 × 720', w: 1280, h: 720 },
+  { label: '1920 × 1080', w: 1920, h: 1080 },
+]
+const RES_KEY = 'sketchbook-patch-res'
+const resLabel = ref(localStorage.getItem(RES_KEY) || RESOLUTIONS[0].label)
+let W = (RESOLUTIONS.find((r) => r.label === resLabel.value) ?? RESOLUTIONS[0]).w
+let H = (RESOLUTIONS.find((r) => r.label === resLabel.value) ?? RESOLUTIONS[0]).h
+function applyResolution(label) {
+  const r = RESOLUTIONS.find((x) => x.label === label)
+  if (!r) return
+  W = r.w
+  H = r.h
+  resLabel.value = label
+  localStorage.setItem(RES_KEY, label)
+  // Resize every existing node canvas + ring buffer to the new resolution.
+  for (const s of rtState.values()) {
+    s.out.width = W
+    s.out.height = H
+    if (s.ring) for (const c of s.ring) {
+      c.width = W
+      c.height = H
+    }
+  }
+}
+
 const NODE_W = 190
 const HEAD_H = 30
 const THUMB_H = 107
@@ -95,6 +129,55 @@ function removeNode(id) {
   rtState.delete(id)
   persist()
 }
+
+// --- rename ---
+const editingName = ref(null) // node id whose title is being edited
+function startRename(n) {
+  editingName.value = n.id
+}
+function commitRename(n, value) {
+  const v = value.trim()
+  n.name = v || undefined // empty falls back to the type's default title
+  editingName.value = null
+  persist()
+}
+function nodeTitle(n) {
+  return n.name || TYPES[n.type].title
+}
+
+// --- copy / paste (Ctrl/Cmd+C / +V) ---
+const clipboard = ref(null)
+function copySelection() {
+  if (selected.value == null) return
+  const n = nodes.find((x) => x.id === selected.value)
+  if (n) clipboard.value = JSON.parse(JSON.stringify({ type: n.type, name: n.name, params: n.params }))
+}
+function pasteClipboard() {
+  if (!clipboard.value) return
+  const c = clipboard.value
+  const n = reactive({
+    id: nextId++,
+    type: c.type,
+    name: c.name,
+    x: 80 + (nodes.length % 5) * 30,
+    y: 110 + (nodes.length % 5) * 30,
+    params: JSON.parse(JSON.stringify(c.params)),
+  })
+  nodes.push(n)
+  st(n.id)
+  selected.value = n.id
+  persist()
+}
+function onKey(e) {
+  if (editingName.value != null) return // don't hijack typing in the name field
+  const mod = e.ctrlKey || e.metaKey
+  if (mod && e.key === 'c') copySelection()
+  else if (mod && e.key === 'v') pasteClipboard()
+  else if ((e.key === 'Delete' || e.key === 'Backspace') && selected.value != null) {
+    removeNode(selected.value)
+    selected.value = null
+  }
+}
 function clearAll() {
   nodes.splice(0)
   edges.splice(0)
@@ -144,6 +227,7 @@ const wires = computed(() =>
 
 const drag = reactive({ node: null, dx: 0, dy: 0 })
 const wire = reactive({ active: false, from: null, x: 0, y: 0 })
+const selected = ref(null) // node id last clicked — target for copy/delete
 
 // --- pan & zoom: the graph lives in a transformed "space" so it can be
 // scrolled and scaled without moving any node's stored coordinates.
@@ -193,6 +277,7 @@ function onBoardDown(e) {
 function startDrag(n, e) {
   const p = boardXY(e)
   drag.node = n.id
+  selected.value = n.id
   drag.dx = p.x - n.x
   drag.dy = p.y - n.y
 }
@@ -262,6 +347,88 @@ async function bindVideo(id, el) {
   } catch {
     /* no camera */
   }
+}
+
+// --- effect-node parameters + input mappings ------------------------------
+// Same protocol as the solo viewer / Mixer: an effect iframe announces its
+// { schema, values, mappings } on load; edits post straight back so an Effect
+// node can be tuned and made audio/MIDI/etc. reactive right in the graph.
+const effectControls = reactive(new Map()) // node id -> { schema, values, mappings }
+const showParams = reactive(new Map()) // node id -> bool
+function onEffectMessage(e) {
+  if (e.data?.type !== 'sketch:ready') return
+  for (const n of nodes) {
+    if (n.type !== 'effect') continue
+    if (rtState.get(n.id)?.iframe?.contentWindow === e.source) {
+      effectControls.set(n.id, {
+        schema: e.data.schema ?? {},
+        values: { ...e.data.values },
+        mappings: (e.data.mappings ?? []).map((m) => ({ ...m })),
+      })
+      break
+    }
+  }
+}
+function postToEffect(id, msg) {
+  rtState.get(id)?.iframe?.contentWindow?.postMessage(msg, '*')
+}
+function setEffectParam(id, name, value) {
+  effectControls.get(id).values[name] = value
+  postToEffect(id, { type: 'sketch:set-param', name, value })
+}
+function syncEffectMappings(id) {
+  postToEffect(id, { type: 'sketch:set-mappings', mappings: effectControls.get(id).mappings })
+}
+function addEffectMapping(id) {
+  const c = effectControls.get(id)
+  const firstNumeric = Object.keys(c.schema).find((k) => typeof c.schema[k].min === 'number')
+  if (!firstNumeric) return
+  c.mappings.push({ source: 'audio.pulse', param: firstNumeric, amount: 0.5 })
+  syncEffectMappings(id)
+}
+function removeEffectMapping(id, i) {
+  effectControls.get(id).mappings.splice(i, 1)
+  syncEffectMappings(id)
+}
+function numericParamsOfEffect(id) {
+  const c = effectControls.get(id)
+  return c ? Object.keys(c.schema).filter((k) => typeof c.schema[k].min === 'number') : []
+}
+
+// One beat engine for the whole graph, broadcast into every effect iframe each
+// frame (they run in preview mode without their own mic button) — so effect
+// mappings react to the music, just like in the Mixer.
+const beat = createBeatDetector()
+const micOn = ref(false)
+let pendingBeat = false
+beat.onBeat(() => (pendingBeat = true))
+async function toggleMic() {
+  if (micOn.value) {
+    beat.stop()
+    micOn.value = false
+    return
+  }
+  try {
+    await beat.start()
+    micOn.value = true
+  } catch {
+    /* no mic */
+  }
+}
+function broadcastBeat(ts) {
+  beat.update(ts)
+  const bs = beat.state
+  const msg = {
+    type: 'input:beat',
+    state: {
+      level: bs.level, low: bs.low, mid: bs.mid, high: bs.high, volume: bs.volume,
+      centroid: bs.centroid, flux: bs.flux, interval: bs.interval, bpm: bs.bpm,
+    },
+    beat: pendingBeat,
+    energy: 1,
+  }
+  pendingBeat = false
+  for (const s of rtState.values()) s.iframe?.contentWindow?.postMessage(msg, '*')
 }
 
 // --- thumbnails: mount each node's output canvas into its card ---
@@ -355,7 +522,9 @@ function evalNode(node) {
     if (a) octx.drawImage(a, 0, 0, W, H)
     if (b) {
       octx.globalCompositeOperation = node.params.mode === 'add' ? 'lighter' : node.params.mode
+      octx.globalAlpha = node.params.mix ?? 1 // top input's contribution
       octx.drawImage(b, 0, 0, W, H)
+      octx.globalAlpha = 1
       octx.globalCompositeOperation = 'source-over'
     }
   } else if (node.type === 'output') {
@@ -389,7 +558,8 @@ function evalOrder() {
 }
 
 let raf = 0
-function loop() {
+function loop(ts) {
+  broadcastBeat(ts ?? performance.now())
   for (const n of evalOrder()) evalNode(n)
   // Blit the (last) Output node to the fullscreen stage.
   const out = nodes.find((n) => n.type === 'output')
@@ -483,11 +653,16 @@ onMounted(async () => {
   await nextTick()
   resizeStage()
   window.addEventListener('resize', resizeStage)
+  window.addEventListener('message', onEffectMessage)
+  window.addEventListener('keydown', onKey)
   raf = requestAnimationFrame(loop)
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
   window.removeEventListener('resize', resizeStage)
+  window.removeEventListener('message', onEffectMessage)
+  window.removeEventListener('keydown', onKey)
+  beat.stop()
   for (const s of rtState.values()) s.video?.srcObject?.getTracks?.().forEach((t) => t.stop())
 })
 </script>
@@ -553,6 +728,30 @@ onBeforeUnmount(() => {
         </v-card>
       </v-menu>
 
+      <v-btn
+        :icon="micOn ? 'mdi-microphone' : 'mdi-microphone-off'"
+        variant="text"
+        size="small"
+        :color="micOn ? 'primary' : undefined"
+        title="Mic — effect nodes' audio mappings react to sound"
+        @click="toggleMic"
+      />
+      <v-menu>
+        <template #activator="{ props }">
+          <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-monitor-screenshot">{{ resLabel }}</v-btn>
+        </template>
+        <v-list density="compact">
+          <v-list-subheader>Compositor resolution</v-list-subheader>
+          <v-list-item
+            v-for="r in RESOLUTIONS"
+            :key="r.label"
+            :title="r.label"
+            :active="resLabel === r.label"
+            @click="applyResolution(r.label)"
+          />
+        </v-list>
+      </v-menu>
+      <v-btn icon="mdi-content-paste" variant="text" size="small" title="Paste node (Ctrl/Cmd+V)" :disabled="!clipboard" @click="pasteClipboard" />
       <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
       <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
@@ -601,14 +800,26 @@ onBeforeUnmount(() => {
         v-for="n in nodes"
         :key="n.id"
         class="node"
+        :class="{ 'node--selected': selected === n.id }"
         :style="{ left: n.x + 'px', top: n.y + 'px', width: NODE_W + 'px' }"
       >
         <div
           class="node-head"
           :style="{ background: TYPES[n.type].color }"
           @pointerdown="startDrag(n, $event)"
+          @dblclick="startRename(n)"
         >
-          <span>{{ TYPES[n.type].title }}</span>
+          <input
+            v-if="editingName === n.id"
+            class="node-name-edit"
+            :value="n.name || ''"
+            :placeholder="TYPES[n.type].title"
+            autofocus
+            @pointerdown.stop
+            @keyup.enter="commitRename(n, $event.target.value)"
+            @blur="commitRename(n, $event.target.value)"
+          />
+          <span v-else class="node-name" title="Double-click to rename">{{ nodeTitle(n) }}</span>
           <v-icon icon="mdi-close" size="14" class="node-close" @pointerdown.stop @click="removeNode(n.id)" />
         </div>
 
@@ -638,17 +849,68 @@ onBeforeUnmount(() => {
 
         <!-- per-node controls -->
         <div class="node-body">
-          <select v-if="n.type === 'effect'" v-model="n.params.slug" @change="persist" @pointerdown.stop>
-            <option v-for="o in effectOptions" :key="o.slug" :value="o.slug">{{ o.title }}</option>
-          </select>
+          <template v-if="n.type === 'effect'">
+            <div class="d-flex ga-1 align-center">
+              <select v-model="n.params.slug" class="flex-grow-1" @change="persist" @pointerdown.stop>
+                <option v-for="o in effectOptions" :key="o.slug" :value="o.slug">{{ o.title }}</option>
+              </select>
+              <button
+                v-if="effectControls.has(n.id)"
+                class="knob-btn"
+                :class="{ on: showParams.get(n.id) }"
+                title="Parameters & input mappings"
+                @pointerdown.stop
+                @click="showParams.set(n.id, !showParams.get(n.id))"
+              >⚙</button>
+            </div>
+
+            <!-- effect params + mappings (same protocol as the viewer/Mixer) -->
+            <div v-if="showParams.get(n.id) && effectControls.get(n.id)" class="params" @pointerdown.stop>
+              <template v-for="(spec, name) in effectControls.get(n.id).schema" :key="name">
+                <label v-if="spec.type === 'bool'" class="chk">
+                  <input type="checkbox" :checked="effectControls.get(n.id).values[name]" @change="setEffectParam(n.id, name, $event.target.checked)" /> {{ spec.label ?? name }}
+                </label>
+                <label v-else-if="spec.type === 'select'">
+                  {{ spec.label ?? name }}
+                  <select :value="effectControls.get(n.id).values[name]" @change="setEffectParam(n.id, name, $event.target.value)">
+                    <option v-for="o in spec.options" :key="o" :value="o">{{ o }}</option>
+                  </select>
+                </label>
+                <label v-else>
+                  {{ spec.label ?? name }}
+                  <input type="range" :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :value="effectControls.get(n.id).values[name]" @input="setEffectParam(n.id, name, +$event.target.value)" />
+                </label>
+              </template>
+
+              <div class="map-head">
+                <span>Mappings</span>
+                <button class="mini" title="Add mapping" @click="addEffectMapping(n.id)">+</button>
+              </div>
+              <div v-for="(m, mi) in effectControls.get(n.id).mappings" :key="mi" class="map-row">
+                <select v-model="m.source" @change="syncEffectMappings(n.id)">
+                  <option v-for="src in INPUT_SOURCES" :key="src" :value="src">{{ src }}</option>
+                </select>
+                <span>→</span>
+                <select v-model="m.param" @change="syncEffectMappings(n.id)">
+                  <option v-for="pn in numericParamsOfEffect(n.id)" :key="pn" :value="pn">{{ pn }}</option>
+                </select>
+                <input type="range" min="-1" max="1" step="0.05" v-model.number="m.amount" @input="syncEffectMappings(n.id)" />
+                <button class="mini" title="Remove" @click="removeEffectMapping(n.id, mi)">×</button>
+              </div>
+            </div>
+          </template>
+
           <template v-if="n.type === 'motion'">
             <label>delay <input type="range" min="1" max="29" step="1" v-model.number="n.params.delay" @pointerdown.stop /></label>
             <label>gain <input type="range" min="0.5" max="4" step="0.05" v-model.number="n.params.gain" @pointerdown.stop /></label>
             <label class="chk"><input type="checkbox" :checked="n.params.mode > 0.5" @change="n.params.mode = $event.target.checked ? 1 : 0; persist()" @pointerdown.stop /> color</label>
           </template>
-          <select v-if="n.type === 'blend'" v-model="n.params.mode" @change="persist" @pointerdown.stop>
-            <option v-for="b in BLENDS" :key="b" :value="b">{{ b }}</option>
-          </select>
+          <template v-if="n.type === 'blend'">
+            <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
+              <option v-for="b in BLENDS" :key="b" :value="b">{{ b }}</option>
+            </select>
+            <label>mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
+          </template>
         </div>
       </div>
       </div>
@@ -692,10 +954,16 @@ onBeforeUnmount(() => {
   background: rgba(20,22,30,0.96); border: 1px solid rgba(255,255,255,0.14);
   box-shadow: 0 6px 20px rgba(0,0,0,0.4); user-select: none;
 }
+.node--selected { border-color: #7c8cff; box-shadow: 0 0 0 2px rgba(124,140,255,0.5), 0 6px 20px rgba(0,0,0,0.4); }
 .node-head {
   display: flex; align-items: center; justify-content: space-between;
   height: 30px; padding: 0 8px; border-radius: 8px 8px 0 0; cursor: grab;
   color: #06070a; font: 600 12px system-ui, sans-serif;
+}
+.node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-name-edit {
+  flex: 1; min-width: 0; margin-right: 4px; background: rgba(255,255,255,0.7);
+  border: 0; border-radius: 3px; padding: 1px 4px; font: 600 12px system-ui; color: #06070a;
 }
 .node-close { cursor: pointer; color: rgba(0,0,0,0.6); }
 .node-thumb { width: 100%; background: #000; }
@@ -705,6 +973,18 @@ onBeforeUnmount(() => {
 .node-body select { width: 100%; background: #12141c; color: #cdd3e0; border: 1px solid #333; border-radius: 4px; }
 .node-body input[type=range] { width: 100%; }
 .node-body .chk { display: flex; align-items: center; gap: 4px; }
+.knob-btn {
+  flex: 0 0 auto; width: 22px; height: 22px; border-radius: 4px; cursor: pointer;
+  background: #12141c; color: #cdd3e0; border: 1px solid #333; font-size: 12px;
+}
+.knob-btn.on { border-color: #7c8cff; color: #7c8cff; }
+.params { margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 4px; display: flex; flex-direction: column; gap: 3px; }
+.params label { display: flex; flex-direction: column; gap: 1px; }
+.map-head { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; font: 600 10px system-ui; color: #9aa4c0; text-transform: uppercase; }
+.map-row { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: 3px; align-items: center; }
+.map-row select { font-size: 10px; }
+.map-row input[type=range] { grid-column: 1 / -1; }
+.mini { width: 18px; height: 18px; border-radius: 3px; background: #12141c; color: #cdd3e0; border: 1px solid #333; cursor: pointer; font-size: 12px; line-height: 1; }
 .port {
   position: absolute; box-sizing: border-box; width: 14px; height: 14px;
   background: #12141c; border: 2px solid #9aa4c0; cursor: crosshair; z-index: 13;
