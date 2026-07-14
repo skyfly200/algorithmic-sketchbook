@@ -32,9 +32,9 @@ const params = rt.params({
   flash: { value: 0, min: 0, max: 1, step: 0.01, label: 'Beat flash' },
 })
 // Music → the grating by default (remix in the controls panel).
-rt.mapInput('beat.pulse', 'flash', 0.8) // beats flare the whole sheen
-rt.mapInput('beat.volume', 'orbit', 0.7) // loudness spins the camera
-rt.mapInput('beat.low', 'freq', 0.6) // bass shifts the groove pitch
+rt.mapInput('audio.pulse', 'flash', 0.8) // beats flare the whole sheen
+rt.mapInput('audio.volume', 'orbit', 0.7) // loudness spins the camera
+rt.mapInput('audio.low', 'freq', 0.6) // bass shifts the groove pitch
 
 const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: CAPTURE })

@@ -15,8 +15,8 @@ const params = rt.params({
   tint: { value: 0.55, min: 0, max: 1, step: 0.01, label: 'Water hue' },
 })
 // Music: beats throw a burst of bubbles, loudness cranks the heat.
-rt.mapInput('beat.pulse', 'heat', 1.2)
-rt.mapInput('beat.volume', 'wobble', 0.8)
+rt.mapInput('audio.pulse', 'heat', 1.2)
+rt.mapInput('audio.volume', 'wobble', 0.8)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')

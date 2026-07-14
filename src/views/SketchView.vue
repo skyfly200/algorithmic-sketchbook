@@ -6,12 +6,12 @@ import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
 import { useSceneStore } from '../stores/scenes'
 
 const INPUT_SOURCES = [
-  'beat.pulse',
-  'beat.level',
-  'beat.low',
-  'beat.mid',
-  'beat.high',
-  'beat.volume',
+  'audio.pulse',
+  'audio.level',
+  'audio.low',
+  'audio.mid',
+  'audio.high',
+  'audio.volume',
   'mouse.x',
   'mouse.y',
   'tilt.x',
@@ -88,7 +88,7 @@ function addMapping() {
     ([, s]) => typeof s.min === 'number',
   )
   if (!firstNumeric) return
-  controls.value.mappings.push({ source: 'beat.pulse', param: firstNumeric[0], amount: 0.5 })
+  controls.value.mappings.push({ source: 'audio.pulse', param: firstNumeric[0], amount: 0.5 })
   syncMappings()
 }
 

@@ -8,7 +8,12 @@ import p5 from 'p5'
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
-rt.onBeat(() => {}) // mounts the mic toggle so the piece can react to sound
+// Retrofit: the cascade bloom is a mappable param (audio drives it by default;
+// remove the mapping in the controls panel for a purely cursor-driven piece).
+const params = rt.params({
+  bloom: { value: 0, min: 0, max: 1, step: 0.01, label: 'Bloom (burst)' },
+})
+rt.mapInput('audio.pulse', 'bloom', 0.6)
 
 // The original piece is hash-seeded; here the "token hash" is generated from
 // the runtime's seeded RNG, so every load (and the viewer's 🎲) is a fresh
@@ -149,8 +154,9 @@ function draw() {
   const b = Math.abs(DIM / 2 - mouseY)
   const t = Math.sqrt((DIM / 2) ** 2 + (DIM / 2) ** 2)
   let pct = Math.sqrt(a ** 2 + b ** 2) / t
-  // Beats bloom the cascade like a burst of cursor motion.
-  pct = Math.min(1, Math.max(0, pct + rt.beat.state.pulse * 0.6))
+  // The bloom param bursts the cascade like a flick of cursor motion — audio
+  // drives it through the default mapping.
+  pct = Math.min(1, Math.max(0, pct + params.bloom))
 
   for (let i = 0; i < objects.length; i++) {
     const h = objects[i].hex

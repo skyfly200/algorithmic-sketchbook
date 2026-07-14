@@ -23,8 +23,8 @@ const params = rt.params({
   hue: { value: +rt.rng().toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
 })
 // Music: loudness drives the zoom, beats kick the spiral.
-rt.mapInput('beat.volume', 'speed', 0.5)
-rt.mapInput('beat.pulse', 'twist', 0.4)
+rt.mapInput('audio.volume', 'speed', 0.5)
+rt.mapInput('audio.pulse', 'twist', 0.4)
 
 const canvas = document.getElementById('canvas')
 const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'

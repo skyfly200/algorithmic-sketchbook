@@ -21,26 +21,27 @@
  *     mirror: { value: false, type: 'bool', label: 'Mirror' },
  *   })
  *   params.speed                          // read the live (modulated) value
- *   rt.mapInput('beat.pulse', 'speed', 0.35)  // default input→param mapping
+ *   rt.mapInput('audio.pulse', 'speed', 0.35) // default input→param mapping
  *
  * Declaring params connects the sketch to the viewer over postMessage: the
  * viewer renders sliders, edits mappings, and saves/applies scenes
  * (param values + input mappings + display settings). Input sources:
- * beat.pulse/level/low/mid/high/volume, mouse.x/y, tilt.x/y + shake
+ * audio.pulse/level/low/mid/high/volume, mouse.x/y, tilt.x/y + shake
  * (accelerometer/gyro), time.sin — each 0..1; a mapping's amount (-1..1) adds
- * source × amount × (max − min) to the param's base value.
+ * source × amount × (max − min) to the param's base value. Legacy 'beat.*'
+ * source names (older saved scenes) still resolve.
  *
  * Everything is opt-in — sketches that ignore all of this still work.
  */
 import { createBeatDetector } from './beat.js'
 
 export const INPUT_SOURCES = [
-  'beat.pulse', // 1 on each detected beat, decays to 0
-  'beat.level', // bass energy (alias of beat.low)
-  'beat.low', // bass band
-  'beat.mid', // mids — vocals / snares
-  'beat.high', // highs — hats / cymbals
-  'beat.volume', // broadband loudness
+  'audio.pulse', // 1 on each detected beat, decays to 0
+  'audio.level', // bass energy (alias of audio.low)
+  'audio.low', // bass band
+  'audio.mid', // mids — vocals / snares
+  'audio.high', // highs — hats / cymbals
+  'audio.volume', // broadband loudness
   'mouse.x',
   'mouse.y',
   'tilt.x', // device tilt left–right (accelerometer/gyro)
@@ -257,13 +258,16 @@ export function createRuntime() {
   }
 
   function sourceValue(source, now) {
-    switch (source) {
-      case 'beat.pulse': return beat.state.pulse
-      case 'beat.level': return beat.state.level
-      case 'beat.low': return beat.state.low
-      case 'beat.mid': return beat.state.mid
-      case 'beat.high': return beat.state.high
-      case 'beat.volume': return beat.state.volume
+    // Legacy alias: 'beat.*' was renamed to 'audio.*'; old saved scenes and
+    // mappings keep working.
+    const s = source.startsWith('beat.') ? 'audio.' + source.slice(5) : source
+    switch (s) {
+      case 'audio.pulse': return beat.state.pulse
+      case 'audio.level': return beat.state.level
+      case 'audio.low': return beat.state.low
+      case 'audio.mid': return beat.state.mid
+      case 'audio.high': return beat.state.high
+      case 'audio.volume': return beat.state.volume
       case 'mouse.x': return mouse.x
       case 'mouse.y': return mouse.y
       case 'tilt.x': return motion.x
@@ -290,7 +294,8 @@ export function createRuntime() {
   function setMappings(next) {
     mappings = (next ?? []).filter((m) => m && m.source && m.param)
     if (preview) return
-    if (mappings.some((m) => m.source.startsWith('beat.'))) mountMicButton(beat)
+    if (mappings.some((m) => m.source.startsWith('audio.') || m.source.startsWith('beat.')))
+      mountMicButton(beat)
     if (mappings.some((m) => m.source.startsWith('tilt.') || m.source === 'shake')) enableMotion()
   }
 

@@ -6,7 +6,7 @@ const params = rt.params({
   fade: { value: 0.045, min: 0.01, max: 0.15, step: 0.005, label: 'Trail fade' },
 })
 // Beats nudge the particle speed by default — remix in the controls panel.
-rt.mapInput('beat.pulse', 'speed', 0.3)
+rt.mapInput('audio.pulse', 'speed', 0.3)
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 

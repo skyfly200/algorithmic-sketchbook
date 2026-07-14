@@ -19,8 +19,8 @@ const params = rt.params({
   hue: { value: +rt.rng().toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue tint (0 = mono)' },
 })
 // Map the music onto the motion by default (remix in the controls panel).
-rt.mapInput('beat.volume', 'drift', 0.9) // louder = faster drift
-rt.mapInput('beat.pulse', 'zoom', 0.25) // beats breathe the zoom
+rt.mapInput('audio.volume', 'drift', 0.9) // louder = faster drift
+rt.mapInput('audio.pulse', 'zoom', 0.25) // beats breathe the zoom
 
 const canvas = document.getElementById('canvas')
 const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'

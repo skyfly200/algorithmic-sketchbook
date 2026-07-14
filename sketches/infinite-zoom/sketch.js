@@ -22,8 +22,8 @@ const params = rt.params({
   cycle: { value: 0.25, min: 0, max: 2, step: 0.05, label: 'Palette cycle' },
 })
 // Music: loudness drives the zoom, beats twist the structures.
-rt.mapInput('beat.volume', 'speed', 0.5)
-rt.mapInput('beat.pulse', 'twist', 0.4)
+rt.mapInput('audio.volume', 'speed', 0.5)
+rt.mapInput('audio.pulse', 'twist', 0.4)
 
 const canvas = document.getElementById('canvas')
 const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'

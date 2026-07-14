@@ -15,8 +15,8 @@ const params = rt.params({
   tint: { value: 0.55, min: 0, max: 1, step: 0.01, label: 'Tint (0 = warm)' },
 })
 // Music: beats seed a burst of droplets, loudness speeds their growth.
-rt.mapInput('beat.pulse', 'nucleation', 0.6)
-rt.mapInput('beat.volume', 'growth', 0.7)
+rt.mapInput('audio.pulse', 'nucleation', 0.6)
+rt.mapInput('audio.volume', 'growth', 0.7)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')

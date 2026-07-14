@@ -15,8 +15,8 @@ const params = rt.params({
   tint: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Film tint' },
 })
 // Music: beats pop bubbles and shake the raft; loudness drives growth.
-rt.mapInput('beat.pulse', 'popRate', 0.7)
-rt.mapInput('beat.volume', 'jiggle', 0.8)
+rt.mapInput('audio.pulse', 'popRate', 0.7)
+rt.mapInput('audio.volume', 'jiggle', 0.8)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')

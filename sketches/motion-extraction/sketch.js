@@ -27,8 +27,8 @@ const params = rt.params({
   showOriginal: { value: false, type: 'bool', label: 'Show original' },
 })
 // Music reactivity by default: loudness punches up the motion, beats flash it.
-rt.mapInput('beat.volume', 'gain', 1.0)
-rt.mapInput('beat.pulse', 'flash', 0.45)
+rt.mapInput('audio.volume', 'gain', 1.0)
+rt.mapInput('audio.pulse', 'flash', 0.45)
 
 // Publish the extracted motion so other sketches can consume it as a mask/layer.
 const bus = createMotionPublisher()

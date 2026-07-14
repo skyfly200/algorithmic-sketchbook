@@ -19,7 +19,7 @@ const params = rt.params({
   trail: { value: 1, min: 0.08, max: 1, step: 0.01, label: 'Clear (1 = crisp)' },
 })
 // Beats pump the cell growth by default — remix in the controls panel.
-rt.mapInput('beat.pulse', 'grow', 0.35)
+rt.mapInput('audio.pulse', 'grow', 0.35)
 
 // Seeded generative variation: phase-shift the noise field and the palette.
 const NSEED = rt.random(0, 100)

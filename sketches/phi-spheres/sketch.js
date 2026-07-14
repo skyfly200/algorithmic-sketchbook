@@ -25,10 +25,10 @@ const params = rt.params({
 })
 // Default music → animation mappings (remix or add more in the controls panel).
 // These also mount the mic toggle so the piece reacts to sound.
-rt.mapInput('beat.pulse', 'pulse', 0.7) // beats pop the whole spiral
-rt.mapInput('beat.level', 'waveAmp', 0.9) // bass swells the wave
-rt.mapInput('beat.high', 'scatter', 0.8) // highs shiver the scatter
-rt.mapInput('beat.volume', 'orbit', 0.7) // loudness spins the camera orbit
+rt.mapInput('audio.pulse', 'pulse', 0.7) // beats pop the whole spiral
+rt.mapInput('audio.level', 'waveAmp', 0.9) // bass swells the wave
+rt.mapInput('audio.high', 'scatter', 0.8) // highs shiver the scatter
+rt.mapInput('audio.volume', 'orbit', 0.7) // loudness spins the camera orbit
 
 const scene = new THREE.Scene()
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)

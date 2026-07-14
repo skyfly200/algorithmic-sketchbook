@@ -1,6 +1,20 @@
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
+// Retrofit: the classic plasma is now fully parametric — speed, field scale,
+// orbit warp, palette — with seeded defaults so each load differs, and a
+// brightness pulse that audio can drive.
+const params = rt.params({
+  speed: { value: +rt.random(0.4, 0.9).toFixed(2), min: 0, max: 3, step: 0.05, label: 'Speed' },
+  scale: { value: +rt.random(0.7, 1.6).toFixed(2), min: 0.3, max: 3, step: 0.05, label: 'Field scale' },
+  warp: { value: +rt.random(0.4, 1).toFixed(2), min: 0, max: 2, step: 0.05, label: 'Orbit warp' },
+  hue: { value: +rt.rng().toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue shift' },
+  pulse: { value: 0, min: 0, max: 1, step: 0.01, label: 'Brightness pulse' },
+})
+// Music: beats flash the plasma, loudness speeds it up.
+rt.mapInput('audio.pulse', 'pulse', 0.6)
+rt.mapInput('audio.volume', 'speed', 0.5)
+
 const canvas = document.getElementById('canvas')
 const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
 const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: CAPTURE })
@@ -14,23 +28,25 @@ void main() {
 const FRAG = `#version 300 es
 precision highp float;
 uniform vec2 u_resolution;
-uniform float u_time;
+uniform float u_time, u_scale, u_warp, u_hue, u_pulse;
 out vec4 outColor;
 
 void main() {
   vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / min(u_resolution.x, u_resolution.y);
-  float t = u_time * 0.6;
+  uv *= u_scale;
+  float t = u_time;
 
   float v = 0.0;
   v += sin(uv.x * 4.0 + t);
   v += sin((uv.y + t) * 3.0);
   v += sin((uv.x + uv.y) * 3.0 + t * 0.5);
-  vec2 c = uv + vec2(sin(t * 0.3), cos(t * 0.4)) * 0.7;
+  vec2 c = uv + vec2(sin(t * 0.3), cos(t * 0.4)) * 0.7 * u_warp;
   v += sin(length(c) * 6.0 - t * 2.0);
   v *= 0.25;
 
-  vec3 col = 0.5 + 0.5 * cos(6.2831 * (v + vec3(0.0, 0.33, 0.67)) + t * 0.2);
-  col *= 0.65 + 0.35 * smoothstep(1.6, 0.2, length(uv));
+  vec3 col = 0.5 + 0.5 * cos(6.2831 * (v + vec3(0.0, 0.33, 0.67) + u_hue) + t * 0.2);
+  col *= 0.65 + 0.35 * smoothstep(1.6, 0.2, length(uv / u_scale));
+  col *= 1.0 + u_pulse * 0.9;
   outColor = vec4(col, 1.0);
 }`
 
@@ -58,8 +74,13 @@ const position = gl.getAttribLocation(program, 'position')
 gl.enableVertexAttribArray(position)
 gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
-const uResolution = gl.getUniformLocation(program, 'u_resolution')
-const uTime = gl.getUniformLocation(program, 'u_time')
+const u = {}
+for (const n of ['u_resolution', 'u_time', 'u_scale', 'u_warp', 'u_hue', 'u_pulse'])
+  u[n] = gl.getUniformLocation(program, n)
+
+// Accumulate speed-scaled time so the speed param changes smoothly.
+let phase = 0
+let lastNow = 0
 
 function resize() {
   canvas.width = window.innerWidth * rt.pixelRatio
@@ -69,8 +90,16 @@ function resize() {
 
 function frame(now) {
   rt.tick(now)
-  gl.uniform2f(uResolution, canvas.width, canvas.height)
-  gl.uniform1f(uTime, now * 0.001)
+  const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
+  lastNow = now
+  phase += params.speed * dt
+
+  gl.uniform2f(u.u_resolution, canvas.width, canvas.height)
+  gl.uniform1f(u.u_time, phase)
+  gl.uniform1f(u.u_scale, params.scale)
+  gl.uniform1f(u.u_warp, params.warp)
+  gl.uniform1f(u.u_hue, params.hue)
+  gl.uniform1f(u.u_pulse, params.pulse)
   gl.drawArrays(gl.TRIANGLES, 0, 3)
   requestAnimationFrame(frame)
 }

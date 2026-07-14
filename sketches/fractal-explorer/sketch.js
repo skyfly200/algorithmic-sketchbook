@@ -21,7 +21,7 @@ const params = rt.params({
 })
 // Music gently cycles the palette by default; map tilt→cRe/cIm to morph Julia,
 // or beat→zoomSpeed to pump the dive.
-rt.mapInput('beat.volume', 'colorCycle', 0.6)
+rt.mapInput('audio.volume', 'colorCycle', 0.6)
 
 const canvas = document.getElementById('canvas')
 const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'

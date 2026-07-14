@@ -15,7 +15,7 @@ import { createBeatDetector } from '../../sketches/_lib/beat.js'
 
 // Same source list the sketch runtime resolves (keep in sync with runtime.js).
 const INPUT_SOURCES = [
-  'beat.pulse', 'beat.level', 'beat.low', 'beat.mid', 'beat.high', 'beat.volume',
+  'audio.pulse', 'audio.level', 'audio.low', 'audio.mid', 'audio.high', 'audio.volume',
   'mouse.x', 'mouse.y', 'tilt.x', 'tilt.y', 'shake', 'time.sin',
 ]
 
@@ -119,7 +119,7 @@ function coverDraw(ctx, src, sw, sh, W, H) {
 // --- audio reactivity ------------------------------------------------------
 // Layers run in preview mode (no per-layer mic button), so the Mixer runs ONE
 // beat engine and feeds its state into every layer each frame; each layer's
-// input mappings (beat.pulse → param, etc.) then react exactly as they do in
+// input mappings (audio.pulse → param, etc.) then react exactly as they do in
 // the solo viewer. The pulse button fires a manual beat (no mic needed).
 const beat = createBeatDetector()
 const micOn = ref(false)
@@ -186,7 +186,7 @@ function addLayerMapping(layer) {
   if (!c) return
   const firstNumeric = Object.keys(c.schema).find((k) => typeof c.schema[k].min === 'number')
   if (!firstNumeric) return
-  c.mappings.push({ source: 'beat.pulse', param: firstNumeric, amount: 0.5 })
+  c.mappings.push({ source: 'audio.pulse', param: firstNumeric, amount: 0.5 })
   syncLayerMappings(layer)
 }
 function removeLayerMapping(layer, i) {

@@ -18,7 +18,7 @@ const params = rt.params({
   backdrop: { value: false, type: 'bool', label: 'Solid backdrop' },
 })
 // Beats breathe the mark by default — remix in the controls panel.
-rt.mapInput('beat.pulse', 'pulse', 0.25)
+rt.mapInput('audio.pulse', 'pulse', 0.25)
 
 const uid = 'bw'
 const stage = document.getElementById('stage')
