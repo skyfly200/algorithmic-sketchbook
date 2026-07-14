@@ -1,0 +1,7 @@
+{
+  "title": "Moiré Lab",
+  "description": "Three line/ring gratings whose overlap beats into crawling moiré interference. Each grating rotates and drifts at a fractionally different rate and they combine with a multiply / difference / screen op. A compact, compositable local cousin of the Moiré Pattern Generator, so Patch and the Mixer can capture and pipe it. Frequency, radial↔linear blend, spin, op, and hue are live, mappable, and randomized each load.",
+  "tags": ["moire", "interference", "optics", "generative", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-07-13"
+}

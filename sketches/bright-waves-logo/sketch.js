@@ -1,10 +1,13 @@
 /**
- * Bright Waves Logo — the site's animated SVG mark, promoted to a full sketch so
- * it can be dropped in as a layer in the Mixer or a node in Patch (both pull
- * their options from the sketch registry). Transparent by default, so it
- * composites as a branding / watermark overlay over live visuals; a param adds
- * a solid backdrop when you want it standalone. Scale, spin, and a beat pulse
- * are runtime params, so it reacts to music like every other sketch.
+ * Bright Waves Logo — the site's animated mark, drawn on a canvas (a port of
+ * the original SMIL SVG) so it can be captured anywhere a sketch can: as a
+ * Patch effect node, a Mixer layer (including the Motion Extraction feed), or
+ * a standalone page. Transparent by default so it composites as a branding /
+ * watermark overlay over live visuals; a param adds a solid backdrop.
+ *
+ * The wave cycle: four shapes (two triangle "wings", a green and a blue
+ * zigzag) fly through a circular window on staggered 4-second loops — same
+ * keyframes as the original SVG animation.
  */
 import { createRuntime } from '../_lib/runtime.js'
 
@@ -20,73 +23,136 @@ const params = rt.params({
 // Beats breathe the mark by default — remix in the controls panel.
 rt.mapInput('audio.pulse', 'pulse', 0.25)
 
-const uid = 'bw'
-const stage = document.getElementById('stage')
-const bg = document.getElementById('bg')
+const canvas = document.getElementById('canvas')
+const ctx = canvas.getContext('2d')
 
-// The user's animated logo art (SMIL runs itself); IDs suffixed like the Vue
-// component so it stays self-contained.
-stage.innerHTML = `
-<svg viewBox="0 0 2400 2400" role="img" aria-label="Bright Waves logo">
-  <mask id="clip-${uid}"><circle fill="white" cx="600" cy="600" r="220" /></mask>
-  <symbol id="logo-${uid}" x="-600" y="-600" width="1000" height="1000" mask="url(#clip-${uid})">
-    <g transform="translate(500 500)">
-      <polygon points="0 0,0 200,50 150,0 100,50 50,0 0" fill="purple" stroke="purple">
-        <animateTransform attributeName="transform" type="translate" calcMode="spline"
-          keySplines="0.5 1 0.5 1;0.5 1 0.5 1;.5 0 1 .5"
-          values="500 -500;0 0;0 0;-500 500" keyTimes="0;0.20;0.8;1" additive="sum" dur="4s" repeatCount="indefinite" />
-      </polygon>
-      <polygon points="200 0,200 200,150 150,200 100,150 50,200 0" fill="orange" stroke="orange">
-        <animateTransform attributeName="transform" type="translate" calcMode="spline"
-          keySplines="0.5 0 0.5 1;0.5 1 0.5 1;0.5 1 0.5 1;.5 0 1 .5"
-          values="-500 500;-500 500;0 0;0 0;500 -500" keyTimes="0;0.15;0.35;0.8;1" additive="sum" dur="4s" repeatCount="indefinite" />
-      </polygon>
-      <polyline points="0 100,50 150,100 100,150 150,200 100" fill="none" stroke="green">
-        <animateTransform attributeName="transform" type="translate" calcMode="spline"
-          keySplines="0.5 0 0.5 1;0.5 1 0.5 1;0.5 1 0.5 1;.5 0 1 .5"
-          values="500 500;500 500;0 0;0 0;-500 -500" keyTimes="0;0.05;0.25;0.8;1" additive="sum" dur="4s" repeatCount="indefinite" />
-      </polyline>
-      <polyline points="0 100,50 50,100 100,150 50,200 100" fill="none" stroke="blue">
-        <animateTransform attributeName="transform" type="translate" calcMode="spline"
-          keySplines="0.5 0 0.5 1;0.5 1 0.5 1;0.5 1 0.5 1;.5 0 1 .5"
-          values="-500 -500;-500 -500;0 0;0 0;500 500" keyTimes="0;0.2;0.4;0.8;1" additive="sum" dur="4s" repeatCount="indefinite" />
-      </polyline>
-    </g>
-  </symbol>
-  <defs>
-    <pattern id="pattern-${uid}" x="0" y="0" width="0.05" height="0.05">
-      <polygon points="0 0,0 200,50 150,0 100,50 50,0 0" fill="purple" stroke="purple" />
-      <polygon points="200 0,200 200,150 150,200 100,150 50,200 0" fill="orange" stroke="orange" />
-      <polygon points="100 0,100 200,150 150,100 100,150 50,100 0" fill="purple" stroke="purple" />
-      <polygon points="100 0,100 200,50 150,100 100,50 50,100 0" fill="orange" stroke="orange" />
-      <polyline points="0 100,50 150,100 100,150 150,200 100" fill="none" stroke="green" />
-      <polyline points="0 100,50 50,100 100,150 50,200 100" fill="none" stroke="blue" />
-      <polyline points="0 0,50 50,100 0,150 50,200 0" fill="none" stroke="green" />
-      <polyline points="0 200,50 150,100 200,150 150,200 200" fill="none" stroke="blue" />
-    </pattern>
-  </defs>
-  <g id="tform" style="stroke-width: 10">
-    <circle id="art-${uid}" fill="url(#pattern-${uid})" cx="1200" cy="1200" r="2000" />
-    <use href="#logo-${uid}" transform="translate(1200 1200) scale(8 8)" />
-  </g>
-</svg>`
+// The mark lives in a 2400×2400 virtual space (like the SVG viewBox).
+const V = 2400
+const CX = 1200
 
-const tform = document.getElementById('tform')
-const artDisc = document.getElementById(`art-${uid}`)
+// --- the four animated shapes (coordinates in the 200×200 motif space) ---
+const PURPLE = [[0, 0], [0, 200], [50, 150], [0, 100], [50, 50]]
+const ORANGE = [[200, 0], [200, 200], [150, 150], [200, 100], [150, 50]]
+const GREEN = [[0, 100], [50, 150], [100, 100], [150, 150], [200, 100]]
+const BLUE = [[0, 100], [50, 50], [100, 100], [150, 50], [200, 100]]
+
+// SMIL keyframes: [time 0..1, dx, dy] — piecewise, eased between keys.
+const ANIM = [
+  { pts: PURPLE, color: 'purple', fill: true, keys: [[0, 500, -500], [0.2, 0, 0], [0.8, 0, 0], [1, -500, 500]] },
+  { pts: ORANGE, color: 'orange', fill: true, keys: [[0, -500, 500], [0.15, -500, 500], [0.35, 0, 0], [0.8, 0, 0], [1, 500, -500]] },
+  { pts: GREEN, color: 'green', fill: false, keys: [[0, 500, 500], [0.05, 500, 500], [0.25, 0, 0], [0.8, 0, 0], [1, -500, -500]] },
+  { pts: BLUE, color: 'blue', fill: false, keys: [[0, -500, -500], [0.2, -500, -500], [0.4, 0, 0], [0.8, 0, 0], [1, 500, 500]] },
+]
+
+function ease(t) {
+  return t * t * (3 - 2 * t) // smoothstep, close to the SVG's spline easing
+}
+function offsetAt(keys, t) {
+  for (let i = 0; i < keys.length - 1; i++) {
+    const [t0, x0, y0] = keys[i]
+    const [t1, x1, y1] = keys[i + 1]
+    if (t <= t1) {
+      const f = t1 > t0 ? ease((t - t0) / (t1 - t0)) : 1
+      return [x0 + (x1 - x0) * f, y0 + (y1 - y0) * f]
+    }
+  }
+  return [keys.at(-1)[1], keys.at(-1)[2]]
+}
+
+// --- the tiled art disc, rendered once to an offscreen (it never changes) ---
+function tracePoly(g, pts, ox = 0, oy = 0, close = true) {
+  g.beginPath()
+  g.moveTo(pts[0][0] + ox, pts[0][1] + oy)
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0] + ox, pts[i][1] + oy)
+  if (close) g.closePath()
+}
+function drawTile(g, x, y) {
+  g.save()
+  g.translate(x, y)
+  g.lineWidth = 10
+  for (const [pts, color] of [
+    [PURPLE, 'purple'],
+    [ORANGE, 'orange'],
+    [[[100, 0], [100, 200], [150, 150], [100, 100], [150, 50]], 'purple'],
+    [[[100, 0], [100, 200], [50, 150], [100, 100], [50, 50]], 'orange'],
+  ]) {
+    tracePoly(g, pts)
+    g.fillStyle = color
+    g.strokeStyle = color
+    g.fill()
+    g.stroke()
+  }
+  for (const [pts, color] of [
+    [GREEN, 'green'],
+    [BLUE, 'blue'],
+    [[[0, 0], [50, 50], [100, 0], [150, 50], [200, 0]], 'green'],
+    [[[0, 200], [50, 150], [100, 200], [150, 150], [200, 200]], 'blue'],
+  ]) {
+    tracePoly(g, pts, 0, 0, false)
+    g.strokeStyle = color
+    g.stroke()
+  }
+  g.restore()
+}
+const DISC = document.createElement('canvas')
+DISC.width = DISC.height = V
+{
+  const g = DISC.getContext('2d')
+  g.beginPath()
+  g.arc(CX, CX, 2000, 0, Math.PI * 2)
+  g.clip()
+  for (let x = -100; x < V; x += 200) for (let y = -100; y < V; y += 200) drawTile(g, x, y)
+}
+
+function resize() {
+  canvas.width = window.innerWidth * rt.pixelRatio
+  canvas.height = window.innerHeight * rt.pixelRatio
+}
 
 function frame(now) {
   rt.tick(now)
-  bg.style.opacity = params.backdrop ? 1 : 0
-  stage.style.opacity = params.opacity
-  artDisc.style.display = params.art ? '' : 'none'
+  const w = canvas.width
+  const h = canvas.height
+  ctx.clearRect(0, 0, w, h)
+  if (params.backdrop) {
+    ctx.fillStyle = '#0a0b10'
+    ctx.fillRect(0, 0, w, h)
+  }
 
-  const s = params.scale * (1 + rt.beat.state.pulse * params.pulse)
-  const deg = (now * 0.001 * params.spin) % 360
-  // Rotate + scale about the art's centre (1200,1200).
-  tform.setAttribute(
-    'transform',
-    `translate(1200 1200) rotate(${deg.toFixed(3)}) scale(${s.toFixed(4)}) translate(-1200 -1200)`,
-  )
+  const s = (Math.min(w, h) / V) * params.scale * (1 + rt.beat.state.pulse * params.pulse)
+  ctx.save()
+  ctx.globalAlpha = params.opacity
+  ctx.translate(w / 2, h / 2)
+  ctx.rotate(((now * 0.001 * params.spin) % 360) * (Math.PI / 180))
+  ctx.scale(s, s)
+  ctx.translate(-CX, -CX)
+
+  if (params.art) ctx.drawImage(DISC, 0, 0)
+
+  // The mark: shapes fly through a circular window (the SVG's mask), each on
+  // its own staggered 4 s loop. Motif point q maps to (q + offset − 100)·8 +
+  // 1200 in disc space — the same transform chain as the original SVG.
+  const t = (now * 0.001 / 4) % 1
+  ctx.beginPath()
+  ctx.arc(CX, CX, 1760, 0, Math.PI * 2)
+  ctx.clip()
+  ctx.lineWidth = 80 // stroke-width 10 × the 8× mark scale
+  for (const shape of ANIM) {
+    const [dx, dy] = offsetAt(shape.keys, t)
+    const pts = shape.pts.map(([x, y]) => [(x + dx - 100) * 8 + CX, (y + dy - 100) * 8 + CX])
+    tracePoly(ctx, pts, 0, 0, shape.fill)
+    ctx.strokeStyle = shape.color
+    if (shape.fill) {
+      ctx.fillStyle = shape.color
+      ctx.fill()
+    }
+    ctx.stroke()
+  }
+  ctx.restore()
+
   requestAnimationFrame(frame)
 }
+
+window.addEventListener('resize', resize)
+resize()
 requestAnimationFrame(frame)
