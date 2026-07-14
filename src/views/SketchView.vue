@@ -5,20 +5,8 @@ import { useSketchStore } from '../stores/sketches'
 import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
 import { useSceneStore } from '../stores/scenes'
 
-const INPUT_SOURCES = [
-  'audio.pulse',
-  'audio.level',
-  'audio.low',
-  'audio.mid',
-  'audio.high',
-  'audio.volume',
-  'mouse.x',
-  'mouse.y',
-  'tilt.x',
-  'tilt.y',
-  'shake',
-  'time.sin',
-]
+// Single source of truth for mapping sources (audio/mouse/tilt/midi/leap/artnet).
+import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 
 const props = defineProps({
   slug: { type: String, required: true },
@@ -266,7 +254,7 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
         :key="reloadKey"
         :src="frameSrc"
         class="sketch-frame"
-        allow="fullscreen; microphone; camera; accelerometer; gyroscope; xr-spatial-tracking"
+        allow="fullscreen; microphone; camera; midi; accelerometer; gyroscope; xr-spatial-tracking"
       />
       <v-empty-state
         v-else

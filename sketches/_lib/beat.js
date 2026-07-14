@@ -29,8 +29,14 @@ export function createBeatDetector({
 
   // level = bass energy (kept for existing beat.level mappings); low/mid/high
   // are per-band energies and volume is the broadband average — all 0..1.
+  // centroid = spectral centroid (how "bright" the sound is, 0..1);
+  // flux = spectral flux (how fast the spectrum is changing — onsets spike it).
   // interval = smoothed ms between recent beats; bpm derived from it.
-  const state = { active: false, level: 0, pulse: 0, low: 0, mid: 0, high: 0, volume: 0, interval: 0, bpm: 0 }
+  const state = {
+    active: false, level: 0, pulse: 0, low: 0, mid: 0, high: 0, volume: 0,
+    centroid: 0, flux: 0, interval: 0, bpm: 0,
+  }
+  let prevBins = null
   let prevBeatAt = 0
 
   // Record a beat's timing to estimate tempo (used by beat-synced effects).
@@ -75,7 +81,9 @@ export function createBeatDetector({
     audioCtx = analyser = stream = bins = null
     state.active = false
     state.level = state.low = state.mid = state.high = state.volume = 0
+    state.centroid = state.flux = 0
     state.interval = state.bpm = 0
+    prevBins = null
     prevBeatAt = 0
   }
 
@@ -106,6 +114,32 @@ export function createBeatDetector({
     state.mid = bandEnergy(9, 48) // ~0.8–4 kHz — vocals, snares
     state.high = bandEnergy(49, 160) // ~4–14 kHz — hats, cymbals, air
     state.volume = bandEnergy(1, 200) // broadband loudness
+
+    // Spectral centroid: amplitude-weighted mean bin — the "brightness" of the
+    // sound (bassy rumble ≈ 0, hats/air ≈ 1). Smoothed to be mappable.
+    let wsum = 0
+    let asum = 0
+    for (let i = 1; i <= 200; i++) {
+      wsum += i * bins[i]
+      asum += bins[i]
+    }
+    const centroid = asum > 8 ? Math.min(1, (wsum / asum) / 120) : 0
+    state.centroid = state.centroid * 0.8 + centroid * 0.2
+
+    // Spectral flux: positive spectrum change since last frame — transients
+    // and onsets spike it (a broadband, beat-detector-free "hit" signal).
+    if (prevBins) {
+      let fx = 0
+      for (let i = 1; i <= 200; i++) {
+        const d = bins[i] - prevBins[i]
+        if (d > 0) fx += d
+      }
+      const flux = Math.min(1, fx / (200 * 40))
+      state.flux = Math.max(flux, state.flux * 0.85) // fast attack, smooth decay
+    } else {
+      prevBins = new Uint8Array(bins.length)
+    }
+    prevBins.set(bins)
 
     history.push(energy)
     if (history.length > 45) history.shift() // ~0.75 s at 60 fps

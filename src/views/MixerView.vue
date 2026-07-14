@@ -12,12 +12,8 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSketchStore } from '../stores/sketches'
 import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
-
-// Same source list the sketch runtime resolves (keep in sync with runtime.js).
-const INPUT_SOURCES = [
-  'audio.pulse', 'audio.level', 'audio.low', 'audio.mid', 'audio.high', 'audio.volume',
-  'mouse.x', 'mouse.y', 'tilt.x', 'tilt.y', 'shake', 'time.sin',
-]
+// Single source of truth for mapping sources (audio/mouse/tilt/midi/leap/artnet).
+import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 
 const store = useSketchStore()
 const viewer = useViewerStore()
@@ -47,6 +43,15 @@ watch(layers, () => localStorage.setItem(STORE_KEY, JSON.stringify(layers.value)
 
 const showPanel = ref(true)
 const stage = ref(null)
+
+// Which layer receives the mouse. Layers are normally pointer-transparent so
+// the stage is a pure output; selecting one lets you play with that sketch's
+// own interactions (drag/zoom/click) — and its mouse.x/y mappings — live in
+// the mix. Not persisted: interaction is a performance choice, not a patch.
+const interactLayer = ref(null)
+function toggleInteract(layer) {
+  interactLayer.value = interactLayer.value === layer ? null : layer
+}
 
 // 'add' isn't a CSS blend mode — it maps to plus-lighter.
 function cssBlend(b) {
@@ -208,7 +213,10 @@ function captureLoop(ts) {
   const bs = beat.state
   const beatMsg = {
     type: 'input:beat',
-    state: { level: bs.level, low: bs.low, mid: bs.mid, high: bs.high, volume: bs.volume, interval: bs.interval, bpm: bs.bpm },
+    state: {
+      level: bs.level, low: bs.low, mid: bs.mid, high: bs.high, volume: bs.volume,
+      centroid: bs.centroid, flux: bs.flux, interval: bs.interval, bpm: bs.bpm,
+    },
     beat: pendingBeat,
     energy: pendingEnergy,
   }
@@ -282,8 +290,9 @@ onBeforeUnmount(() => {
             opacity: layer.opacity,
             mixBlendMode: cssBlend(layer.blend),
             transform: `scale(${layer.zoom ?? 1})`,
+            pointerEvents: interactLayer === layer ? 'auto' : 'none',
           }"
-          allow="fullscreen; microphone; camera; accelerometer; gyroscope; xr-spatial-tracking"
+          allow="fullscreen; microphone; camera; midi; accelerometer; gyroscope; xr-spatial-tracking"
         />
       </template>
       <v-empty-state
@@ -365,6 +374,14 @@ onBeforeUnmount(() => {
             density="compact"
             hide-details
             class="flex-grow-1"
+          />
+          <v-btn
+            icon="mdi-cursor-default-click"
+            size="x-small"
+            variant="text"
+            :color="interactLayer === layer ? 'primary' : undefined"
+            :title="interactLayer === layer ? 'Stop interacting with this layer' : 'Interact with this layer (mouse goes to it)'"
+            @click="toggleInteract(layer)"
           />
           <v-btn
             v-if="layerControls.has(layer)"

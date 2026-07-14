@@ -503,7 +503,7 @@ onBeforeUnmount(() => {
           v-if="n.type === 'effect' && n.params.slug"
           :ref="(el) => bindFrame(n.id, el)"
           :src="effectSrc(n)"
-          allow="microphone; camera; accelerometer; gyroscope"
+          allow="microphone; camera; midi; accelerometer; gyroscope"
         />
         <video v-else-if="n.type === 'camera'" :ref="(el) => bindVideo(n.id, el)" muted playsinline />
       </template>

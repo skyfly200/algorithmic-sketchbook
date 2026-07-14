@@ -34,6 +34,7 @@
  * Everything is opt-in — sketches that ignore all of this still work.
  */
 import { createBeatDetector } from './beat.js'
+import { createMidiInput, createLeapInput, createArtnetInput } from './inputs.js'
 
 export const INPUT_SOURCES = [
   'audio.pulse', // 1 on each detected beat, decays to 0
@@ -42,12 +43,29 @@ export const INPUT_SOURCES = [
   'audio.mid', // mids — vocals / snares
   'audio.high', // highs — hats / cymbals
   'audio.volume', // broadband loudness
+  'audio.centroid', // spectral brightness (bassy 0 … airy 1)
+  'audio.flux', // spectral change — transients/onsets spike it
   'mouse.x',
   'mouse.y',
   'tilt.x', // device tilt left–right (accelerometer/gyro)
   'tilt.y', // device tilt front–back
   'shake', // device shake intensity (accelerometer), decays
   'time.sin', // slow 10 s oscillation
+  'midi.cc1', // MIDI control change (any midi.ccN resolves)
+  'midi.cc2',
+  'midi.cc3',
+  'midi.cc4',
+  'midi.note', // 1 while any key is held
+  'midi.velocity', // last note-on velocity
+  'leap.x', // Leap Motion palm position (0..1)
+  'leap.y',
+  'leap.z',
+  'leap.pinch', // pinch strength 0..1
+  'leap.grab', // grab (fist) strength 0..1
+  'artnet.ch1', // DMX channels via `npm run artnet-bridge` (any artnet.chN)
+  'artnet.ch2',
+  'artnet.ch3',
+  'artnet.ch4',
 ]
 
 const QUALITY = {
@@ -200,6 +218,10 @@ export function createRuntime() {
   }
 
   const beat = createBeatDetector()
+  // External inputs, started lazily the first time a mapping uses them.
+  const midi = createMidiInput()
+  const leap = createLeapInput()
+  const artnet = createArtnetInput()
 
   // --- param engine ------------------------------------------------------
   const schema = {}
@@ -261,6 +283,10 @@ export function createRuntime() {
     // Legacy alias: 'beat.*' was renamed to 'audio.*'; old saved scenes and
     // mappings keep working.
     const s = source.startsWith('beat.') ? 'audio.' + source.slice(5) : source
+    // Numbered families: any midi.ccN / artnet.chN resolves, not just the few
+    // listed in INPUT_SOURCES.
+    if (s.startsWith('midi.cc')) return midi.state.cc[parseInt(s.slice(7), 10)] ?? 0
+    if (s.startsWith('artnet.ch')) return artnet.state.ch[parseInt(s.slice(9), 10) - 1] ?? 0
     switch (s) {
       case 'audio.pulse': return beat.state.pulse
       case 'audio.level': return beat.state.level
@@ -268,12 +294,21 @@ export function createRuntime() {
       case 'audio.mid': return beat.state.mid
       case 'audio.high': return beat.state.high
       case 'audio.volume': return beat.state.volume
+      case 'audio.centroid': return beat.state.centroid
+      case 'audio.flux': return beat.state.flux
       case 'mouse.x': return mouse.x
       case 'mouse.y': return mouse.y
       case 'tilt.x': return motion.x
       case 'tilt.y': return motion.y
       case 'shake': return motion.shake
       case 'time.sin': return 0.5 + 0.5 * Math.sin(now * 0.001 * Math.PI * 0.2) // 10 s period
+      case 'midi.note': return midi.state.note
+      case 'midi.velocity': return midi.state.velocity
+      case 'leap.x': return leap.state.x
+      case 'leap.y': return leap.state.y
+      case 'leap.z': return leap.state.z
+      case 'leap.pinch': return leap.state.pinch
+      case 'leap.grab': return leap.state.grab
       default: return 0
     }
   }
@@ -297,6 +332,10 @@ export function createRuntime() {
     if (mappings.some((m) => m.source.startsWith('audio.') || m.source.startsWith('beat.')))
       mountMicButton(beat)
     if (mappings.some((m) => m.source.startsWith('tilt.') || m.source === 'shake')) enableMotion()
+    // External inputs connect lazily, only when something maps them.
+    if (mappings.some((m) => m.source.startsWith('midi.'))) midi.start()
+    if (mappings.some((m) => m.source.startsWith('leap.'))) leap.start()
+    if (mappings.some((m) => m.source.startsWith('artnet.'))) artnet.start()
   }
 
   function announce() {
