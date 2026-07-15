@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Slime Mold</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #05060a; }
+      canvas { display: block; width: 100vw; height: 100vh; cursor: pointer; }
+      #hint {
+        position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+        color: rgba(255, 255, 255, 0.45); font: 13px system-ui, sans-serif;
+        pointer-events: none; transition: opacity 1s;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <div id="hint">a Physarum slime-mold network — click to drop food</div>
+    <script type="module" src="./sketch.js"></script>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "title": "Slime Mold",
+  "description": "A Physarum polycephalum simulation: thousands of agents sense and deposit a chemoattractant trail that diffuses and decays, self-organizing into the reticulated yellow vein network of real slime mould. It grows outward from the center — click to drop food the colony reaches toward. Sensor angle/distance, turn, persistence, and growth are live and audio-mappable; randomized each load.",
+  "tags": ["simulation", "physarum", "agents", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-14"
+}
