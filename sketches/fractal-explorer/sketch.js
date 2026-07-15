@@ -179,6 +179,55 @@ function resize() {
   gl.viewport(0, 0, canvas.width, canvas.height)
 }
 
+// CPU copy of the escape-time iteration (mirrors the shader's step_f) so the
+// auto-zoom can *find* detail. Returns a normalized 0..1 "interest" score:
+// interior (0) and quick-escape blank space (~0) score low; the filament
+// boundary — points that take many iterations to escape — scores high.
+function interestAt(px, py) {
+  const f = FRACTALS.indexOf(params.fractal)
+  let zx, zy, cx, cy
+  if (params.julia) { zx = px; zy = py; cx = params.cRe; cy = params.cIm }
+  else { zx = 0; zy = 0; cx = px; cy = py }
+  const N = 400
+  let k = 0
+  for (; k < N; k++) {
+    let nx, ny
+    if (f === 0) { nx = zx * zx - zy * zy + cx; ny = 2 * zx * zy + cy }
+    else if (f === 1) { nx = zx * zx - zy * zy + cx; ny = 2 * Math.abs(zx * zy) + cy }
+    else if (f === 2) { nx = zx * zx - zy * zy + cx; ny = -2 * zx * zy + cy }
+    else if (f === 3) { nx = zx * zx * zx - 3 * zx * zy * zy + cx; ny = 3 * zx * zx * zy - zy * zy * zy + cy }
+    else { nx = Math.abs(zx * zx - zy * zy) + cx; ny = 2 * zx * zy + cy }
+    zx = nx; zy = ny
+    if (zx * zx + zy * zy > 256) break
+  }
+  if (k >= N) return 0.05 // interior — flat, not interesting
+  // Escaped: reward a mid-to-high iteration count (boundary filaments).
+  const t = k / N
+  return t < 0.06 ? t * 0.5 : t // de-weight the blank exterior
+}
+
+// Sample a jittered grid over the current view and pick a high-interest point
+// to dive toward — so we head into structure, never blank space.
+function pickTarget() {
+  const [ax, ay] = aspect()
+  const G = 13
+  let best = null
+  let bestScore = -1
+  for (let i = 0; i < G; i++) {
+    for (let j = 0; j < G; j++) {
+      const nx = (i + rt.rng()) / G
+      const ny = (j + rt.rng()) / G
+      const cx = center[0] + (2 * nx - 1) * ax * scale
+      const cy = center[1] + (2 * ny - 1) * ay * scale
+      // Weighted-random among interesting points (rng tie-break) so successive
+      // dives explore different regions instead of always the single densest.
+      const score = interestAt(cx, cy) * (0.6 + 0.4 * rt.rng())
+      if (score > bestScore) { bestScore = score; best = [cx, cy] }
+    }
+  }
+  return best ?? [...center]
+}
+
 function frame(now) {
   rt.tick(now)
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
@@ -194,22 +243,30 @@ function frame(now) {
     autoWas = false
   }
 
-  // Auto-zoom: dive endlessly toward a detail-rich point, ramping iterations
-  // with depth. Single-precision resolves to ~1e-5; past that we ease back out
-  // and keep diving, so the zoom loops forever without shimmering to mush.
+  // Auto-zoom: an endless tour of detail. We dive toward a boundary point found
+  // by sampling the live view; just before single-precision would pixelate
+  // (~2e-5) we re-target a fresh detail-rich point within the current frame and
+  // ease the zoom back out a touch, so it keeps finding new structure forever
+  // and never shimmers to mush.
   if (params.autoZoom) {
     if (!autoWas) {
       const d = defaultView()
       center = [...d.center]
       scale = d.scale
-      diveTarget = params.julia ? [...center] : DIVE[params.fractal] ?? [...center]
+      diveTarget = pickTarget()
       autoWas = true
     }
-    const ease = Math.min(1, dt * 0.9)
+    const ease = Math.min(1, dt * 1.2)
     center[0] += (diveTarget[0] - center[0]) * ease
     center[1] += (diveTarget[1] - center[1]) * ease
     scale *= Math.exp(-params.zoomSpeed * dt)
-    if (scale < 1e-5) scale = defaultView().scale // loop the dive
+    if (scale < 4e-5) {
+      // Re-target within the current view and pull back a little to keep diving
+      // (staying above the single-precision floor so it never pixelates).
+      diveTarget = pickTarget()
+      center = [...diveTarget]
+      scale = Math.min(defaultView().scale, scale * 60)
+    }
     hint.style.opacity = 0
   } else {
     autoWas = false
