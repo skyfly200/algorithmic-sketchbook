@@ -8,13 +8,20 @@
  */
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
+import { STLLoader } from 'three/addons/loaders/STLLoader.js'
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const SHAPES = ['icosahedron', 'torus knot', 'dodecahedron', 'crystal', 'sphere']
 const params = rt.params({
   shape: { value: rt.pick(SHAPES), type: 'select', options: SHAPES, label: 'Artifact' },
-  spin: { value: +rt.random(0.2, 0.5).toFixed(2), min: 0, max: 2, step: 0.01, label: 'Spin speed' },
+  height: { value: 1.6, min: 0.6, max: 6, step: 0.05, label: 'Height above pedestal' },
+  spinX: { value: 0, min: -90, max: 90, step: 1, label: 'Spin X (°/s)' },
+  spinY: { value: Math.round(rt.random(15, 35)), min: -90, max: 90, step: 1, label: 'Spin Y (°/s)' },
+  spinZ: { value: 0, min: -90, max: 90, step: 1, label: 'Spin Z (°/s)' },
   glimmer: { value: 0.6, min: 0, max: 1.5, step: 0.02, label: 'Glimmer' },
   glitch: { value: 0.4, min: 0, max: 1.5, step: 0.02, label: 'Glitch amount' },
   scan: { value: 1, min: 0, max: 3, step: 0.05, label: 'Scanline density' },
@@ -106,24 +113,54 @@ function makeGeom(shape) {
     default: return new THREE.IcosahedronGeometry(1.05, 1)
   }
 }
-let artifact = null
+// `artifact` is a group we spin/position; it holds either a built-in shape or
+// an uploaded model. `modelLoaded` suppresses the built-in wire twin.
+let artifact = new THREE.Group()
+scene.add(artifact)
 let builtShape = null
-function buildArtifact(shape) {
-  if (artifact) { scene.remove(artifact); artifact.geometry.dispose() }
-  artifact = new THREE.Mesh(makeGeom(shape), holoMat)
-  artifact.position.y = 1.6
-  scene.add(artifact)
-  builtShape = shape
-}
-buildArtifact(params.shape)
+let modelLoaded = false
 
-// A faint wireframe twin adds holographic "lines".
+function setArtifactChild(obj) {
+  while (artifact.children.length) artifact.remove(artifact.children[0])
+  artifact.add(obj)
+}
+function buildArtifact(shape) {
+  const mesh = new THREE.Mesh(makeGeom(shape), holoMat)
+  setArtifactChild(mesh)
+  builtShape = shape
+  modelLoaded = false
+  wire.visible = true
+}
+
+// Fit an uploaded object into the ~2-unit display volume, centred at the
+// artifact origin, and re-skin every mesh with the hologram material.
+function adoptModel(obj) {
+  obj.traverse((c) => {
+    if (c.isMesh) {
+      if (c.geometry && !c.geometry.attributes.normal) c.geometry.computeVertexNormals()
+      c.material = holoMat
+    }
+  })
+  const box = new THREE.Box3().setFromObject(obj)
+  const size = box.getSize(new THREE.Vector3())
+  const center = box.getCenter(new THREE.Vector3())
+  const s = 2.2 / (Math.max(size.x, size.y, size.z) || 1)
+  obj.scale.setScalar(s)
+  obj.position.sub(center.multiplyScalar(s)) // recenter on origin
+  setArtifactChild(obj)
+  modelLoaded = true
+  wire.visible = false
+}
+
+// A faint wireframe twin adds holographic "lines" (built-in shapes only).
 const wire = new THREE.LineSegments(
   new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1.2, 1)),
   new THREE.LineBasicMaterial({ color: 0x3fd8ff, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending }),
 )
 wire.position.y = 1.6
 scene.add(wire)
+
+buildArtifact(params.shape)
 
 // --- pedestal: a dark cylinder with a glowing emitter ring + projection cone ---
 const pedestal = new THREE.Mesh(
@@ -151,16 +188,49 @@ const key = new THREE.PointLight(0x66ddff, 30)
 key.position.set(2, 4, 3)
 scene.add(key)
 
+// --- model upload: .glb/.gltf, .obj, .stl, .fbx ---------------------------
+const note = document.getElementById('note')
+function loadFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase()
+  const url = URL.createObjectURL(file)
+  const done = (obj) => { adoptModel(obj); URL.revokeObjectURL(url); if (note) note.textContent = file.name }
+  const fail = () => { if (note) note.textContent = 'Could not load ' + file.name }
+  try {
+    if (ext === 'glb' || ext === 'gltf') new GLTFLoader().load(url, (g) => done(g.scene), undefined, fail)
+    else if (ext === 'obj') new OBJLoader().load(url, done, undefined, fail)
+    else if (ext === 'fbx') new FBXLoader().load(url, done, undefined, fail)
+    else if (ext === 'stl') new STLLoader().load(url, (geo) => done(new THREE.Mesh(geo, holoMat)), undefined, fail)
+    else fail()
+  } catch {
+    fail()
+  }
+}
+const fileInput = document.getElementById('file')
+document.getElementById('load')?.addEventListener('click', () => fileInput.click())
+fileInput?.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]) })
+// Drag & drop anywhere.
+window.addEventListener('dragover', (e) => e.preventDefault())
+window.addEventListener('drop', (e) => {
+  e.preventDefault()
+  if (e.dataTransfer?.files?.[0]) loadFile(e.dataTransfer.files[0])
+})
+
 function resize() {
   renderer.setSize(window.innerWidth, window.innerHeight)
   camera.aspect = window.innerWidth / window.innerHeight
   camera.updateProjectionMatrix()
 }
 
+const DEG = Math.PI / 180
+let lastNow = 0
 renderer.setAnimationLoop((now) => {
   rt.tick(now)
-  if (params.shape !== builtShape) buildArtifact(params.shape)
+  // Built-in shape follows the dropdown (a loaded model overrides it until you
+  // pick a shape again).
+  if (!modelLoaded && params.shape !== builtShape) buildArtifact(params.shape)
   const t = now * 0.001
+  const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
+  lastNow = now
 
   uniforms.u_time.value = t
   uniforms.u_glimmer.value = params.glimmer
@@ -171,14 +241,26 @@ renderer.setAnimationLoop((now) => {
   uniforms.u_glitch.value = params.glitch * (0.15 + burst) + rt.beat.state.pulse * params.glitch
 
   const bob = Math.sin(t * 1.5) * 0.12 * params.float
-  artifact.position.y = 1.6 + bob
-  artifact.rotation.y = t * params.spin
-  artifact.rotation.x = Math.sin(t * 0.4) * 0.2
-  wire.position.y = 1.6 + bob
-  wire.rotation.y = -t * params.spin * 0.7
+  const y = params.height + bob
+  // Free rotation on all three axes (accumulated so any combination works).
+  artifact.rotation.x += params.spinX * DEG * dt
+  artifact.rotation.y += params.spinY * DEG * dt
+  artifact.rotation.z += params.spinZ * DEG * dt
+  artifact.position.y = y
+
+  wire.position.y = y
+  wire.rotation.copy(artifact.rotation)
+
+  // Keep the projection cone reaching from the emitter ring up to the artifact.
+  const base = 0.52
+  cone.position.y = (base + y) / 2
+  cone.scale.y = Math.max(0.2, (y - base) / 1.9)
+
   ring.material.color.setHSL(params.hue, 0.9, 0.6)
   ring.scale.setScalar(1 + rt.beat.state.pulse * 0.15)
 
+  // Keep the raised hologram framed (drag still orbits freely around it).
+  controls.target.y += (params.height - controls.target.y) * 0.05
   controls.update()
   renderer.render(scene, camera)
 })
