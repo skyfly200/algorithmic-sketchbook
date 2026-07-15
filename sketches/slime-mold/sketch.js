@@ -23,6 +23,8 @@ const params = rt.params({
   deposit: { value: 1.5, min: 0.2, max: 5, step: 0.05, label: 'Deposit' },
   hue: { value: +rt.random(0.12, 0.2).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
   grow: { value: 0.15, min: 0, max: 1, step: 0.02, label: 'Growth (spawn)' },
+  pulse: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Pulse (expand/retreat)' },
+  pulseRate: { value: 0.7, min: 0, max: 2.5, step: 0.05, label: 'Pulse rate' },
 })
 // Moderate per-frame diffusion — trails spread just enough to merge into
 // channels; the faster decay above then prunes anything not continuously
@@ -84,9 +86,13 @@ function step() {
   const n = agents.length / 3
   const sa = (params.sensorAngle * Math.PI) / 180
   const sd = params.sensorDist
-  const sp = params.speed
+  // Breathing pulse: in the expansion phase agents move a little faster and
+  // deposit more (veins thicken, the margin advances); in the retreat phase the
+  // opposite (and the trail decays faster below), so the whole colony pulses in
+  // and out organically — no directional flow field.
+  const sp = params.speed * (1 + breathe * params.pulse * 0.35)
   const turn = params.turn
-  const dep = params.deposit * 9 // per-frame deposit; channels build over time
+  const dep = Math.max(0, params.deposit * 9 * (1 + breathe * params.pulse * 0.7))
 
   for (let i = 0; i < n; i++) {
     const bx = agents[i * 3]
@@ -118,7 +124,8 @@ function step() {
 
 // Diffuse (3x3 box blur) + decay, writing into `next`, then swap.
 function diffuseDecay() {
-  const d = params.decay
+  // Retreat phase decays a touch faster so the margin recedes; expansion holds.
+  const d = Math.min(0.999, Math.max(0.8, params.decay + breathe * params.pulse * 0.03))
   for (let y = 0; y < H; y++) {
     const y0 = y > 0 ? y - 1 : 0
     const y1 = y < H - 1 ? y + 1 : H - 1
@@ -179,6 +186,9 @@ function growEdge() {
   }
 }
 let frameNo = 0
+let breathe = 0 // -1..1 breathing pulse (set each frame)
+let pulsePhase = 0
+let lastNow = 0
 
 function render() {
   const data = img.data
@@ -205,6 +215,11 @@ function hsl(h, s, l) {
 
 function frame(now) {
   rt.tick(now)
+  const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
+  lastNow = now
+  // Advance the breathing phase (accumulated so the rate can change smoothly).
+  pulsePhase += params.pulseRate * dt
+  breathe = Math.sin(pulsePhase)
   applyFood()
   step()
   diffuseDecay()
