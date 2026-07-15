@@ -14,16 +14,20 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  density: { value: +rt.random(1.3, 1.9).toFixed(2), min: 0.2, max: 2.5, step: 0.05, label: 'Agent density' },
-  speed: { value: +rt.random(0.7, 1.2).toFixed(2), min: 0.2, max: 3, step: 0.05, label: 'Move speed' },
-  sensorAngle: { value: Math.round(rt.random(20, 42)), min: 5, max: 90, step: 1, label: 'Sensor angle°' },
-  sensorDist: { value: Math.round(rt.random(8, 15)), min: 2, max: 30, step: 1, label: 'Sensor distance' },
-  turn: { value: +rt.random(0.35, 0.7).toFixed(2), min: 0.05, max: 1.5, step: 0.05, label: 'Turn speed' },
-  decay: { value: +rt.random(0.955, 0.975).toFixed(3), min: 0.8, max: 0.995, step: 0.005, label: 'Trail persistence' },
-  deposit: { value: 1.6, min: 0.2, max: 4, step: 0.05, label: 'Deposit' },
+  density: { value: +rt.random(0.9, 1.3).toFixed(2), min: 0.2, max: 2.5, step: 0.05, label: 'Agent density' },
+  speed: { value: +rt.random(0.7, 1.1).toFixed(2), min: 0.2, max: 3, step: 0.05, label: 'Move speed' },
+  sensorAngle: { value: Math.round(rt.random(20, 40)), min: 5, max: 90, step: 1, label: 'Sensor angle°' },
+  sensorDist: { value: Math.round(rt.random(8, 14)), min: 2, max: 30, step: 1, label: 'Sensor distance' },
+  turn: { value: +rt.random(0.35, 0.6).toFixed(2), min: 0.05, max: 1.5, step: 0.05, label: 'Turn speed' },
+  decay: { value: +rt.random(0.90, 0.94).toFixed(3), min: 0.85, max: 0.99, step: 0.005, label: 'Trail persistence' },
+  deposit: { value: 1.5, min: 0.2, max: 5, step: 0.05, label: 'Deposit' },
   hue: { value: +rt.random(0.12, 0.2).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
-  grow: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Growth (spawn)' },
+  grow: { value: 0.15, min: 0, max: 1, step: 0.02, label: 'Growth (spawn)' },
 })
+// Moderate per-frame diffusion — trails spread just enough to merge into
+// channels; the faster decay above then prunes anything not continuously
+// re-travelled, so gaps go dark and only the veins stay lit.
+const DIFFUSE = 0.22
 // Music: beats push a burst of deposit / speed so the mesh pulses to sound.
 rt.mapInput('audio.pulse', 'deposit', 0.5)
 rt.mapInput('audio.volume', 'speed', 0.4)
@@ -51,9 +55,11 @@ function build() {
 
   const target = Math.round(W * H * 0.13 * params.density * rt.detail)
   agents = new Float32Array(target * 3) // x, y, heading
-  const R = Math.min(W, H) * 0.06
+  // Seed the whole colony disc (not a point) with random headings — a
+  // distributed population is what lets channels form *between* regions into a
+  // network, rather than everyone collapsing onto one central attractor.
+  const R = Math.min(W, H) * 0.44
   for (let i = 0; i < target; i++) {
-    // Spawn in a small central disc so the mesh grows outward from the middle.
     const a = rt.rng() * Math.PI * 2
     const r = Math.sqrt(rt.rng()) * R
     agents[i * 3] = W / 2 + Math.cos(a) * r
@@ -80,7 +86,7 @@ function step() {
   const sd = params.sensorDist
   const sp = params.speed
   const turn = params.turn
-  const dep = params.deposit * 40
+  const dep = params.deposit * 9 // per-frame deposit; channels build over time
 
   for (let i = 0; i < n; i++) {
     const bx = agents[i * 3]
@@ -119,11 +125,15 @@ function diffuseDecay() {
     for (let x = 0; x < W; x++) {
       const x0 = x > 0 ? x - 1 : 0
       const x1 = x < W - 1 ? x + 1 : W - 1
-      const s =
-        trail[y0 * W + x0] + trail[y0 * W + x] + trail[y0 * W + x1] +
-        trail[y * W + x0] + trail[y * W + x] + trail[y * W + x1] +
-        trail[y1 * W + x0] + trail[y1 * W + x] + trail[y1 * W + x1]
-      next[y * W + x] = (s / 9) * d
+      const self = trail[y * W + x]
+      const avg =
+        (trail[y0 * W + x0] + trail[y0 * W + x] + trail[y0 * W + x1] +
+          trail[y * W + x0] + self + trail[y * W + x1] +
+          trail[y1 * W + x0] + trail[y1 * W + x] + trail[y1 * W + x1]) / 9
+      // Light diffusion: keep most of the cell's own value (so channels build
+      // up and persist) and blend only a little of the neighbourhood — a full
+      // box-average every frame would smear trails away before they connect.
+      next[y * W + x] = (self * (1 - DIFFUSE) + avg * DIFFUSE) * d
     }
   }
   const t = trail
@@ -147,20 +157,21 @@ function applyFood() {
   }
 }
 
-// Spawn a few new wanderers at the colony edge so it keeps creeping outward.
+// Occasionally respawn a fraction of the agents at fresh random spots (with a
+// random heading) so the network keeps exploring and reorganising — new veins
+// bud, old ones prune — instead of freezing into one fixed graph.
 function growEdge() {
-  const add = Math.round(params.grow * 30 * rt.detail)
-  const grown = new Float32Array((agents.length / 3 + add) * 3)
-  grown.set(agents)
-  const base = agents.length / 3
-  for (let i = 0; i < add; i++) {
+  const n = agents.length / 3
+  const move = Math.round(params.grow * 0.01 * n)
+  const R = Math.min(W, H) * 0.44
+  for (let k = 0; k < move; k++) {
+    const i = (rt.rng() * n) | 0
     const a = rt.rng() * Math.PI * 2
-    const r = Math.min(W, H) * (0.1 + rt.rng() * 0.35)
-    grown[(base + i) * 3] = Math.min(W - 2, Math.max(1, W / 2 + Math.cos(a) * r))
-    grown[(base + i) * 3 + 1] = Math.min(H - 2, Math.max(1, H / 2 + Math.sin(a) * r))
-    grown[(base + i) * 3 + 2] = a + Math.PI // head roughly outward-ish
+    const r = Math.sqrt(rt.rng()) * R
+    agents[i * 3] = W / 2 + Math.cos(a) * r
+    agents[i * 3 + 1] = H / 2 + Math.sin(a) * r
+    agents[i * 3 + 2] = rt.rng() * Math.PI * 2
   }
-  agents = grown
 }
 let frameNo = 0
 
@@ -168,8 +179,8 @@ function render() {
   const data = img.data
   const [hr, hg, hb] = hsl(params.hue, 0.85, 0.55)
   for (let i = 0; i < W * H; i++) {
-    const v = Math.min(1, trail[i] * 0.04)
-    const g = Math.pow(v, 0.55)
+    const v = Math.min(1, trail[i] * 0.03)
+    const g = Math.pow(v, 0.8)
     data[i * 4] = hr * g * 255
     data[i * 4 + 1] = hg * g * 255
     data[i * 4 + 2] = hb * g * 255
@@ -192,7 +203,7 @@ function frame(now) {
   applyFood()
   step()
   diffuseDecay()
-  if (params.grow > 0 && (frameNo++ & 3) === 0 && agents.length / 3 < W * H * 0.6) growEdge()
+  if (params.grow > 0 && (frameNo++ & 3) === 0) growEdge()
   render()
   requestAnimationFrame(frame)
 }
