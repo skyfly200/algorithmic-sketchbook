@@ -1,73 +1,73 @@
 /**
- * Slime Mold — a Physarum polycephalum simulation. Thousands of agents crawl a
- * trail map: each senses the deposited chemoattractant a little ahead of it
- * (centre / left / right), steers toward the strongest, moves, and deposits its
- * own trail. The map diffuses and decays every frame. From this purely local
- * rule the classic reticulated vein network self-organises — the yellow
- * foraging mesh of real slime mould. It grows outward from the middle; click to
- * drop a blob of food the network reaches toward.
+ * Slime Mold — a continuous Physarum plasmodium (no agents/particles). Two grid
+ * fields drive it: `mass` (the body's local thickness) and `chem` (a food
+ * chemoattractant that diffuses outward from resources). Each step:
  *
- * (Jeff Jones' agent model. The trail sim runs at a fixed internal resolution,
- * scaled to the viewport; agent count scales with the graphics-quality detail.)
+ *   • food emits chem, which diffuses widely; the body consumes it, so chem
+ *     flows *from* unreached food *into* the colony — a gradient to climb;
+ *   • the margin (empty cells touching the body) advances, foraging outward and
+ *     biased up the chem gradient toward food (chemotaxis);
+ *   • everywhere, body is sustained in proportion to the chem it sits on and
+ *     otherwise starves — so bulk that isn't on a path between resources recedes;
+ *   • an aggregation pass sharpens the remaining mass into tubes.
+ *
+ * The result is real Physarum behaviour: a growing/receding foraging margin that
+ * refines into an efficient vein network linking the food sources. Click to drop
+ * a food resource (a red berry); the colony grows to it and eats it.
  */
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  density: { value: +rt.random(1.4, 1.9).toFixed(2), min: 0.2, max: 2.5, step: 0.05, label: 'Agent density' },
-  speed: { value: +rt.random(0.7, 1.1).toFixed(2), min: 0.2, max: 3, step: 0.05, label: 'Move speed' },
-  sensorAngle: { value: Math.round(rt.random(20, 38)), min: 5, max: 90, step: 1, label: 'Sensor angle°' },
-  sensorDist: { value: Math.round(rt.random(9, 15)), min: 2, max: 30, step: 1, label: 'Sensor distance' },
-  turn: { value: +rt.random(0.35, 0.6).toFixed(2), min: 0.05, max: 1.5, step: 0.05, label: 'Turn speed' },
-  decay: { value: +rt.random(0.92, 0.95).toFixed(3), min: 0.85, max: 0.99, step: 0.005, label: 'Trail persistence' },
-  deposit: { value: 1.8, min: 0.2, max: 5, step: 0.05, label: 'Deposit' },
-  foodPull: { value: 1, min: 0, max: 3, step: 0.05, label: 'Food attraction' },
-  hue: { value: +rt.random(0.12, 0.2).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
-  grow: { value: 0.06, min: 0, max: 1, step: 0.02, label: 'Growth (spawn)' },
-  pulse: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Pulse (expand/retreat)' },
+  forage: { value: +rt.random(0.7, 1.1).toFixed(2), min: 0, max: 2, step: 0.05, label: 'Forage (margin advance)' },
+  chemotaxis: { value: +rt.random(1.4, 2.2).toFixed(2), min: 0, max: 4, step: 0.05, label: 'Chemotaxis (to food)' },
+  prune: { value: +rt.random(0.9, 1.3).toFixed(2), min: 0.1, max: 3, step: 0.05, label: 'Prune (retraction)' },
+  veins: { value: +rt.random(0.3, 0.5).toFixed(2), min: 0, max: 0.9, step: 0.02, label: 'Vein sharpening' },
+  reach: { value: +rt.random(0.9, 1.3).toFixed(2), min: 0.3, max: 2.5, step: 0.05, label: 'Chem reach' },
+  hue: { value: +rt.random(0.12, 0.18).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
+  pulse: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Pulse (grow/recede)' },
   pulseRate: { value: 0.7, min: 0, max: 12, step: 0.05, label: 'Pulse rate (→ timelapse)' },
 })
-// Stronger per-frame diffusion so deposits bleed together into a continuous
-// plasmodium body rather than reading as separate speckles/dots.
-const DIFFUSE = 0.42
-// Music: beats push a burst of deposit / speed so the mesh pulses to sound.
-rt.mapInput('audio.pulse', 'deposit', 0.5)
-rt.mapInput('audio.volume', 'speed', 0.4)
+// Music: beats push a foraging surge, loudness quickens the pulse.
+rt.mapInput('audio.pulse', 'forage', 0.5)
+rt.mapInput('audio.volume', 'pulseRate', 0.6)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 const hint = document.getElementById('hint')
 
-// --- fixed-resolution simulation grid ---
-let W, H, trail, next, agents, img, sim, sctx
-const foods = [] // click-dropped attractant blobs {x, y, life}
+let W, H, mass, chem, mtmp, ctmp, noise, img, sim, sctx
+const foods = []
 
 function build() {
-  const long = Math.min(Math.max(window.innerWidth, window.innerHeight), 900)
+  const long = Math.min(Math.max(window.innerWidth, window.innerHeight), 460) // grid model — keep it lean
   const ar = window.innerWidth / window.innerHeight
   W = ar >= 1 ? long : Math.round(long * ar)
   H = ar >= 1 ? Math.round(long / ar) : long
-  trail = new Float32Array(W * H)
-  next = new Float32Array(W * H)
+  mass = new Float32Array(W * H)
+  chem = new Float32Array(W * H)
+  mtmp = new Float32Array(W * H)
+  ctmp = new Float32Array(W * H)
+  // Static heterogeneity of the substrate — breaks the radial symmetry of the
+  // point food sources so the network nucleates as irregular reticulated veins
+  // rather than perfect concentric rings.
+  noise = new Float32Array(W * H)
+  for (let i = 0; i < W * H; i++) noise[i] = 0.7 + rt.random(0, 0.6)
   sim = sim || document.createElement('canvas')
   sim.width = W
   sim.height = H
   sctx = sim.getContext('2d')
   img = sctx.createImageData(W, H)
 
-  const target = Math.round(W * H * 0.13 * params.density * rt.detail)
-  agents = new Float32Array(target * 3) // x, y, heading
-  // Seed the whole colony disc (not a point) with random headings — a
-  // distributed population is what lets channels form *between* regions into a
-  // network, rather than everyone collapsing onto one central attractor.
-  const R = Math.min(W, H) * 0.44
-  for (let i = 0; i < target; i++) {
-    const a = rt.rng() * Math.PI * 2
-    const r = Math.sqrt(rt.rng()) * R
-    agents[i * 3] = W / 2 + Math.cos(a) * r
-    agents[i * 3 + 1] = H / 2 + Math.sin(a) * r
-    agents[i * 3 + 2] = rt.rng() * Math.PI * 2
-  }
+  // Inoculate a small central colony sitting on its first food resource.
+  const cx = (W / 2) | 0
+  const cy = (H / 2) | 0
+  const R = Math.max(3, Math.min(W, H) * 0.04)
+  for (let y = -R; y <= R; y++)
+    for (let x = -R; x <= R; x++)
+      if (x * x + y * y <= R * R) mass[(cy + y) * W + cx + x] = 1
+  foods.length = 0
+  foods.push({ x: cx, y: cy, amount: 1, home: true }) // the home flake keeps a base
 }
 
 function resize() {
@@ -76,183 +76,180 @@ function resize() {
   build()
 }
 
-function sample(x, y) {
-  const ix = ((x | 0) % W + W) % W
-  const iy = ((y | 0) % H + H) % H
-  return trail[iy * W + ix]
-}
+const idx = (x, y) => y * W + x
 
-function step() {
-  const n = agents.length / 3
-  const sa = (params.sensorAngle * Math.PI) / 180
-  const sd = params.sensorDist
-  // Breathing pulse: in the expansion phase agents move a little faster and
-  // deposit more (veins thicken, the margin advances); in the retreat phase the
-  // opposite (and the trail decays faster below), so the whole colony pulses in
-  // and out organically — no directional flow field.
-  const sp = params.speed * (1 + breathe * params.pulse * 0.35)
-  const turn = params.turn
-  const dep = Math.max(0, params.deposit * 9 * (1 + breathe * params.pulse * 0.7))
-  const foodPull = params.foodPull
-  const foodReach = Math.min(W, H) * 0.55
-
-  for (let i = 0; i < n; i++) {
-    const bx = agents[i * 3]
-    const by = agents[i * 3 + 1]
-    let h = agents[i * 3 + 2]
-
-    // Sense centre / left / right a little ahead.
-    const c = sample(bx + Math.cos(h) * sd, by + Math.sin(h) * sd)
-    const l = sample(bx + Math.cos(h - sa) * sd, by + Math.sin(h - sa) * sd)
-    const r = sample(bx + Math.cos(h + sa) * sd, by + Math.sin(h + sa) * sd)
-    if (c > l && c > r) {
-      /* keep heading */
-    } else if (l > r) h -= turn
-    else if (r > l) h += turn
-    else h += (rt.rng() - 0.5) * turn * 2
-
-    // Food attraction: steer toward the nearest food source within reach,
-    // more strongly the closer it is — so the colony visibly grows toward it.
-    if (foodPull > 0 && foods.length) {
-      let fx = 0, fy = 0, best = 1e18
-      for (let q = 0; q < foods.length; q++) {
-        const ddx = foods[q].x - bx
-        const ddy = foods[q].y - by
-        const dd = ddx * ddx + ddy * ddy
-        if (dd < best) { best = dd; fx = ddx; fy = ddy }
-      }
-      const dist = Math.sqrt(best)
-      if (dist < foodReach) {
-        let diff = Math.atan2(fy, fx) - h
-        diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // wrap to [-PI, PI]
-        h += diff * foodPull * 0.07 * (1 - dist / foodReach)
+// --- one simulation step -------------------------------------------------
+function stepSim(breathe) {
+  // 1) Food emits a modest amount of chem (kept small so it stays a localized
+  //    gradient rather than flooding the field).
+  for (const f of foods) {
+    const r = 3 + 3 * f.amount
+    const cx = f.x | 0
+    const cy = f.y | 0
+    for (let y = -r; y <= r; y++) {
+      for (let x = -r; x <= r; x++) {
+        if (x * x + y * y > r * r) continue
+        const px = cx + x
+        const py = cy + y
+        if (px < 0 || px >= W || py < 0 || py >= H) continue
+        chem[idx(px, py)] += 0.12 * f.amount
       }
     }
-
-    let nx = bx + Math.cos(h) * sp
-    let ny = by + Math.sin(h) * sp
-    // Bounce off the edges (keeps the colony a growing island, not a torus).
-    if (nx < 1 || nx >= W - 1) { h = Math.PI - h; nx = Math.min(W - 1.01, Math.max(1, nx)) }
-    if (ny < 1 || ny >= H - 1) { h = -h; ny = Math.min(H - 1.01, Math.max(1, ny)) }
-
-    agents[i * 3] = nx
-    agents[i * 3 + 1] = ny
-    agents[i * 3 + 2] = h
-    trail[(ny | 0) * W + (nx | 0)] += dep
   }
-}
 
-// Diffuse (3x3 box blur) + decay, writing into `next`, then swap.
-function diffuseDecay() {
-  // Retreat phase decays a touch faster so the margin recedes; expansion holds.
-  const d = Math.min(0.999, Math.max(0.8, params.decay + breathe * params.pulse * 0.03))
+  // 2) Chem diffusion (4-neighbour) + strong decay so it forms a local gradient;
+  //    the body consumes it hard, so chem flows from food into the colony (the
+  //    gradient the margin climbs). `reach` widens the foraging radius.
+  const spread = 0.24 * params.reach
+  const decay = 0.9
   for (let y = 0; y < H; y++) {
-    const y0 = y > 0 ? y - 1 : 0
-    const y1 = y < H - 1 ? y + 1 : H - 1
+    const yu = y > 0 ? y - 1 : 0
+    const yd = y < H - 1 ? y + 1 : H - 1
     for (let x = 0; x < W; x++) {
-      const x0 = x > 0 ? x - 1 : 0
-      const x1 = x < W - 1 ? x + 1 : W - 1
-      const self = trail[y * W + x]
-      const avg =
-        (trail[y0 * W + x0] + trail[y0 * W + x] + trail[y0 * W + x1] +
-          trail[y * W + x0] + self + trail[y * W + x1] +
-          trail[y1 * W + x0] + trail[y1 * W + x] + trail[y1 * W + x1]) / 9
-      // Light diffusion: keep most of the cell's own value (so channels build
-      // up and persist) and blend only a little of the neighbourhood — a full
-      // box-average every frame would smear trails away before they connect.
-      next[y * W + x] = (self * (1 - DIFFUSE) + avg * DIFFUSE) * d
+      const xl = x > 0 ? x - 1 : 0
+      const xr = x < W - 1 ? x + 1 : W - 1
+      const i = idx(x, y)
+      const lap = chem[idx(xl, y)] + chem[idx(xr, y)] + chem[idx(x, yu)] + chem[idx(x, yd)] - 4 * chem[i]
+      let c = (chem[i] + spread * lap) * decay
+      c *= 1 - mass[i] * 0.2 // body uses up the attractant it sits on
+      ctmp[i] = c > 0 ? c : 0
     }
   }
-  const t = trail
-  trail = next
-  next = t
-}
+  const cs = chem
+  chem = ctmp
+  ctmp = cs
 
-function applyFood() {
-  for (let k = foods.length - 1; k >= 0; k--) {
-    const f = foods[k]
-    const r = 24 * (0.45 + 0.55 * f.amount) // shrinks as it's eaten
-    const emit = 95 * f.amount // emits a strong attractant, weakening as consumed
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        const d2 = dx * dx + dy * dy
-        if (d2 > r * r) continue
-        const x = (f.x + dx) | 0
-        const y = (f.y + dy) | 0
-        if (x >= 0 && x < W && y >= 0 && y < H) trail[y * W + x] += emit * (1 - d2 / (r * r))
+  // 3) Mass update. The margin only creeps forward where it can smell food
+  //    (growth is gated on chem, so the colony reaches *toward* resources rather
+  //    than swelling into a blob), and standing body survives only where chem is
+  //    present — near food and along the overlapping gradients that link one food
+  //    to another. Everywhere else a constant starvation retracts it, so bulk
+  //    that isn't on a path between resources recedes and a vein network is left.
+  //    Pulse rocks growth vs. starvation for the grow/recede breathing.
+  const grow = params.forage * (1 + breathe * params.pulse * 0.7)
+  const chemo = params.chemotaxis
+  const starve = params.prune * 0.055 * (1 - breathe * params.pulse * 0.5)
+  for (let y = 0; y < H; y++) {
+    const yu = y > 0 ? y - 1 : 0
+    const yd = y < H - 1 ? y + 1 : H - 1
+    for (let x = 0; x < W; x++) {
+      const xl = x > 0 ? x - 1 : 0
+      const xr = x < W - 1 ? x + 1 : W - 1
+      const i = idx(x, y)
+      const nMax = Math.max(mass[idx(xl, y)], mass[idx(xr, y)], mass[idx(x, yu)], mass[idx(x, yd)])
+      let m = mass[i]
+      const c = chem[i]
+      if (nMax > 0.12 && m < nMax) {
+        // Margin cell: chemotactic advance up the food gradient, plus a whisper
+        // of blind creep so a colony can still nose toward nearby resources.
+        m += grow * (0.0015 + chemo * c) * (nMax - m)
       }
+      // Standing body is sustained by chem *flux* (the gradient it sits on), not
+      // by chem level. A flat plateau of chem carries no flux, so idle bulk
+      // starves away; only cells on the gradient lines that actually shuttle
+      // attractant — near food and along the routes linking one food to another —
+      // stay fed. This is what refines the colony into an efficient vein network.
+      const flux = Math.abs(chem[idx(xr, y)] - chem[idx(xl, y)]) + Math.abs(chem[idx(x, yd)] - chem[idx(x, yu)])
+      m += 4.5 * noise[i] * flux // chem flux sustains veins; substrate biases where
+      m -= starve // constant retraction; only flux-carrying body survives
+      mtmp[i] = m < 0 ? 0 : m > 1 ? 1 : m
     }
-    // Consumption: sample the slime's own trail on a ring just outside the food.
-    // Once the colony has grown veins around it, it starts eating the food down.
-    let ring = 0
-    for (let a = 0; a < 8; a++) {
-      const ang = (a / 8) * Math.PI * 2
-      ring += sample(f.x + Math.cos(ang) * (r + 9), f.y + Math.sin(ang) * (r + 9))
+  }
+  const ms = mass
+  mass = mtmp
+  mtmp = ms
+
+  // 4) Cohesion pass. A light diffusion keeps the body a continuous sheet (no
+  //    checkerboard), while a nonlinear contrast term driven by `veins` pulls
+  //    faint cells down and firm cells up — so diffuse foraging fronts fade
+  //    unless they are reinforced, and surviving mass tightens into tubes.
+  const k = params.veins
+  for (let y = 0; y < H; y++) {
+    const yu = y > 0 ? y - 1 : 0
+    const yd = y < H - 1 ? y + 1 : H - 1
+    const yu2 = y > 1 ? y - 2 : 0
+    const yd2 = y < H - 2 ? y + 2 : H - 1
+    for (let x = 0; x < W; x++) {
+      const xl = x > 0 ? x - 1 : 0
+      const xr = x < W - 1 ? x + 1 : W - 1
+      const xl2 = x > 1 ? x - 2 : 0
+      const xr2 = x < W - 2 ? x + 2 : W - 1
+      const i = idx(x, y)
+      // Wide (radius-2) neighbourhood average — a fatter blur that raises the
+      // pattern wavelength, so bands coalesce into a few bold branching veins
+      // separated by broad dark gaps rather than many thin concentric rings.
+      const near = (mass[idx(xl, y)] + mass[idx(xr, y)] + mass[idx(x, yu)] + mass[idx(x, yd)])
+      const far = (mass[idx(xl2, y)] + mass[idx(xr2, y)] + mass[idx(x, yu2)] + mass[idx(x, yd2)])
+      const avg = near * 0.08 + far * 0.045 // neighbour weights sum to 0.5
+      // Smooth toward the neighbourhood, then bias by how a cell compares to it:
+      // above-average cells firm up, below-average cells thin out.
+      let m = mass[i] * 0.5 + avg
+      m += k * 0.18 * (m - avg)
+      mtmp[i] = m < 0 ? 0 : m > 1 ? 1 : m
     }
-    const arrived = ring / 8
-    f.amount -= 0.0006 * Math.min(4, arrived / 18)
-    if (f.amount <= 0) foods.splice(k, 1)
+  }
+  const ms2 = mass
+  mass = mtmp
+  mtmp = ms2
+
+  // 5) Food consumption: a resource covered by the body is eaten (home persists).
+  for (let kk = foods.length - 1; kk >= 0; kk--) {
+    const f = foods[kk]
+    const cover = mass[idx(Math.min(W - 1, Math.max(0, f.x | 0)), Math.min(H - 1, Math.max(0, f.y | 0)))]
+    if (!f.home) {
+      f.amount -= cover * 0.004
+      if (f.amount <= 0) foods.splice(kk, 1)
+    }
   }
 }
 
-// Occasionally respawn a fraction of the agents at fresh random spots (with a
-// random heading) so the network keeps exploring and reorganising — new veins
-// bud, old ones prune — instead of freezing into one fixed graph.
-function growEdge() {
-  const n = agents.length / 3
-  const move = Math.round(params.grow * 0.01 * n)
-  const R = Math.min(W, H) * 0.44
-  for (let k = 0; k < move; k++) {
-    const i = (rt.rng() * n) | 0
-    const a = rt.rng() * Math.PI * 2
-    const r = Math.sqrt(rt.rng()) * R
-    agents[i * 3] = W / 2 + Math.cos(a) * r
-    agents[i * 3 + 1] = H / 2 + Math.sin(a) * r
-    agents[i * 3 + 2] = rt.rng() * Math.PI * 2
-  }
+function hslRGB(h, s, l) {
+  const k = (n) => (n + h * 12) % 12
+  const a = s * Math.min(l, 1 - l)
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
+  return [f(0), f(8), f(4)]
 }
-let frameNo = 0
-let breathe = 0 // -1..1 breathing pulse (set each frame)
-let pulsePhase = 0
-let lastNow = 0
 
 function render() {
   const data = img.data
-  const [hr, hg, hb] = hsl(params.hue, 0.85, 0.55)
+  const [hr, hg, hb] = hslRGB(params.hue, 0.85, 0.55)
+  const [er, eg, eb] = hslRGB(params.hue + 0.04, 0.9, 0.72) // brighter vein cores
   for (let i = 0; i < W * H; i++) {
-    // Lower gain + softer gamma fills the body so it reads as a glowing blob,
-    // not scattered dots; still saturates on the dense veins.
-    const v = Math.min(1, trail[i] * 0.025)
-    const g = Math.pow(v, 0.6)
-    data[i * 4] = hr * g * 255
-    data[i * 4 + 1] = hg * g * 255
-    data[i * 4 + 2] = hb * g * 255
+    const m = mass[i]
+    const g = Math.pow(Math.min(1, m * 1.15), 0.7)
+    // Blend toward a lighter core on the thick veins.
+    const t = Math.min(1, m * 1.4)
+    data[i * 4] = (hr * (1 - t) + er * t) * g * 255
+    data[i * 4 + 1] = (hg * (1 - t) + eg * t) * g * 255
+    data[i * 4 + 2] = (hb * (1 - t) + eb * t) * g * 255
     data[i * 4 + 3] = 255
   }
   sctx.putImageData(img, 0, 0)
+  ctx.fillStyle = '#05060a'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
   ctx.imageSmoothingEnabled = true
   ctx.drawImage(sim, 0, 0, canvas.width, canvas.height)
 
-  // Food berries: a distinct red-orange blob (not the yellow slime) drawn on
-  // top; it shrinks and fades as the colony consumes it.
+  // Food resources: distinct red berries drawn on top; shrink as they're eaten.
   const sx = canvas.width / W
+  const sy = canvas.height / H
   for (const f of foods) {
+    if (f.home) continue
     const cx = f.x * sx
-    const cy = (f.y / H) * canvas.height
-    const rr = 24 * (0.45 + 0.55 * f.amount) * sx
+    const cy = f.y * sy
+    const rr = (5 + 6 * f.amount) * sx
     ctx.save()
     ctx.globalCompositeOperation = 'lighter'
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr * 1.6)
-    grad.addColorStop(0, `rgba(255, 120, 70, ${0.95 * f.amount})`)
-    grad.addColorStop(0.5, `rgba(230, 45, 40, ${0.6 * f.amount})`)
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr * 1.7)
+    grad.addColorStop(0, `rgba(255, 130, 80, ${0.95 * f.amount})`)
+    grad.addColorStop(0.5, `rgba(230, 45, 40, ${0.55 * f.amount})`)
     grad.addColorStop(1, 'rgba(180, 20, 20, 0)')
     ctx.fillStyle = grad
     ctx.beginPath()
-    ctx.arc(cx, cy, rr * 1.6, 0, Math.PI * 2)
+    ctx.arc(cx, cy, rr * 1.7, 0, Math.PI * 2)
     ctx.fill()
-    // solid berry core
     ctx.globalCompositeOperation = 'source-over'
-    ctx.fillStyle = `rgba(255, 150, 90, ${0.9 * f.amount})`
+    ctx.fillStyle = `rgba(255, 160, 100, ${0.9 * f.amount})`
     ctx.beginPath()
     ctx.arc(cx, cy, rr * 0.55, 0, Math.PI * 2)
     ctx.fill()
@@ -260,32 +257,29 @@ function render() {
   }
 }
 
-function hsl(h, s, l) {
-  const k = (n) => (n + h * 12) % 12
-  const a = s * Math.min(l, 1 - l)
-  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
-  return [f(0), f(8), f(4)]
-}
-
+let pulsePhase = 0
+let lastNow = 0
 function frame(now) {
   rt.tick(now)
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
   lastNow = now
-  // Advance the breathing phase (accumulated so the rate can change smoothly).
   pulsePhase += params.pulseRate * dt
-  breathe = Math.sin(pulsePhase)
-  applyFood()
-  step()
-  diffuseDecay()
-  if (params.grow > 0 && (frameNo++ & 3) === 0) growEdge()
+  const breathe = Math.sin(pulsePhase)
+  // A couple of sub-steps per frame keeps the front moving at a good pace.
+  stepSim(breathe)
+  stepSim(breathe)
   render()
   requestAnimationFrame(frame)
 }
 
 canvas.addEventListener('pointerdown', (e) => {
   const r = canvas.getBoundingClientRect()
-  foods.push({ x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H, amount: 1 })
-  hint.style.opacity = 0
+  foods.push({
+    x: ((e.clientX - r.left) / r.width) * W,
+    y: ((e.clientY - r.top) / r.height) * H,
+    amount: 1,
+  })
+  if (hint) hint.style.opacity = 0
 })
 
 window.addEventListener('resize', resize)
