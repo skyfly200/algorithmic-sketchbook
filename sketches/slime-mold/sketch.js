@@ -14,22 +14,22 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  density: { value: +rt.random(0.9, 1.3).toFixed(2), min: 0.2, max: 2.5, step: 0.05, label: 'Agent density' },
+  density: { value: +rt.random(1.4, 1.9).toFixed(2), min: 0.2, max: 2.5, step: 0.05, label: 'Agent density' },
   speed: { value: +rt.random(0.7, 1.1).toFixed(2), min: 0.2, max: 3, step: 0.05, label: 'Move speed' },
-  sensorAngle: { value: Math.round(rt.random(20, 40)), min: 5, max: 90, step: 1, label: 'Sensor angle°' },
-  sensorDist: { value: Math.round(rt.random(8, 14)), min: 2, max: 30, step: 1, label: 'Sensor distance' },
+  sensorAngle: { value: Math.round(rt.random(20, 38)), min: 5, max: 90, step: 1, label: 'Sensor angle°' },
+  sensorDist: { value: Math.round(rt.random(9, 15)), min: 2, max: 30, step: 1, label: 'Sensor distance' },
   turn: { value: +rt.random(0.35, 0.6).toFixed(2), min: 0.05, max: 1.5, step: 0.05, label: 'Turn speed' },
-  decay: { value: +rt.random(0.90, 0.94).toFixed(3), min: 0.85, max: 0.99, step: 0.005, label: 'Trail persistence' },
-  deposit: { value: 1.5, min: 0.2, max: 5, step: 0.05, label: 'Deposit' },
+  decay: { value: +rt.random(0.92, 0.95).toFixed(3), min: 0.85, max: 0.99, step: 0.005, label: 'Trail persistence' },
+  deposit: { value: 1.8, min: 0.2, max: 5, step: 0.05, label: 'Deposit' },
+  foodPull: { value: 1, min: 0, max: 3, step: 0.05, label: 'Food attraction' },
   hue: { value: +rt.random(0.12, 0.2).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
-  grow: { value: 0.15, min: 0, max: 1, step: 0.02, label: 'Growth (spawn)' },
+  grow: { value: 0.06, min: 0, max: 1, step: 0.02, label: 'Growth (spawn)' },
   pulse: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Pulse (expand/retreat)' },
-  pulseRate: { value: 0.7, min: 0, max: 2.5, step: 0.05, label: 'Pulse rate' },
+  pulseRate: { value: 0.7, min: 0, max: 12, step: 0.05, label: 'Pulse rate (→ timelapse)' },
 })
-// Moderate per-frame diffusion — trails spread just enough to merge into
-// channels; the faster decay above then prunes anything not continuously
-// re-travelled, so gaps go dark and only the veins stay lit.
-const DIFFUSE = 0.22
+// Stronger per-frame diffusion so deposits bleed together into a continuous
+// plasmodium body rather than reading as separate speckles/dots.
+const DIFFUSE = 0.42
 // Music: beats push a burst of deposit / speed so the mesh pulses to sound.
 rt.mapInput('audio.pulse', 'deposit', 0.5)
 rt.mapInput('audio.volume', 'speed', 0.4)
@@ -93,6 +93,8 @@ function step() {
   const sp = params.speed * (1 + breathe * params.pulse * 0.35)
   const turn = params.turn
   const dep = Math.max(0, params.deposit * 9 * (1 + breathe * params.pulse * 0.7))
+  const foodPull = params.foodPull
+  const foodReach = Math.min(W, H) * 0.55
 
   for (let i = 0; i < n; i++) {
     const bx = agents[i * 3]
@@ -108,6 +110,24 @@ function step() {
     } else if (l > r) h -= turn
     else if (r > l) h += turn
     else h += (rt.rng() - 0.5) * turn * 2
+
+    // Food attraction: steer toward the nearest food source within reach,
+    // more strongly the closer it is — so the colony visibly grows toward it.
+    if (foodPull > 0 && foods.length) {
+      let fx = 0, fy = 0, best = 1e18
+      for (let q = 0; q < foods.length; q++) {
+        const ddx = foods[q].x - bx
+        const ddy = foods[q].y - by
+        const dd = ddx * ddx + ddy * ddy
+        if (dd < best) { best = dd; fx = ddx; fy = ddy }
+      }
+      const dist = Math.sqrt(best)
+      if (dist < foodReach) {
+        let diff = Math.atan2(fy, fx) - h
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // wrap to [-PI, PI]
+        h += diff * foodPull * 0.07 * (1 - dist / foodReach)
+      }
+    }
 
     let nx = bx + Math.cos(h) * sp
     let ny = by + Math.sin(h) * sp
@@ -151,11 +171,8 @@ function diffuseDecay() {
 function applyFood() {
   for (let k = foods.length - 1; k >= 0; k--) {
     const f = foods[k]
-    const r = 18
-    // A food source is a strong, lasting attractant: it emits far above the
-    // network's own trail levels every frame for a long time, so the colony has
-    // time to grow a vein out to it. It slowly fades over ~40 s, then clears.
-    const emit = f.life > 240 ? 55 : 55 * (f.life / 240) // gentle fade at the end
+    const r = 24 * (0.45 + 0.55 * f.amount) // shrinks as it's eaten
+    const emit = 95 * f.amount // emits a strong attractant, weakening as consumed
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         const d2 = dx * dx + dy * dy
@@ -165,7 +182,16 @@ function applyFood() {
         if (x >= 0 && x < W && y >= 0 && y < H) trail[y * W + x] += emit * (1 - d2 / (r * r))
       }
     }
-    if (--f.life <= 0) foods.splice(k, 1)
+    // Consumption: sample the slime's own trail on a ring just outside the food.
+    // Once the colony has grown veins around it, it starts eating the food down.
+    let ring = 0
+    for (let a = 0; a < 8; a++) {
+      const ang = (a / 8) * Math.PI * 2
+      ring += sample(f.x + Math.cos(ang) * (r + 9), f.y + Math.sin(ang) * (r + 9))
+    }
+    const arrived = ring / 8
+    f.amount -= 0.0006 * Math.min(4, arrived / 18)
+    if (f.amount <= 0) foods.splice(k, 1)
   }
 }
 
@@ -194,8 +220,10 @@ function render() {
   const data = img.data
   const [hr, hg, hb] = hsl(params.hue, 0.85, 0.55)
   for (let i = 0; i < W * H; i++) {
-    const v = Math.min(1, trail[i] * 0.03)
-    const g = Math.pow(v, 0.8)
+    // Lower gain + softer gamma fills the body so it reads as a glowing blob,
+    // not scattered dots; still saturates on the dense veins.
+    const v = Math.min(1, trail[i] * 0.025)
+    const g = Math.pow(v, 0.6)
     data[i * 4] = hr * g * 255
     data[i * 4 + 1] = hg * g * 255
     data[i * 4 + 2] = hb * g * 255
@@ -204,6 +232,32 @@ function render() {
   sctx.putImageData(img, 0, 0)
   ctx.imageSmoothingEnabled = true
   ctx.drawImage(sim, 0, 0, canvas.width, canvas.height)
+
+  // Food berries: a distinct red-orange blob (not the yellow slime) drawn on
+  // top; it shrinks and fades as the colony consumes it.
+  const sx = canvas.width / W
+  for (const f of foods) {
+    const cx = f.x * sx
+    const cy = (f.y / H) * canvas.height
+    const rr = 24 * (0.45 + 0.55 * f.amount) * sx
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr * 1.6)
+    grad.addColorStop(0, `rgba(255, 120, 70, ${0.95 * f.amount})`)
+    grad.addColorStop(0.5, `rgba(230, 45, 40, ${0.6 * f.amount})`)
+    grad.addColorStop(1, 'rgba(180, 20, 20, 0)')
+    ctx.fillStyle = grad
+    ctx.beginPath()
+    ctx.arc(cx, cy, rr * 1.6, 0, Math.PI * 2)
+    ctx.fill()
+    // solid berry core
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.fillStyle = `rgba(255, 150, 90, ${0.9 * f.amount})`
+    ctx.beginPath()
+    ctx.arc(cx, cy, rr * 0.55, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
 }
 
 function hsl(h, s, l) {
@@ -230,7 +284,7 @@ function frame(now) {
 
 canvas.addEventListener('pointerdown', (e) => {
   const r = canvas.getBoundingClientRect()
-  foods.push({ x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H, life: 2400 })
+  foods.push({ x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H, amount: 1 })
   hint.style.opacity = 0
 })
 
