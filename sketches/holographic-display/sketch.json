@@ -1,0 +1,7 @@
+{
+  "title": "Holographic Display",
+  "description": "A holographic artifact floating and turning above a glowing pedestal, like a sci-fi projector table. A hologram shader gives it a Fresnel edge glow, travelling scanlines, flicker, and glitch bursts that jitter the geometry and split it into RGB fringes; a cone of light rises from the emitter ring. Pick the artifact shape; spin, glimmer, glitch, scanlines, and hue are live and audio-mappable (beats spike the glitch).",
+  "tags": ["holographic", "glitch", "3d", "sci-fi", "audio-reactive"],
+  "tech": ["three.js", "webgl", "glsl"],
+  "created": "2026-07-15"
+}
