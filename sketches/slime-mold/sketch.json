@@ -1,7 +1,7 @@
 {
   "title": "Slime Mold",
-  "description": "A Physarum polycephalum simulation: thousands of agents sense and deposit a chemoattractant trail that diffuses and decays, self-organizing into the reticulated yellow vein network of real slime mould. It grows outward from the center — click to drop food the colony reaches toward. Sensor angle/distance, turn, persistence, and growth are live and audio-mappable; randomized each load.",
-  "tags": ["simulation", "physarum", "agents", "generative", "audio-reactive"],
+  "description": "A continuous Physarum plasmodium — no agents, no dots. Two coupled fields drive it: the body's local mass and a food chemoattractant that diffuses from resources. A foraging margin grows outward toward food, and standing body survives only where it carries chem flux, so idle bulk recedes and the colony refines into an efficient reticulated vein network linking the resources. Click to drop food (a red berry) the colony reaches toward and consumes. Forage, chemotaxis, prune, vein sharpening, reach, and a grow/recede pulse (up to timelapse speed) are live and audio-mappable; randomized each load.",
+  "tags": ["simulation", "physarum", "reaction-diffusion", "generative", "audio-reactive"],
   "tech": ["canvas2d"],
   "created": "2026-07-14"
 }

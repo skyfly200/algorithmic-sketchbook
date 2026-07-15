@@ -12,26 +12,41 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'
+import { TeapotGeometry } from 'three/addons/geometries/TeapotGeometry.js'
 import { createRuntime } from '../_lib/runtime.js'
+import { polytope, kleinBottle, rotateProject } from './fourd.js'
 
 const rt = createRuntime()
-const SHAPES = ['icosahedron', 'torus knot', 'dodecahedron', 'crystal', 'sphere']
+// 3D solids + a 4D section: the six convex regular 4-polytopes and a Klein
+// bottle, all projected from 4D and turning through the fourth dimension.
+const MESH_SHAPES = ['icosahedron', 'torus knot', 'dodecahedron', 'crystal', 'sphere', 'teapot']
+const POLY_KEY = {
+  '5-cell (simplex)': '5-cell',
+  'tesseract (8-cell)': 'tesseract',
+  '16-cell': '16-cell',
+  '24-cell': '24-cell',
+  '120-cell': '120-cell',
+  '600-cell': '600-cell',
+}
+const SHAPES = [...MESH_SHAPES, ...Object.keys(POLY_KEY), 'klein bottle']
 const params = rt.params({
-  shape: { value: rt.pick(SHAPES), type: 'select', options: SHAPES, label: 'Artifact' },
+  shape: { value: rt.pick(MESH_SHAPES), type: 'select', options: SHAPES, label: 'Artifact' },
   height: { value: 1.6, min: 0.6, max: 6, step: 0.05, label: 'Height above pedestal' },
   spinX: { value: 0, min: -90, max: 90, step: 1, label: 'Spin X (°/s)' },
   spinY: { value: Math.round(rt.random(15, 35)), min: -90, max: 90, step: 1, label: 'Spin Y (°/s)' },
   spinZ: { value: 0, min: -90, max: 90, step: 1, label: 'Spin Z (°/s)' },
+  warp: { value: 0.4, min: 0, max: 2, step: 0.02, label: '4D rotation' },
   glimmer: { value: 0.6, min: 0, max: 1.5, step: 0.02, label: 'Glimmer' },
   glitch: { value: 0.4, min: 0, max: 1.5, step: 0.02, label: 'Glitch amount' },
   scan: { value: 1, min: 0, max: 3, step: 0.05, label: 'Scanline density' },
   hue: { value: +rt.random(0.5, 0.62).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hologram hue' },
   float: { value: 0.5, min: 0, max: 1.5, step: 0.02, label: 'Float bob' },
 })
-// Music: beats spike the glitch, loudness drives the glimmer.
+// Music: beats spike the glitch, loudness drives the glimmer, mids turn 4D.
 rt.mapInput('audio.pulse', 'glitch', 0.8)
 rt.mapInput('audio.volume', 'glimmer', 0.5)
 rt.mapInput('audio.flux', 'glitch', 0.4)
+rt.mapInput('audio.mid', 'warp', 0.4)
 
 const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: CAPTURE })
@@ -110,26 +125,131 @@ function makeGeom(shape) {
     case 'dodecahedron': return new THREE.DodecahedronGeometry(1.05, 0)
     case 'crystal': return new THREE.OctahedronGeometry(1.1, 0)
     case 'sphere': return new THREE.SphereGeometry(1.0, 48, 32)
+    case 'teapot': { const g = new TeapotGeometry(0.85, 8); g.center(); return g }
     default: return new THREE.IcosahedronGeometry(1.05, 1)
   }
 }
+
+// --- materials for the 4D line/point networks (holographic additive glow) ---
+const lineMat = new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+})
+function nodeSprite() {
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')
+  const rad = g.createRadialGradient(32, 32, 0, 32, 32, 32)
+  rad.addColorStop(0, 'rgba(255,255,255,1)')
+  rad.addColorStop(0.4, 'rgba(255,255,255,0.5)')
+  rad.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = rad
+  g.fillRect(0, 0, 64, 64)
+  const tex = new THREE.CanvasTexture(c)
+  return tex
+}
+const pointMat = new THREE.PointsMaterial({
+  vertexColors: true, size: 0.09, map: nodeSprite(), transparent: true,
+  blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
+})
+// Hologram base colour from hue (matches the mesh shader's palette).
+function hslCol(h) {
+  return [
+    0.5 + 0.5 * Math.cos(6.2831 * h),
+    0.5 + 0.5 * Math.cos(6.2831 * (h + 0.33)),
+    0.5 + 0.5 * Math.cos(6.2831 * (h + 0.67)),
+  ]
+}
+const fhash = (n) => { const s = Math.sin(n * 91.3) * 1234.5; return s - Math.floor(s) }
 // `artifact` is a group we spin/position; it holds either a built-in shape or
 // an uploaded model. `modelLoaded` suppresses the built-in wire twin.
 let artifact = new THREE.Group()
 scene.add(artifact)
 let builtShape = null
 let modelLoaded = false
+let fourd = null // 4D object being projected each frame (polytope or Klein bottle)
 
 function setArtifactChild(obj) {
   while (artifact.children.length) artifact.remove(artifact.children[0])
   artifact.add(obj)
 }
 function buildArtifact(shape) {
-  const mesh = new THREE.Mesh(makeGeom(shape), holoMat)
-  setArtifactChild(mesh)
+  fourd = null
+  if (shape === 'klein bottle') build4DNetwork(kleinBottle(), false)
+  else if (POLY_KEY[shape]) build4DNetwork(polytope(POLY_KEY[shape]), true)
+  else {
+    setArtifactChild(new THREE.Mesh(makeGeom(shape), holoMat))
+    wire.visible = true
+  }
   builtShape = shape
   modelLoaded = false
-  wire.visible = true
+}
+
+// A 4D figure drawn as a projected edge network (polytopes add glowing nodes;
+// the Klein-bottle wireframe leaves them off since its grid is already dense).
+function build4DNetwork({ verts, edges }, showNodes) {
+  const lg = new THREE.BufferGeometry()
+  const linePos = new Float32Array(edges.length * 6)
+  const lineCol = new Float32Array(edges.length * 6)
+  lg.setAttribute('position', new THREE.BufferAttribute(linePos, 3))
+  lg.setAttribute('color', new THREE.BufferAttribute(lineCol, 3))
+  const grp = new THREE.Group()
+  grp.add(new THREE.LineSegments(lg, lineMat))
+  let pg = null, ptPos = null, ptCol = null
+  if (showNodes) {
+    pg = new THREE.BufferGeometry()
+    ptPos = new Float32Array(verts.length * 3)
+    ptCol = new Float32Array(verts.length * 3)
+    pg.setAttribute('position', new THREE.BufferAttribute(ptPos, 3))
+    pg.setAttribute('color', new THREE.BufferAttribute(ptCol, 3))
+    grp.add(new THREE.Points(pg, pointMat))
+  }
+  setArtifactChild(grp)
+  fourd = { verts, edges, lg, pg, linePos, lineCol, ptPos, ptCol, proj: verts.map(() => [0, 0, 0, 0]) }
+  wire.visible = false
+}
+
+// Rotate the current 4D object through the w-planes and project it to 3D.
+function update4D(t) {
+  const warp = params.warp
+  const ax = t * 0.31 * warp, ay = t * 0.47 * warp, az = t * 0.23 * warp
+  const dist = 2.6
+  const gl = uniforms.u_glitch.value
+  const { verts, edges, lg, pg, linePos, lineCol, ptPos, ptCol, proj } = fourd
+  const base = hslCol(params.hue)
+  const glow = hslCol(params.hue + 0.1)
+  const vcol = new Float32Array(verts.length * 3)
+  for (let i = 0; i < verts.length; i++) {
+    const p = proj[i]
+    const w = rotateProject(verts[i], ax, ay, az, dist, p)
+    p[0] *= 1.1; p[1] *= 1.1; p[2] *= 1.1
+    // Glitch: shove horizontal slabs sideways during bursts.
+    if (gl > 0.01) {
+      const slab = Math.floor(p[1] * 6)
+      if (fhash(slab + Math.floor(t * 12)) > 0.7) p[0] += gl * 0.2 * (fhash(slab * 1.7) - 0.5)
+    }
+    const b = 0.32 + 0.85 * (0.5 + 0.5 * w) // nearer in w → brighter
+    vcol[i * 3] = (base[0] * 0.6 + glow[0] * 0.4) * b
+    vcol[i * 3 + 1] = (base[1] * 0.6 + glow[1] * 0.4) * b
+    vcol[i * 3 + 2] = (base[2] * 0.6 + glow[2] * 0.4) * b
+    if (pg) {
+      ptPos[i * 3] = p[0]; ptPos[i * 3 + 1] = p[1]; ptPos[i * 3 + 2] = p[2]
+      ptCol[i * 3] = vcol[i * 3]; ptCol[i * 3 + 1] = vcol[i * 3 + 1]; ptCol[i * 3 + 2] = vcol[i * 3 + 2]
+    }
+  }
+  for (let e = 0; e < edges.length; e++) {
+    const a = edges[e][0], c = edges[e][1], o = e * 6
+    const pa = proj[a], pc = proj[c]
+    linePos[o] = pa[0]; linePos[o + 1] = pa[1]; linePos[o + 2] = pa[2]
+    linePos[o + 3] = pc[0]; linePos[o + 4] = pc[1]; linePos[o + 5] = pc[2]
+    lineCol[o] = vcol[a * 3]; lineCol[o + 1] = vcol[a * 3 + 1]; lineCol[o + 2] = vcol[a * 3 + 2]
+    lineCol[o + 3] = vcol[c * 3]; lineCol[o + 4] = vcol[c * 3 + 1]; lineCol[o + 5] = vcol[c * 3 + 2]
+  }
+  lg.attributes.position.needsUpdate = true
+  lg.attributes.color.needsUpdate = true
+  if (pg) {
+    pg.attributes.position.needsUpdate = true
+    pg.attributes.color.needsUpdate = true
+  }
 }
 
 // Fit an uploaded object into the ~2-unit display volume, centred at the
@@ -239,6 +359,9 @@ renderer.setAnimationLoop((now) => {
   // Occasional glitch bursts, plus whatever audio maps in.
   const burst = Math.max(0, Math.sin(t * 1.7) - 0.9) * 8
   uniforms.u_glitch.value = params.glitch * (0.15 + burst) + rt.beat.state.pulse * params.glitch
+
+  // 4D shapes are re-projected from the fourth dimension every frame.
+  if (fourd) update4D(t)
 
   const bob = Math.sin(t * 1.5) * 0.12 * params.float
   const y = params.height + bob
