@@ -144,13 +144,18 @@ function diffuseDecay() {
 function applyFood() {
   for (let k = foods.length - 1; k >= 0; k--) {
     const f = foods[k]
-    const r = 14
+    const r = 18
+    // A food source is a strong, lasting attractant: it emits far above the
+    // network's own trail levels every frame for a long time, so the colony has
+    // time to grow a vein out to it. It slowly fades over ~40 s, then clears.
+    const emit = f.life > 240 ? 55 : 55 * (f.life / 240) // gentle fade at the end
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
-        if (dx * dx + dy * dy > r * r) continue
+        const d2 = dx * dx + dy * dy
+        if (d2 > r * r) continue
         const x = (f.x + dx) | 0
         const y = (f.y + dy) | 0
-        if (x >= 0 && x < W && y >= 0 && y < H) trail[y * W + x] += 6
+        if (x >= 0 && x < W && y >= 0 && y < H) trail[y * W + x] += emit * (1 - d2 / (r * r))
       }
     }
     if (--f.life <= 0) foods.splice(k, 1)
@@ -210,7 +215,7 @@ function frame(now) {
 
 canvas.addEventListener('pointerdown', (e) => {
   const r = canvas.getBoundingClientRect()
-  foods.push({ x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H, life: 90 })
+  foods.push({ x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H, life: 2400 })
   hint.style.opacity = 0
 })
 
