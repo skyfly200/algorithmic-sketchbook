@@ -313,13 +313,24 @@ export function createRuntime() {
     }
   }
 
+  // Per-mapping smoothed source values (keyed by source→param) so a mapping's
+  // `smooth` (0..1, inertia) makes live input glide instead of jumping.
+  const smoothed = new Map()
   function applyModulation(now) {
     for (const name in base) effective[name] = base[name]
     for (const m of mappings) {
       const def = schema[m.param]
       if (!def || typeof def.min !== 'number') continue
+      let v = sourceValue(m.source, now)
+      const sm = m.smooth ?? 0
+      if (sm > 0) {
+        const key = m.source + '>' + m.param
+        const prev = smoothed.get(key)
+        v = prev == null ? v : prev * sm + v * (1 - sm)
+        smoothed.set(key, v)
+      }
       effective[m.param] = clamp(
-        effective[m.param] + sourceValue(m.source, now) * m.amount * (def.max - def.min),
+        effective[m.param] + v * m.amount * (def.max - def.min),
         def.min,
         def.max,
       )

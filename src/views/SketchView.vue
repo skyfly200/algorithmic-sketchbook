@@ -76,7 +76,7 @@ function addMapping() {
     ([, s]) => typeof s.min === 'number',
   )
   if (!firstNumeric) return
-  controls.value.mappings.push({ source: 'audio.pulse', param: firstNumeric[0], amount: 0.5 })
+  controls.value.mappings.push({ source: 'audio.pulse', param: firstNumeric[0], amount: 0.5, smooth: 0.6 })
   syncMappings()
 }
 
@@ -367,6 +367,17 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
                   thumb-label
                   label="amount"
                   @update:model-value="syncMappings"
+                />
+                <v-slider
+                  :model-value="m.smooth ?? 0"
+                  :min="0"
+                  :max="0.98"
+                  :step="0.02"
+                  density="compact"
+                  hide-details
+                  thumb-label
+                  label="smooth"
+                  @update:model-value="(v) => { m.smooth = v; syncMappings() }"
                 />
               </v-card>
             </v-expansion-panel-text>

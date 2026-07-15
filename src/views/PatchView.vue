@@ -383,7 +383,7 @@ function addEffectMapping(id) {
   const c = effectControls.get(id)
   const firstNumeric = Object.keys(c.schema).find((k) => typeof c.schema[k].min === 'number')
   if (!firstNumeric) return
-  c.mappings.push({ source: 'audio.pulse', param: firstNumeric, amount: 0.5 })
+  c.mappings.push({ source: 'audio.pulse', param: firstNumeric, amount: 0.5, smooth: 0.6 })
   syncEffectMappings(id)
 }
 function removeEffectMapping(id, i) {
@@ -894,7 +894,8 @@ onBeforeUnmount(() => {
                 <select v-model="m.param" @change="syncEffectMappings(n.id)">
                   <option v-for="pn in numericParamsOfEffect(n.id)" :key="pn" :value="pn">{{ pn }}</option>
                 </select>
-                <input type="range" min="-1" max="1" step="0.05" v-model.number="m.amount" @input="syncEffectMappings(n.id)" />
+                <input type="range" min="-1" max="1" step="0.05" v-model.number="m.amount" title="amount" @input="syncEffectMappings(n.id)" />
+                <input type="range" min="0" max="0.98" step="0.02" :value="m.smooth ?? 0" title="smoothing" @input="m.smooth = +$event.target.value; syncEffectMappings(n.id)" />
                 <button class="mini" title="Remove" @click="removeEffectMapping(n.id, mi)">×</button>
               </div>
             </div>

@@ -191,7 +191,7 @@ function addLayerMapping(layer) {
   if (!c) return
   const firstNumeric = Object.keys(c.schema).find((k) => typeof c.schema[k].min === 'number')
   if (!firstNumeric) return
-  c.mappings.push({ source: 'audio.pulse', param: firstNumeric, amount: 0.5 })
+  c.mappings.push({ source: 'audio.pulse', param: firstNumeric, amount: 0.5, smooth: 0.6 })
   syncLayerMappings(layer)
 }
 function removeLayerMapping(layer, i) {
@@ -523,15 +523,28 @@ onBeforeUnmount(() => {
                 @click="removeLayerMapping(layer, mi)"
               />
             </div>
-            <v-slider
-              v-model="m.amount"
-              :min="-1"
-              :max="1"
-              :step="0.05"
-              density="compact"
-              hide-details
-              @update:model-value="syncLayerMappings(layer)"
-            />
+            <div class="d-flex ga-2">
+              <v-slider
+                v-model="m.amount"
+                :min="-1"
+                :max="1"
+                :step="0.05"
+                density="compact"
+                hide-details
+                label="amt"
+                @update:model-value="syncLayerMappings(layer)"
+              />
+              <v-slider
+                :model-value="m.smooth ?? 0"
+                :min="0"
+                :max="0.98"
+                :step="0.02"
+                density="compact"
+                hide-details
+                label="smooth"
+                @update:model-value="(v) => { m.smooth = v; syncLayerMappings(layer) }"
+              />
+            </div>
           </div>
         </template>
       </v-card>
