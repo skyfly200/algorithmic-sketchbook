@@ -184,15 +184,21 @@ function buildArtifact(shape) {
   modelLoaded = false
 }
 
-// A 4D figure drawn as a projected edge network (polytopes add glowing nodes;
-// the Klein-bottle wireframe leaves them off since its grid is already dense).
-function build4DNetwork({ verts, edges }, showNodes) {
+// A 4D figure drawn like the 3D solids — hologram-shaded faces — with its
+// projected edge network on top (and glowing vertex nodes on the polytopes).
+function build4DNetwork({ verts, edges, tris }, showNodes) {
   const lg = new THREE.BufferGeometry()
   const linePos = new Float32Array(edges.length * 6)
   const lineCol = new Float32Array(edges.length * 6)
   lg.setAttribute('position', new THREE.BufferAttribute(linePos, 3))
   lg.setAttribute('color', new THREE.BufferAttribute(lineCol, 3))
   const grp = new THREE.Group()
+  // Faces first: the same holographic shader the 3D shapes use.
+  const fg = new THREE.BufferGeometry()
+  const facePos = new Float32Array(verts.length * 3)
+  fg.setAttribute('position', new THREE.BufferAttribute(facePos, 3))
+  fg.setIndex(tris)
+  grp.add(new THREE.Mesh(fg, holoMat))
   grp.add(new THREE.LineSegments(lg, lineMat))
   let pg = null, ptPos = null, ptCol = null
   if (showNodes) {
@@ -204,7 +210,7 @@ function build4DNetwork({ verts, edges }, showNodes) {
     grp.add(new THREE.Points(pg, pointMat))
   }
   setArtifactChild(grp)
-  fourd = { verts, edges, lg, pg, linePos, lineCol, ptPos, ptCol, proj: verts.map(() => [0, 0, 0, 0]) }
+  fourd = { verts, edges, lg, pg, fg, facePos, linePos, lineCol, ptPos, ptCol, proj: verts.map(() => [0, 0, 0, 0]) }
   wire.visible = false
 }
 
@@ -214,7 +220,7 @@ function update4D(t) {
   const ax = t * 0.31 * warp, ay = t * 0.47 * warp, az = t * 0.23 * warp
   const dist = 2.6
   const gl = uniforms.u_glitch.value
-  const { verts, edges, lg, pg, linePos, lineCol, ptPos, ptCol, proj } = fourd
+  const { verts, edges, lg, pg, fg, facePos, linePos, lineCol, ptPos, ptCol, proj } = fourd
   const base = hslCol(params.hue)
   const glow = hslCol(params.hue + 0.1)
   const vcol = new Float32Array(verts.length * 3)
@@ -231,6 +237,7 @@ function update4D(t) {
     vcol[i * 3] = (base[0] * 0.6 + glow[0] * 0.4) * b
     vcol[i * 3 + 1] = (base[1] * 0.6 + glow[1] * 0.4) * b
     vcol[i * 3 + 2] = (base[2] * 0.6 + glow[2] * 0.4) * b
+    facePos[i * 3] = p[0]; facePos[i * 3 + 1] = p[1]; facePos[i * 3 + 2] = p[2]
     if (pg) {
       ptPos[i * 3] = p[0]; ptPos[i * 3 + 1] = p[1]; ptPos[i * 3 + 2] = p[2]
       ptCol[i * 3] = vcol[i * 3]; ptCol[i * 3 + 1] = vcol[i * 3 + 1]; ptCol[i * 3 + 2] = vcol[i * 3 + 2]
@@ -246,6 +253,8 @@ function update4D(t) {
   }
   lg.attributes.position.needsUpdate = true
   lg.attributes.color.needsUpdate = true
+  fg.attributes.position.needsUpdate = true
+  fg.computeVertexNormals() // the shader's Fresnel needs fresh normals
   if (pg) {
     pg.attributes.position.needsUpdate = true
     pg.attributes.color.needsUpdate = true

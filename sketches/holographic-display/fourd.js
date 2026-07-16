@@ -117,6 +117,76 @@ function normalize(verts) {
   return verts.map((v) => v.map((x) => x / r))
 }
 
+// --- 2-faces (the flat polygons of the boundary) --------------------------
+function adjacency(n, edges) {
+  const adj = Array.from({ length: n }, () => new Set())
+  for (const [a, b] of edges) { adj[a].add(b); adj[b].add(a) }
+  return adj
+}
+// Triangle faces = 3-cliques of the edge graph (all triangle-celled polytopes).
+function triangleFaces(adj) {
+  const faces = []
+  for (let a = 0; a < adj.length; a++)
+    for (const b of adj[a]) if (b > a)
+      for (const c of adj[b]) if (c > b && adj[a].has(c)) faces.push([a, b, c])
+  return faces
+}
+const dot4 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
+// A polygon's vertices are coplanar iff their offset vectors span ≤ 2 dims.
+function coplanar(poly, V, eps = 1e-2) {
+  const o = V[poly[0]]
+  const basis = []
+  for (let k = 1; k < poly.length; k++) {
+    let r = [V[poly[k]][0] - o[0], V[poly[k]][1] - o[1], V[poly[k]][2] - o[2], V[poly[k]][3] - o[3]]
+    for (const u of basis) { const d = dot4(r, u); r = [r[0] - d * u[0], r[1] - d * u[1], r[2] - d * u[2], r[3] - d * u[3]] }
+    const n = Math.hypot(...r)
+    if (n > eps) { if (basis.length >= 2) return false; basis.push(r.map((x) => x / n)) }
+  }
+  return true
+}
+// Chordless, coplanar p-gons — the square/pentagon faces of the tesseract and
+// 120-cell. Rooted at their minimum vertex and deduped over rotation/reflection.
+function polygonFaces(adj, V, p) {
+  const faces = []
+  const seen = new Set()
+  const path = []
+  const canon = (c) => {
+    const out = []
+    for (const dir of [c, c.slice().reverse()])
+      for (let r = 0; r < c.length; r++) out.push(dir.slice(r).concat(dir.slice(0, r)).join(','))
+    return out.sort()[0]
+  }
+  function dfs(v, start) {
+    path.push(v)
+    if (path.length === p) {
+      if (adj[v].has(start) && coplanar(path, V)) {
+        const key = canon(path)
+        if (!seen.has(key)) { seen.add(key); faces.push(path.slice()) }
+      }
+      path.pop(); return
+    }
+    for (const w of adj[v]) {
+      if (w < start || path.includes(w)) continue
+      const willClose = path.length === p - 1
+      let ok = true // chordless: w may only touch its predecessor (and start, to close)
+      for (let i = 1; i < path.length - 1; i++) if (adj[w].has(path[i])) { ok = false; break }
+      // Adjacency back to start is a chord — except for the first edge out of
+      // start, and except when it's the edge that closes the polygon.
+      if (ok && !willClose && path.length > 1 && adj[w].has(start)) ok = false
+      if (ok) dfs(w, start)
+    }
+    path.pop()
+  }
+  for (let s = 0; s < adj.length; s++) dfs(s, s)
+  return faces
+}
+// Fan-triangulate polygons into a flat list of vertex indices.
+function triangulate(faces) {
+  const t = []
+  for (const f of faces) for (let i = 1; i < f.length - 1; i++) t.push(f[0], f[i], f[i + 1])
+  return t
+}
+
 // --- the six regular 4-polytopes -----------------------------------------
 export function polytope(name) {
   let verts
@@ -155,37 +225,57 @@ export function polytope(name) {
       verts = signSpread([1, 1, 1, 1])
   }
   verts = normalize(verts)
-  return { verts, edges: edgesByNearest(verts) }
+  const edges = edgesByNearest(verts)
+  const adj = adjacency(verts.length, edges)
+  let faces
+  if (name === 'tesseract') faces = polygonFaces(adj, verts, 4)
+  else if (name === '120-cell') faces = polygonFaces(adj, verts, 5)
+  else faces = triangleFaces(adj) // 5-cell, 16-cell, 24-cell, 600-cell
+  return { verts, edges, tris: triangulate(faces) }
 }
 
-// --- Klein bottle embedded in R⁴ (a circle bundle over a circle with a
-// half-twist that lives in the extra dimension, so it is embedded — no
-// self-intersection — until you project it down to 3D). Returned as a grid
-// wireframe so the surface stays legible under additive holographic blending.
-export function kleinBottle(segU = 48, segV = 24) {
+// --- Klein bottle: the classic "bottle" immersion (bulbous body, neck bending
+// over and plunging back through the side), given a small 4th coordinate that
+// lifts the neck/wall crossing apart in R⁴ — so at rest it projects to the
+// traditional bottle silhouette, and 4D rotation morphs it. Piecewise
+// parametrization after the standard figure (u along the bottle, v around it).
+export function kleinBottle(segU = 64, segV = 24) {
   const verts = []
   for (let iu = 0; iu <= segU; iu++) {
     const u = (iu / segU) * Math.PI * 2
     for (let iv = 0; iv <= segV; iv++) {
       const v = (iv / segV) * Math.PI * 2
-      const r = 1.1 + Math.cos(v)
-      verts.push([
-        r * Math.cos(u),
-        r * Math.sin(u),
-        Math.sin(v) * Math.cos(u / 2),
-        Math.sin(v) * Math.sin(u / 2),
-      ])
+      const r = 4 * (1 - Math.cos(u) / 2)
+      let x, y
+      if (u <= Math.PI) {
+        x = 6 * Math.cos(u) * (1 + Math.sin(u)) + r * Math.cos(u) * Math.cos(v)
+        y = 16 * Math.sin(u) + r * Math.sin(u) * Math.cos(v)
+      } else {
+        x = 6 * Math.cos(u) * (1 + Math.sin(u)) + r * Math.cos(v + Math.PI)
+        y = 16 * Math.sin(u)
+      }
+      const z = r * Math.sin(v)
+      // 4D lift: zero at the seams, pushes the tube out of the wall it pierces.
+      const w = 3.5 * Math.sin(u / 2) * Math.sin(v)
+      verts.push([x, y - 3, z, w]) // shift down so the bulb centres the origin
     }
   }
   const row = segV + 1
   const edges = []
+  const tris = []
   for (let iu = 0; iu <= segU; iu++)
     for (let iv = 0; iv <= segV; iv++) {
       const a = iu * row + iv
-      if (iu < segU) edges.push([a, a + row]) // along u
-      if (iv < segV) edges.push([a, a + 1]) // along v
+      // Sparse contour wireframe (the shaded faces carry the surface; lines
+      // just trace it the way the pedestal's hologram lines would).
+      if (iu < segU && iv % 4 === 0) edges.push([a, a + row]) // along u
+      if (iv < segV && iu % 8 === 0) edges.push([a, a + 1]) // rings
+      if (iu < segU && iv < segV) {
+        const b = a + row, c = a + row + 1, d = a + 1
+        tris.push(a, b, c, a, c, d) // two triangles per grid quad
+      }
     }
-  return { verts: normalize(verts), edges }
+  return { verts: normalize(verts), edges, tris }
 }
 
 // --- 4D rotation (in the three planes containing w) + projection to 3D -----
