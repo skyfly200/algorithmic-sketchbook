@@ -1,6 +1,6 @@
 {
   "title": "Droplet Dance",
-  "description": "Non-coalescence — the physics of \"walking droplets\". On a vibrating bath a droplet can bounce forever on a cushion of air instead of merging. Each bounce stamps a ripple into a wave field with slow damping (the bath's memory); on its next bounce the droplet surfs the slope of that field, so it walks across the surface steered by its own and its neighbours' waves, and droplets bump apart but never coalesce. Click to add a droplet; count, bounce rate, wave memory, walk drive, and hue are live and audio-mappable.",
+  "description": "Non-coalescence — the physics of bouncing droplets on a fluid bath. Each drop falls in under gravity, bounces on a thin film of air (losing energy each time and stamping an expanding ripple), and walks as it surfs the slope of the wave field its bounces leave behind. Bigger drops and tired low bounces drain the film sooner, so eventually surface tension breaks and the drop coalesces into the bath with a larger splash ripple. Drops bump apart but never merge with each other. Click to drop one; count, gravity, bounciness, surface tension, walk drive, and hue are live and audio-mappable (beats drop new droplets).",
   "tags": ["physics", "walking-droplets", "waves", "fluid", "audio-reactive"],
   "tech": [
     "canvas2d"
