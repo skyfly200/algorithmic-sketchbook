@@ -1,5 +1,5 @@
 /**
- * Droplet Dance — non-coalescence on a vibrating bath. A droplet dropped onto a
+ * Droplet Bounce — non-coalescence on a vibrating bath. A droplet dropped onto a
  * fluid bath rides a thin film of air and can bounce many times before it
  * finally merges. Here each drop falls in under gravity, bounces (losing energy
  * each time and stamping an expanding ripple), walks as it surfs the slope of
@@ -7,6 +7,10 @@
  * tired low bounces sooner — the air film drains, surface tension breaks, and it
  * coalesces into the bath with a larger splash ripple. Drops bump apart but
  * never merge with each other. Click to drop one.
+ *
+ * Resonate mode drives the bath at its Faraday resonance: each bounce is
+ * re-energized to a steady height and the air film is continually replenished,
+ * so the drops bounce forever in a shimmering standing wave and never coalesce.
  */
 import { createRuntime } from '../_lib/runtime.js'
 
@@ -17,6 +21,8 @@ const params = rt.params({
   bounce: { value: 0.62, min: 0.2, max: 0.85, step: 0.01, label: 'Bounciness' },
   tension: { value: 1, min: 0.3, max: 2.5, step: 0.05, label: 'Surface tension' },
   walk: { value: 1, min: 0, max: 3, step: 0.05, label: 'Walk drive' },
+  resonate: { value: false, type: 'bool', label: 'Resonate (never coalesce)' },
+  drive: { value: 1, min: 0.3, max: 2.5, step: 0.05, label: 'Faraday drive' },
   hue: { value: +rt.random(0.5, 0.62).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Bath hue' },
 })
 // Music: beats drop new droplets in, loudness drives the walking.
@@ -32,6 +38,7 @@ let W, H, gw, gh, cell
 let hPrev, hCur, hNext, img
 let drops = []
 let ripples = []
+let driveT = 0 // Faraday drive phase (resonate mode)
 
 function resetField() {
   cell = 8 * rt.pixelRatio
@@ -109,12 +116,20 @@ function render() {
   const d = img.data
   const base = [8, 12, 22]
   const lit = hslArr(params.hue, 0.6, 0.6)
+  // Faraday standing wave: a faint hex-ish shimmer oscillating with the drive,
+  // shown only in resonate mode to signal the bath is being vibrated.
+  const far = params.resonate ? 0.28 : 0
+  const kx = 7 / gw * Math.PI * 2
+  const ky = 6 / gh * Math.PI * 2
+  const dph = Math.sin(driveT)
   for (let y = 0; y < gh; y++) {
     for (let x = 0; x < gw; x++) {
       const i = gi(x, y)
       const sx = (x > 0 && x < gw - 1) ? hCur[i + 1] - hCur[i - 1] : 0
       const sy = (y > 0 && y < gh - 1) ? hCur[i + gw] - hCur[i - gw] : 0
-      const sh = Math.max(-1, Math.min(1, (sx * 0.6 - sy * 0.8) * 0.5))
+      let sh = (sx * 0.6 - sy * 0.8) * 0.5
+      if (far) sh += far * dph * Math.sin(x * kx) * Math.sin(y * ky)
+      sh = Math.max(-1, Math.min(1, sh))
       const g = 0.5 + sh * 0.5
       d[i * 4] = base[0] + lit[0] * g * 0.6
       d[i * 4 + 1] = base[1] + lit[1] * g * 0.6
@@ -179,6 +194,7 @@ function frame(now) {
   const dt = lastNow ? Math.min(0.04, (now - lastNow) / 1000) : 0.016
   lastNow = now
 
+  driveT += dt * 9 * params.drive // Faraday drive oscillation
   stepField(0.9)
   stepField(0.9)
 
@@ -199,17 +215,27 @@ function frame(now) {
       const s = Math.min(1.4, speed / (H * 1.2))
       dp.impact = 1
       bounceKick(dp)
-      // Air film drains a little each bounce; big drops and weak bounces drain
-      // faster. When it's gone, or a bounce is too feeble, it coalesces.
-      dp.film -= (0.12 + 0.5 * (dp.r / rMax)) / params.tension + (s < 0.12 ? 0.5 : 0)
-      if (dp.film <= 0) {
-        splash(dp.x, dp.y, 0.5 + s, true) // surface tension breaks → merge in
-        drops.splice(i, 1)
-        continue
+      if (params.resonate) {
+        // Faraday-driven: the bath pumps energy back, so each bounce is
+        // re-energized to a steady resonant height and the film is replenished
+        // — the drop bounces forever and never coalesces.
+        dp.film = 1
+        splash(dp.x, dp.y, 0.4 + s, false)
+        dp.z = 0
+        dp.vz = Math.sqrt(2 * G * H * 0.11 * params.drive)
+      } else {
+        // Air film drains a little each bounce; big drops and weak bounces drain
+        // faster. When it's gone, or a bounce is too feeble, it coalesces.
+        dp.film -= (0.12 + 0.5 * (dp.r / rMax)) / params.tension + (s < 0.12 ? 0.5 : 0)
+        if (dp.film <= 0) {
+          splash(dp.x, dp.y, 0.5 + s, true) // surface tension breaks → merge in
+          drops.splice(i, 1)
+          continue
+        }
+        splash(dp.x, dp.y, 0.3 + s, false)
+        dp.z = 0
+        dp.vz = speed * params.bounce // bounce back up, having lost energy
       }
-      splash(dp.x, dp.y, 0.3 + s, false)
-      dp.z = 0
-      dp.vz = speed * params.bounce // bounce back up, having lost energy
     }
     // Horizontal walk + drag, keep on the bath.
     dp.x += dp.vx * dt
