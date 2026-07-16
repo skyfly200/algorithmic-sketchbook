@@ -365,9 +365,12 @@ renderer.setAnimationLoop((now) => {
   uniforms.u_glimmer.value = params.glimmer
   uniforms.u_scan.value = params.scan
   uniforms.u_hue.value = params.hue
-  // Occasional glitch bursts, plus whatever audio maps in.
+  // Ambient glitch bursts on a slow timer. Audio reactivity comes purely from
+  // the audio.pulse / audio.flux → glitch mappings folded into params.glitch, so
+  // the controls panel's mapping amounts fully govern how much sound glitches it
+  // (no extra hardcoded beat term fighting them).
   const burst = Math.max(0, Math.sin(t * 1.7) - 0.9) * 8
-  uniforms.u_glitch.value = params.glitch * (0.15 + burst) + rt.beat.state.pulse * params.glitch
+  uniforms.u_glitch.value = params.glitch * (0.2 + burst)
 
   // 4D shapes are re-projected from the fourth dimension every frame.
   if (fourd) update4D(t)
