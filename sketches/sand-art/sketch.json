@@ -1,0 +1,9 @@
+{
+  "title": "Sand Art",
+  "description": "A falling-sand cellular automaton. A spout sweeps across the top pouring streams of colour-cycling sand that fall, pile up at their angle of repose, and settle into the banded dunes of a sand-art bottle. Each grain is a cell — it drops straight down if it can, otherwise tumbles diagonally, gated by a looseness so piles hold a slope; a slow floor drain keeps the sand flowing so layers build, slump and restack forever. Drag to pour your own; grain size, pour rate, looseness, colour cycling, drain, and palette are live and audio-mappable (louder pours more).",
+  "tags": ["sand", "falling-sand", "cellular-automata", "generative", "audio-reactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-16"
+}
