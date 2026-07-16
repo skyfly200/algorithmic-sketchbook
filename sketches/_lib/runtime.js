@@ -241,20 +241,34 @@ export function createRuntime() {
   // (iOS needs a permission gesture — handled by a mounted button).
   const motion = { x: 0.5, y: 0.5, shake: 0 }
   let motionStarted = false
+  let motionOk = false // a real sensor event has arrived
+  let motionFallback = false // no sensor → tilt.x/y follow the mouse instead
   function startMotion() {
     if (motionStarted) return
     motionStarted = true
     window.addEventListener('deviceorientation', (e) => {
+      if (e.gamma == null && e.beta == null) return
+      motionOk = true
       if (e.gamma != null) motion.x = clamp(0.5 + e.gamma / 90, 0, 1) // left–right
       if (e.beta != null) motion.y = clamp(0.5 + e.beta / 90, 0, 1) // front–back
     })
     window.addEventListener('devicemotion', (e) => {
       const a = e.acceleration || e.accelerationIncludingGravity
-      if (a) {
+      if (a && (a.x != null || a.y != null || a.z != null)) {
+        motionOk = true
         const mag = Math.hypot(a.x || 0, a.y || 0, a.z || 0)
         motion.shake = Math.max(motion.shake, Math.min(1, mag / 22))
       }
     })
+    // Many machines (laptops/desktops) have no motion sensor, so the events
+    // never fire and a tilt mapping looks broken. If nothing arrives shortly,
+    // fall back to steering tilt.x/y with the mouse so the mapping is usable.
+    setTimeout(() => {
+      if (!motionOk && !preview) {
+        motionFallback = true
+        showToast('No motion sensor — tilt follows the mouse')
+      }
+    }, 1600)
   }
   function enableMotion() {
     const DOE = window.DeviceOrientationEvent
@@ -298,8 +312,8 @@ export function createRuntime() {
       case 'audio.flux': return beat.state.flux
       case 'mouse.x': return mouse.x
       case 'mouse.y': return mouse.y
-      case 'tilt.x': return motion.x
-      case 'tilt.y': return motion.y
+      case 'tilt.x': return motionFallback ? mouse.x : motion.x
+      case 'tilt.y': return motionFallback ? mouse.y : motion.y
       case 'shake': return motion.shake
       case 'time.sin': return 0.5 + 0.5 * Math.sin(now * 0.001 * Math.PI * 0.2) // 10 s period
       case 'midi.note': return midi.state.note

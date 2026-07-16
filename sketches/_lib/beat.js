@@ -164,6 +164,12 @@ export function createBeatDetector({
     stop,
     update,
     trigger,
+    // Live FFT magnitude spectrum (Uint8Array 0..255) for spectrum visualizers,
+    // or null until the mic is active. `sampleRate` lets a sketch label the axis.
+    getSpectrum: () => bins,
+    get sampleRate() {
+      return audioCtx?.sampleRate ?? 44100
+    },
     onBeat(cb) {
       callbacks.push(cb)
     },
