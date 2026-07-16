@@ -1,0 +1,9 @@
+{
+  "title": "Cellular Automata",
+  "description": "Emergence from purely local rules, four classics in one: Conway's Game of Life (gliders and oscillators), Brian's Brain (restless travelling sparks), a cyclic CA that self-organizes into spiral galaxies, and a 1-D elementary automaton (rule 0–255) scrolling down. Pick the rule; cell size, step rate, cyclic state count, elementary rule number, and hue are live and audio-mappable. Click to reseed.",
+  "tags": ["cellular-automata", "generative", "emergence", "grid", "audio-reactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-16"
+}
