@@ -1,7 +1,0 @@
-{
-  "title": "Motion Layer",
-  "description": "Consumes the motion mask broadcast by the Motion Extraction tool (over the shared motion bus) and uses it as a mask/layer: a flowing color field shows only where motion was detected. Open Motion Extraction in another tab/window to feed it.",
-  "tags": ["motion", "mask", "compositing", "generative"],
-  "tech": ["canvas2d", "broadcastchannel"],
-  "created": "2026-07-10"
-}
