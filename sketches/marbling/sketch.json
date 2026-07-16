@@ -1,0 +1,9 @@
+{
+  "title": "Marbling",
+  "description": "Paper marbling (suminagashi / ebru) on a virtual size bath. Each ink drop is a closed loop that displaces every existing drop by the exact area-preserving map p → C + (p−C)·√(1 + r²/d²), so earlier colours get pushed into thin concentric shells; drawing a comb of tines across the bath shears those shells into the feathery nonpareil patterns of real marbled paper. Drag to rake a comb, click to drop a stone; drop/comb rate, teeth, sharpness, and palette are live and audio-mappable.",
+  "tags": ["marbling", "suminagashi", "fluid", "generative", "audio-reactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-16"
+}

@@ -3,6 +3,11 @@
  * other into a packed foam; where they press together their bright rims form
  * the Plateau borders of soap film. Oversized bubbles pop and spawn smaller
  * ones, keeping the packing churning. Bubbles are a baked shaded sprite.
+ *
+ * Coalescence mode: pressed-together bubbles rupture their shared film and
+ * either merge into one area-conserving bubble or — more likely the bigger
+ * they are — burst and take both out, scattering droplets. A ring flashes
+ * at each rupture.
  */
 import { createRuntime } from '../_lib/runtime.js'
 
@@ -12,17 +17,21 @@ const params = rt.params({
   growth: { value: 0.5, min: 0, max: 2, step: 0.05, label: 'Growth speed' },
   jiggle: { value: 0.4, min: 0, max: 2, step: 0.05, label: 'Jiggle' },
   popRate: { value: 0.2, min: 0, max: 2, step: 0.05, label: 'Pop rate' },
+  coalesce: { value: false, type: 'bool', label: 'Coalescence mode' },
+  joinRate: { value: 0.7, min: 0, max: 3, step: 0.05, label: 'Join rate' },
   tint: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Film tint' },
 })
 // Music: beats pop bubbles and shake the raft; loudness drives growth.
 rt.mapInput('audio.pulse', 'popRate', 0.7)
 rt.mapInput('audio.volume', 'jiggle', 0.8)
+rt.mapInput('audio.pulse', 'joinRate', 0.6)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
 let width, height, minDim
 let bubbles = []
+let flashes = [] // brief expanding rings where films rupture (merge / pop)
 let target = 60
 let lastNow = 0
 
@@ -189,6 +198,52 @@ function frame(now) {
     if (b.y > height - b.r * 0.5) b.vy -= 0.5
   }
 
+  // Coalescence: when two films press together they can rupture and join into
+  // one area-conserving bubble — but with a chance the burst takes both out
+  // instead. Bigger bubbles (thinner, more strained films) are likelier to pop.
+  if (params.coalesce) {
+    const dead = new Set()
+    const newborns = []
+    for (let i = 0; i < bubbles.length; i++) {
+      if (dead.has(i)) continue
+      const a = bubbles[i]
+      for (let k = i + 1; k < bubbles.length; k++) {
+        if (dead.has(k)) continue
+        const b = bubbles[k]
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const d = Math.hypot(dx, dy) || 0.001
+        if (d > (a.r + b.r) * 0.82) continue // films only rupture when pressed well past contact
+        if (Math.random() >= params.joinRate * dt * 2.2) continue
+        const newR = Math.hypot(a.r, b.r) // area-conserving union
+        const big = Math.max(a.r, b.r)
+        // Larger bubbles → thinner films → more likely both pop rather than merge.
+        const popProb = Math.min(0.95, 0.1 + 1.15 * (big / maxR))
+        const cx = (a.x + b.x) / 2
+        const cy = (a.y + b.y) / 2
+        if (Math.random() < popProb) {
+          dead.add(i); dead.add(k)
+          flashes.push({ x: cx, y: cy, r: newR, life: 1, pop: true })
+          for (let n = 0; n < 3; n++) {
+            const ang = Math.random() * Math.PI * 2
+            newborns.push(newBubble(cx + Math.cos(ang) * newR * 0.4, cy + Math.sin(ang) * newR * 0.4, minDim * (0.01 + Math.random() * 0.014)))
+          }
+        } else {
+          const A1 = a.r * a.r, A2 = b.r * b.r, At = A1 + A2
+          a.x = (a.x * A1 + b.x * A2) / At // area-weighted centroid + momentum
+          a.y = (a.y * A1 + b.y * A2) / At
+          a.vx = (a.vx * A1 + b.vx * A2) / At
+          a.vy = (a.vy * A1 + b.vy * A2) / At
+          a.r = newR
+          dead.add(k)
+          flashes.push({ x: a.x, y: a.y, r: newR, life: 1, pop: false })
+        }
+        break // a has reacted this frame
+      }
+    }
+    if (dead.size) bubbles = bubbles.filter((_, i) => !dead.has(i)).concat(newborns)
+  }
+
   // Pop oversized bubbles; each pop scatters a few small ones.
   for (let i = bubbles.length - 1; i >= 0; i--) {
     const b = bubbles[i]
@@ -265,6 +320,25 @@ function frame(now) {
     ctx.strokeStyle = `rgba(${film[0]}, ${film[1]}, ${film[2]}, 0.75)`
     ctx.lineWidth = 1.4 * rt.pixelRatio
     ctx.stroke()
+  }
+
+  // Rupture flashes: an expanding fading ring where films joined or burst.
+  if (flashes.length) {
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    for (let i = flashes.length - 1; i >= 0; i--) {
+      const f = flashes[i]
+      f.life -= dt * 2.4
+      if (f.life <= 0) { flashes.splice(i, 1); continue }
+      const rr = f.r * (1 + (1 - f.life) * (f.pop ? 1.8 : 0.7))
+      const a = f.life * (f.pop ? 0.7 : 0.4)
+      ctx.beginPath()
+      ctx.arc(f.x, f.y, rr, 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(${film[0]}, ${film[1]}, ${film[2]}, ${a})`
+      ctx.lineWidth = (f.pop ? 2.4 : 1.6) * rt.pixelRatio
+      ctx.stroke()
+    }
+    ctx.restore()
   }
 
   requestAnimationFrame(frame)

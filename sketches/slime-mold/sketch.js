@@ -36,7 +36,7 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 const hint = document.getElementById('hint')
 
-let W, H, mass, chem, mtmp, ctmp, noise, img, sim, sctx
+let W, H, mass, chem, mtmp, ctmp, noise, wavePhase, img, sim, sctx
 const foods = []
 
 function build() {
@@ -53,6 +53,14 @@ function build() {
   // rather than perfect concentric rings.
   noise = new Float32Array(W * H)
   for (let i = 0; i < W * H; i++) noise[i] = 0.7 + rt.random(0, 0.6)
+  // Spatial phase for the peristaltic contraction wave: distance from the
+  // colony centre (so the pulse travels through the body instead of the whole
+  // thing throbbing in unison), roughened by the substrate for organic fronts.
+  wavePhase = new Float32Array(W * H)
+  const wcx = W / 2, wcy = H / 2
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++)
+      wavePhase[idx(x, y)] = Math.hypot(x - wcx, y - wcy) + (noise[idx(x, y)] - 1) * 7
   sim = sim || document.createElement('canvas')
   sim.width = W
   sim.height = H
@@ -79,7 +87,7 @@ function resize() {
 const idx = (x, y) => y * W + x
 
 // --- one simulation step -------------------------------------------------
-function stepSim(breathe) {
+function stepSim(phase) {
   // 1) Food emits a modest amount of chem (kept small so it stays a localized
   //    gradient rather than flooding the field).
   for (const f of foods) {
@@ -126,9 +134,11 @@ function stepSim(breathe) {
   //    to another. Everywhere else a constant starvation retracts it, so bulk
   //    that isn't on a path between resources recedes and a vein network is left.
   //    Pulse rocks growth vs. starvation for the grow/recede breathing.
-  const grow = params.forage * (1 + breathe * params.pulse * 0.7)
+  const forageBase = params.forage
   const chemo = params.chemotaxis
-  const starve = params.prune * 0.055 * (1 - breathe * params.pulse * 0.5)
+  const starveBase = params.prune * 0.055
+  const pulse = params.pulse
+  const waveK = 0.09 // spatial frequency of the travelling contraction wave
   for (let y = 0; y < H; y++) {
     const yu = y > 0 ? y - 1 : 0
     const yd = y < H - 1 ? y + 1 : H - 1
@@ -136,6 +146,12 @@ function stepSim(breathe) {
       const xl = x > 0 ? x - 1 : 0
       const xr = x < W - 1 ? x + 1 : W - 1
       const i = idx(x, y)
+      // Local phase of the peristaltic wave: growth crests and starvation
+      // troughs sweep outward through the body as the wave travels, so mass
+      // shuttles back and forth along the veins (protoplasmic streaming).
+      const b = Math.sin(phase - waveK * wavePhase[i])
+      const grow = forageBase * (1 + b * pulse * 0.7)
+      const starve = starveBase * (1 - b * pulse * 0.5)
       const nMax = Math.max(mass[idx(xl, y)], mass[idx(xr, y)], mass[idx(x, yu)], mass[idx(x, yd)])
       let m = mass[i]
       const c = chem[i]
@@ -264,10 +280,9 @@ function frame(now) {
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
   lastNow = now
   pulsePhase += params.pulseRate * dt
-  const breathe = Math.sin(pulsePhase)
   // A couple of sub-steps per frame keeps the front moving at a good pace.
-  stepSim(breathe)
-  stepSim(breathe)
+  stepSim(pulsePhase)
+  stepSim(pulsePhase)
   render()
   requestAnimationFrame(frame)
 }

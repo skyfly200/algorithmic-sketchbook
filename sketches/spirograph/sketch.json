@@ -1,0 +1,9 @@
+{
+  "title": "Spirograph",
+  "description": "The classic drawing toy: a pen in a small gear rolling inside a big ring traces a hypotrochoid rosette. Integer tooth counts make each curve close after a set number of laps; it draws a little each frame so you watch the loops weave, and the canvas fades so successive rosettes layer into a glowing palimpsest. Ring/gear teeth, pen offset, speed, and palette are live and audio-mappable (beats hurry the pen).",
+  "tags": ["geometric", "hypotrochoid", "generative", "retro", "audio-reactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-16"
+}
