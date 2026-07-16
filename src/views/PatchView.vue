@@ -622,10 +622,17 @@ function saveRouting() {
   newName.value = ''
 }
 function loadRouting(r) {
-  rtState.clear()
-  nodes.splice(0, nodes.length, ...r.nodes.map((n) => reactive(structuredClone(n))))
-  edges.splice(0, edges.length, ...structuredClone(r.edges))
+  // r comes from the reactive saved list — deep-copy via JSON (structuredClone
+  // throws DataCloneError on Vue's reactive proxies).
+  const data = JSON.parse(JSON.stringify(r))
+  nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
+  edges.splice(0, edges.length, ...data.edges)
   nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
+  // Keep runtime state (canvases, bound iframes/video) for node ids that
+  // survive the swap — Vue won't re-mount same-keyed iframes, so clearing
+  // their state would leave effect nodes black. Drop only vanished ids.
+  const ids = new Set(nodes.map((n) => n.id))
+  for (const id of [...rtState.keys()]) if (!ids.has(id)) rtState.delete(id)
   for (const n of nodes) st(n.id)
   persist()
 }
