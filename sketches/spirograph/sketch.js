@@ -11,7 +11,7 @@ const params = rt.params({
   ring: { value: 96, min: 24, max: 160, step: 1, label: 'Ring teeth (R)' },
   gear: { value: 60, min: 8, max: 150, step: 1, label: 'Gear teeth (r)' },
   pen: { value: 0.8, min: 0.1, max: 1, step: 0.01, label: 'Pen offset' },
-  speed: { value: 1, min: 0.1, max: 4, step: 0.05, label: 'Draw speed' },
+  speed: { value: 1.5, min: 0.1, max: 12, step: 0.1, label: 'Draw speed' },
   hue: { value: +rt.random(0, 1).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
   spin: { value: 0.15, min: 0, max: 1.5, step: 0.02, label: 'Palette drift' },
   fade: { value: 0.005, min: 0, max: 0.06, step: 0.002, label: 'Trail fade' },
@@ -84,7 +84,7 @@ function frame(now) {
 
   hueBase = (hueBase + params.spin * dt * 0.1) % 1
   const dth = 0.03
-  const steps = Math.max(4, Math.round(params.speed * 16 * rt.detail)) // segments this frame
+  const steps = Math.max(4, Math.round(params.speed * 26 * rt.detail)) // segments this frame
   actx.lineWidth = 1.6 * rt.pixelRatio
   actx.lineCap = 'round'
   for (let s = 0; s < steps; s++) {

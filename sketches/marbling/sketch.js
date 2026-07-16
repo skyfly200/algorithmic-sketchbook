@@ -12,16 +12,18 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  dropRate: { value: 0.9, min: 0, max: 4, step: 0.05, label: 'Drop rate' },
-  dropSize: { value: 0.14, min: 0.04, max: 0.3, step: 0.01, label: 'Drop size' },
-  combRate: { value: 0.4, min: 0, max: 3, step: 0.05, label: 'Comb rate' },
+  dropRate: { value: 0.8, min: 0, max: 4, step: 0.05, label: 'Drop rate' },
+  dropSize: { value: 0.13, min: 0.04, max: 0.3, step: 0.01, label: 'Drop size' },
+  flow: { value: 0.5, min: 0, max: 2, step: 0.05, label: 'Water flow' },
+  combRate: { value: 0.3, min: 0, max: 3, step: 0.05, label: 'Comb rate' },
   combTeeth: { value: 8, min: 1, max: 24, step: 1, label: 'Comb teeth' },
   sharp: { value: 0.55, min: 0.1, max: 0.95, step: 0.01, label: 'Comb sharpness' },
+  opacity: { value: 0.82, min: 0.3, max: 1, step: 0.02, label: 'Ink opacity' },
   palette: { value: +rt.random(0, 1).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Palette' },
 })
-// Music: beats drop stones, loudness rakes the comb.
+// Music: beats drop stones, loudness stirs the water.
 rt.mapInput('audio.pulse', 'dropRate', 0.8)
-rt.mapInput('audio.volume', 'combRate', 0.6)
+rt.mapInput('audio.volume', 'flow', 0.7)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
@@ -37,9 +39,11 @@ function resize() {
 }
 
 function inkColor() {
-  const h = (params.palette + rt.random(-0.09, 0.09) + rt.pick([0, 0.08, 0.5, 0.6, 0.33])) % 1
-  const [r, g, b] = hslRGB((h + 1) % 1, rt.random(0.55, 0.85), rt.random(0.42, 0.6))
-  return `rgb(${r | 0}, ${g | 0}, ${b | 0})`
+  const h = (params.palette + rt.random(-0.09, 0.09) + rt.pick([0, 0.08, 0.5, 0.6, 0.33]) + 1) % 1
+  const s = rt.random(0.55, 0.85)
+  const [r, g, b] = hslRGB(h, s, rt.random(0.42, 0.58))
+  const [rr, rg, rb] = hslRGB(h, s * 0.7, 0.8) // lighter wet-edge rim
+  return { fill: `rgb(${r | 0}, ${g | 0}, ${b | 0})`, rim: `rgb(${rr | 0}, ${rg | 0}, ${rb | 0})` }
 }
 function hslRGB(h, s, l) {
   const k = (n) => (n + h * 12) % 12
@@ -70,7 +74,8 @@ function dropInk(cx, cy, r) {
     pts[i * 2] = cx + Math.cos(a) * r
     pts[i * 2 + 1] = cy + Math.sin(a) * r
   }
-  drops.push({ color: inkColor(), pts })
+  const c = inkColor()
+  drops.push({ color: c.fill, rim: c.rim, pts })
   while (drops.length > MAX_DROPS) drops.shift()
 }
 
@@ -110,9 +115,50 @@ function combStroke(angle) {
   }
 }
 
-function render() {
-  ctx.fillStyle = '#f3ece0' // the pale size/paper
+// Divergence-free curl flow (area-preserving, so ink swirls without clumping)
+// from a drifting scalar potential — this is what makes the bath move like water.
+function advect(t, strength) {
+  if (strength <= 0) return
+  const s = 4 / minDim
+  const amp = strength * minDim * 0.0012 // gentle — a living swirl, not a shear
+  for (const d of drops) {
+    const p = d.pts
+    for (let i = 0; i < p.length; i += 2) {
+      const X = p[i] * s
+      const Y = p[i + 1] * s
+      // v = curl φ = (∂φ/∂y, −∂φ/∂x)
+      const vx = 1.3 * Math.cos(1.3 * Y - 0.4 * t) + 0.7 * Math.cos(0.7 * (X + Y) + 0.3 * t)
+      const vy = -(1.1 * Math.cos(1.1 * X + 0.5 * t) + 0.7 * Math.cos(0.7 * (X + Y) + 0.3 * t))
+      p[i] += vx * amp
+      p[i + 1] += vy * amp
+    }
+  }
+}
+
+function render(t) {
+  // Wet bath: a pale watery gradient with slow caustic light bands drifting.
+  const bg = ctx.createLinearGradient(0, 0, 0, H)
+  bg.addColorStop(0, '#eef1ee')
+  bg.addColorStop(1, '#dfe6ea')
+  ctx.fillStyle = bg
   ctx.fillRect(0, 0, W, H)
+  ctx.save()
+  ctx.globalCompositeOperation = 'overlay'
+  ctx.globalAlpha = 0.06
+  for (let k = 0; k < 3; k++) {
+    const y = ((0.5 + 0.45 * Math.sin(t * 0.3 + k * 2.1)) * H) | 0
+    const g = ctx.createLinearGradient(0, y - minDim * 0.2, 0, y + minDim * 0.2)
+    g.addColorStop(0, 'rgba(255,255,255,0)')
+    g.addColorStop(0.5, 'rgba(255,255,255,1)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = g
+    ctx.fillRect(0, y - minDim * 0.2, W, minDim * 0.4)
+  }
+  ctx.restore()
+
+  // Translucent inks floating on the water — overlaps mix into new hues.
+  ctx.globalAlpha = params.opacity
+  ctx.lineJoin = 'round'
   for (const d of drops) {
     const p = d.pts
     ctx.beginPath()
@@ -121,7 +167,14 @@ function render() {
     ctx.closePath()
     ctx.fillStyle = d.color
     ctx.fill()
+    // A faint bright meniscus rim, like the wet edge of ink on water.
+    ctx.globalAlpha = params.opacity * 0.35
+    ctx.strokeStyle = d.rim
+    ctx.lineWidth = 1.2 * rt.pixelRatio
+    ctx.stroke()
+    ctx.globalAlpha = params.opacity
   }
+  ctx.globalAlpha = 1
 }
 
 let dropAcc = 0
@@ -143,7 +196,9 @@ function frame(now) {
     combStroke(rt.pick([0, Math.PI / 2, Math.PI / 4, -Math.PI / 4]))
   }
 
-  render()
+  const t = now * 0.001
+  advect(t, params.flow)
+  render(t)
   requestAnimationFrame(frame)
 }
 

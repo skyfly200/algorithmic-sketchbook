@@ -1,6 +1,6 @@
 {
   "title": "Ferrofluid Field",
-  "description": "A puddle of magnetic fluid under a field. As the field rises the surface goes unstable — the Rosensweig normal-field instability — and erupts into a lattice of glossy black spikes standing along the field lines, tallest where the field is strongest. Move the mouse: it's a magnet that drags the peaks up and leans them toward it. Field strength, spike density, magnet pull, wobble, and sheen hue are live and audio-mappable (beats surge the field).",
+  "description": "A puddle of magnetic fluid under a field. As the field rises the surface goes unstable — the Rosensweig normal-field instability — and erupts into a hexagonal array of peaks along the field lines. It's a real height field: a connected pool with peaks whose height tracks the local field, shaded per pixel like the oily black chrome it is — diffuse, tight specular, a reflection-vector environment off the surface normal, and Fresnel edge sheen — so peaks glint at the tips and catch reflected bands on their flanks over mirror-dark valleys. Move the mouse: it's a magnet that pulls the peaks up. Field strength, spike density, magnet pull, wobble, and sheen hue are live and audio-mappable (beats surge the field).",
   "tags": ["ferrofluid", "physics", "magnetic", "generative", "audio-reactive"],
   "tech": [
     "canvas2d"
