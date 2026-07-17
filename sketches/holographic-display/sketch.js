@@ -15,11 +15,15 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'
 import { TeapotGeometry } from 'three/addons/geometries/TeapotGeometry.js'
 import { createRuntime } from '../_lib/runtime.js'
 import { polytope, kleinBottle, rotateProject } from './fourd.js'
+// Bundled model data: a simplified Stanford bunny (libigl tutorial data) and
+// Natural Earth 110m coastlines — both inlined into this sketch's chunk.
+import bunnyObjText from './assets/bunny.obj?raw'
+import coastlines from './assets/coastlines.json'
 
 const rt = createRuntime()
 // 3D solids + a 4D section: the six convex regular 4-polytopes and a Klein
 // bottle, all projected from 4D and turning through the fourth dimension.
-const MESH_SHAPES = ['icosahedron', 'torus knot', 'dodecahedron', 'crystal', 'sphere', 'teapot']
+const MESH_SHAPES = ['icosahedron', 'torus knot', 'dodecahedron', 'crystal', 'sphere', 'teapot', 'bunny', 'earth']
 const POLY_KEY = {
   '5-cell (simplex)': '5-cell',
   'tesseract (8-cell)': 'tesseract',
@@ -126,8 +130,71 @@ function makeGeom(shape) {
     case 'crystal': return new THREE.OctahedronGeometry(1.1, 0)
     case 'sphere': return new THREE.SphereGeometry(1.0, 48, 32)
     case 'teapot': { const g = new TeapotGeometry(0.85, 8); g.center(); return g }
+    case 'bunny': return bunnyGeom()
     default: return new THREE.IcosahedronGeometry(1.05, 1)
   }
+}
+
+// Stanford bunny, parsed once from the bundled OBJ (no normals in the file —
+// computed here so the hologram shader's Fresnel works).
+let _bunny = null
+function bunnyGeom() {
+  if (!_bunny) {
+    const obj = new OBJLoader().parse(bunnyObjText)
+    _bunny = obj.children[0].geometry
+    _bunny.computeVertexNormals()
+    _bunny.center()
+  }
+  return _bunny
+}
+
+// Earth: a holo-shaded globe with Natural Earth coastlines and a faint
+// graticule traced on it in additive light, tilted to the real 23.4° axis.
+function buildEarth() {
+  const group = new THREE.Group()
+  group.add(new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), holoMat))
+
+  const toXYZ = (lonDeg, latDeg, r) => {
+    const lon = (lonDeg * Math.PI) / 180
+    const lat = (latDeg * Math.PI) / 180
+    return [r * Math.cos(lat) * Math.cos(lon), r * Math.sin(lat), -r * Math.cos(lat) * Math.sin(lon)]
+  }
+
+  // Coastlines as bright line segments just above the surface.
+  const pos = []
+  for (const line of coastlines) {
+    for (let i = 1; i < line.length; i++) {
+      pos.push(...toXYZ(line[i - 1][0], line[i - 1][1], 1.012), ...toXYZ(line[i][0], line[i][1], 1.012))
+    }
+  }
+  const coastGeo = new THREE.BufferGeometry()
+  coastGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  group.add(new THREE.LineSegments(
+    coastGeo,
+    new THREE.LineBasicMaterial({ color: 0x8ff4ff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }),
+  ))
+
+  // Graticule: meridians + parallels every 30°.
+  const grat = []
+  for (let lon = -180; lon < 180; lon += 30) {
+    for (let lat = -90; lat < 90; lat += 3) {
+      grat.push(...toXYZ(lon, lat, 1.006), ...toXYZ(lon, lat + 3, 1.006))
+    }
+  }
+  for (let lat = -60; lat <= 60; lat += 30) {
+    for (let lon = -180; lon < 180; lon += 3) {
+      grat.push(...toXYZ(lon, lat, 1.006), ...toXYZ(lon + 3, lat, 1.006))
+    }
+  }
+  const gratGeo = new THREE.BufferGeometry()
+  gratGeo.setAttribute('position', new THREE.Float32BufferAttribute(grat, 3))
+  group.add(new THREE.LineSegments(
+    gratGeo,
+    new THREE.LineBasicMaterial({ color: 0x3fd8ff, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false }),
+  ))
+
+  group.rotation.z = (23.4 * Math.PI) / 180
+  return group
 }
 
 // --- materials for the 4D line/point networks (holographic additive glow) ---
@@ -176,7 +243,10 @@ function buildArtifact(shape) {
   fourd = null
   if (shape === 'klein bottle') build4DNetwork(kleinBottle(), false)
   else if (POLY_KEY[shape]) build4DNetwork(polytope(POLY_KEY[shape]), true)
-  else {
+  else if (shape === 'earth') {
+    setArtifactChild(buildEarth())
+    wire.visible = false
+  } else {
     setArtifactChild(new THREE.Mesh(makeGeom(shape), holoMat))
     wire.visible = true
   }
