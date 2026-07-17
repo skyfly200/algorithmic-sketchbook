@@ -11,10 +11,10 @@ import { createSource } from '../_lib/source.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  amount: { value: 12, min: 0, max: 80, step: 1, label: 'Offset (px)' },
-  angle: { value: 0, min: 0, max: 360, step: 1, label: 'Angle' },
+  amount: { value: Math.round(rt.random(6, 24)), min: 0, max: 80, step: 1, label: 'Offset (px)' },
+  angle: { value: Math.round(rt.random(0, 360)), min: 0, max: 360, step: 1, label: 'Angle' },
   spread: { value: 120, min: 0, max: 180, step: 1, label: 'Channel spread' },
-  wobble: { value: 0.3, min: 0, max: 1, step: 0.02, label: 'Wobble' },
+  wobble: { value: +rt.random(0.15, 0.5).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Wobble' },
   glitch: { value: 0, min: 0, max: 1, step: 0.02, label: 'Band glitch' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })

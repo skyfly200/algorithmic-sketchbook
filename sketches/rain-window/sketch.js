@@ -15,12 +15,12 @@ import { createSource } from '../_lib/source.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  density: { value: 0.6, min: 0.1, max: 1, step: 0.02, label: 'Drop density' },
-  fog: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Fogged glass' },
+  density: { value: +rt.random(0.4, 0.85).toFixed(2), min: 0.1, max: 1, step: 0.02, label: 'Drop density' },
+  fog: { value: +rt.random(0.4, 0.8).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Fogged glass' },
   gravity: { value: 0.6, min: 0.1, max: 1.5, step: 0.02, label: 'Run speed' },
   dropSize: { value: 1.0, min: 0.5, max: 2, step: 0.05, label: 'Drop size' },
   refraction: { value: 1.0, min: 0.3, max: 2, step: 0.05, label: 'Refraction' },
-  wind: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Wind (sideways)' },
+  wind: { value: +rt.random(0.3, 0.7).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Wind (sideways)' },
   trails: { value: 0.7, min: 0, max: 1, step: 0.02, label: 'Streak clarity' },
 })
 // Tilt which way the drops run by moving the mouse (or tilting the device).

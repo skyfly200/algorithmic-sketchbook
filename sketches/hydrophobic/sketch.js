@@ -14,13 +14,13 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  tilt: { value: 0.7, min: 0, max: 1.6, step: 0.05, label: 'Tilt (gravity)' },
+  tilt: { value: +rt.random(0.4, 1.0).toFixed(2), min: 0, max: 1.6, step: 0.05, label: 'Tilt (gravity)' },
   density: { value: 0.6, min: 0.1, max: 1, step: 0.05, label: 'Wetting rate' },
-  size: { value: 1.0, min: 0.5, max: 2.2, step: 0.05, label: 'Drop size' },
+  size: { value: +rt.random(0.7, 1.4).toFixed(2), min: 0.5, max: 2.2, step: 0.05, label: 'Drop size' },
   adhesion: { value: 0.12, min: 0.02, max: 0.6, step: 0.01, label: 'Adhesion (drag)' },
   gloss: { value: 0.9, min: 0.2, max: 1.5, step: 0.05, label: 'Gloss' },
   wobble: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Wobble' },
-  hue: { value: 200, min: 0, max: 360, step: 1, label: 'Surface hue' },
+  hue: { value: Math.round(rt.random(0, 360)), min: 0, max: 360, step: 1, label: 'Surface hue' },
 })
 // The device accelerometer can tilt the surface too (falls back to the mouse).
 rt.mapInput('tilt.x', 'tilt', 0)

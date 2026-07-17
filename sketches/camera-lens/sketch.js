@@ -17,10 +17,10 @@ const rt = createRuntime()
 const params = rt.params({
   focalPlane: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Focal plane' },
   focusDepth: { value: 0.3, min: 0.03, max: 1, step: 0.01, label: 'Focus depth' },
-  aperture: { value: 0.55, min: 0, max: 1, step: 0.02, label: 'Aperture (blur)' },
-  radial: { value: false, type: 'bool', label: 'Radial focus (portrait)' },
+  aperture: { value: +rt.random(0.35, 0.8).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Aperture (blur)' },
+  radial: { value: rt.rng() < 0.35, type: 'bool', label: 'Radial focus (portrait)' },
   bloom: { value: 0.35, min: 0, max: 1, step: 0.02, label: 'Highlight bloom' },
-  dirt: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Lens dirt' },
+  dirt: { value: +rt.random(0.2, 0.7).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Lens dirt' },
   vignette: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Vignette' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })

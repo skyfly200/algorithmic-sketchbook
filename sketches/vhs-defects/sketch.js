@@ -17,13 +17,13 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  tracking: { value: 0.5, min: 0, max: 2, step: 0.02, label: 'Tracking jitter' },
-  chroma: { value: 0.7, min: 0, max: 2, step: 0.02, label: 'Chroma bleed' },
-  noise: { value: 0.4, min: 0, max: 1.5, step: 0.02, label: 'Tape snow' },
+  tracking: { value: +rt.random(0.25, 0.9).toFixed(2), min: 0, max: 2, step: 0.02, label: 'Tracking jitter' },
+  chroma: { value: +rt.random(0.4, 1.1).toFixed(2), min: 0, max: 2, step: 0.02, label: 'Chroma bleed' },
+  noise: { value: +rt.random(0.2, 0.7).toFixed(2), min: 0, max: 1.5, step: 0.02, label: 'Tape snow' },
   dropouts: { value: 0.5, min: 0, max: 2, step: 0.05, label: 'Dropouts' },
   scan: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Scanlines' },
   roll: { value: 0.3, min: 0, max: 1.5, step: 0.02, label: 'Vertical hold' },
-  wear: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Desaturate / wear' },
+  wear: { value: +rt.random(0.25, 0.75).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Desaturate / wear' },
 })
 // Music: beats knock the tracking, loudness raises the snow.
 rt.mapInput('audio.pulse', 'tracking', 0.8)

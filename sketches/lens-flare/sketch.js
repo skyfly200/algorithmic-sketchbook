@@ -13,10 +13,10 @@ import { createSource, clamp } from '../_lib/source.js'
 const rt = createRuntime()
 const params = rt.params({
   intensity: { value: 0.8, min: 0, max: 2, step: 0.05, label: 'Intensity' },
-  streak: { value: 0.8, min: 0, max: 1.5, step: 0.05, label: 'Anamorphic streak' },
-  ghosts: { value: 6, min: 0, max: 12, step: 1, label: 'Ghosts' },
+  streak: { value: +rt.random(0.5, 1.1).toFixed(2), min: 0, max: 1.5, step: 0.05, label: 'Anamorphic streak' },
+  ghosts: { value: Math.round(rt.random(4, 9)), min: 0, max: 12, step: 1, label: 'Ghosts' },
   halo: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Halo ring' },
-  chroma: { value: 0.6, min: 0, max: 1, step: 0.05, label: 'Chromatic fringe' },
+  chroma: { value: +rt.random(0.3, 0.9).toFixed(2), min: 0, max: 1, step: 0.05, label: 'Chromatic fringe' },
   threshold: { value: 0.55, min: 0.1, max: 0.95, step: 0.01, label: 'Light threshold' },
   auto: { value: true, type: 'bool', label: 'Track brightest point' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },

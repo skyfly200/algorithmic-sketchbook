@@ -8,11 +8,11 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  nucleation: { value: 4, min: 0, max: 14, step: 1, label: 'Nucleation rate' },
+  nucleation: { value: Math.round(rt.random(2, 7)), min: 0, max: 14, step: 1, label: 'Nucleation rate' },
   growth: { value: 0.35, min: 0, max: 1.6, step: 0.05, label: 'Growth speed' },
   density: { value: 1, min: 0.3, max: 1.6, step: 0.05, label: 'Droplet density' },
   drip: { value: 0, min: 0, max: 1, step: 0.05, label: 'Gravity drip' },
-  tint: { value: 0.55, min: 0, max: 1, step: 0.01, label: 'Tint (0 = warm)' },
+  tint: { value: +rt.rng().toFixed(2), min: 0, max: 1, step: 0.01, label: 'Tint (0 = warm)' },
 })
 // Music: beats seed a burst of droplets, loudness speeds their growth.
 rt.mapInput('audio.pulse', 'nucleation', 0.6)

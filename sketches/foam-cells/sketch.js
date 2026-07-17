@@ -13,13 +13,13 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  density: { value: 1.7, min: 0.4, max: 3, step: 0.05, label: 'Bubble density' },
+  density: { value: +rt.random(1.2, 2.4).toFixed(2), min: 0.4, max: 3, step: 0.05, label: 'Bubble density' },
   growth: { value: 0.5, min: 0, max: 2, step: 0.05, label: 'Growth speed' },
   jiggle: { value: 0.4, min: 0, max: 2, step: 0.05, label: 'Jiggle' },
   popRate: { value: 0.2, min: 0, max: 2, step: 0.05, label: 'Pop rate' },
   coalesce: { value: false, type: 'bool', label: 'Coalescence mode' },
   joinRate: { value: 0.7, min: 0, max: 3, step: 0.05, label: 'Join rate' },
-  tint: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Film tint' },
+  tint: { value: +rt.rng().toFixed(2), min: 0, max: 1, step: 0.01, label: 'Film tint' },
 })
 // Music: beats pop bubbles and shake the raft; loudness drives growth.
 rt.mapInput('audio.pulse', 'popRate', 0.7)

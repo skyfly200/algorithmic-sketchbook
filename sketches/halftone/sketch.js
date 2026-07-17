@@ -10,10 +10,10 @@ import { createSource, clamp } from '../_lib/source.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  cell: { value: 7, min: 3, max: 24, step: 0.5, label: 'Dot pitch' },
-  cmyk: { value: true, type: 'bool', label: 'CMYK (off = ink mono)' },
+  cell: { value: +rt.random(5, 10).toFixed(1), min: 3, max: 24, step: 0.5, label: 'Dot pitch' },
+  cmyk: { value: rt.rng() < 0.7, type: 'bool', label: 'CMYK (off = ink mono)' },
   contrast: { value: 1.15, min: 0.5, max: 2.2, step: 0.05, label: 'Contrast' },
-  angle: { value: 0, min: -45, max: 45, step: 1, label: 'Screen angle' },
+  angle: { value: Math.round(rt.random(-15, 15)), min: -45, max: 45, step: 1, label: 'Screen angle' },
   scale: { value: 1.0, min: 0.5, max: 1.6, step: 0.02, label: 'Dot gain' },
   paper: { value: true, type: 'bool', label: 'Paper white (off = black)' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },

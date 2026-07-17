@@ -14,9 +14,9 @@ const params = rt.params({
   delay: { value: 10, min: 1, max: 45, step: 1, label: 'Delay (frames)' },
   feedback: { value: 0.65, min: 0, max: 0.97, step: 0.01, label: 'Feedback' },
   dry: { value: 1.0, min: 0, max: 1, step: 0.02, label: 'Dry (live) level' },
-  hueShift: { value: 20, min: 0, max: 120, step: 1, label: 'Hue shift / echo' },
-  zoom: { value: 0.0, min: -0.06, max: 0.06, step: 0.002, label: 'Echo zoom' },
-  rotate: { value: 0.0, min: -4, max: 4, step: 0.1, label: 'Echo rotate (°)' },
+  hueShift: { value: Math.round(rt.random(0, 60)), min: 0, max: 120, step: 1, label: 'Hue shift / echo' },
+  zoom: { value: +rt.random(-0.015, 0.03).toFixed(3), min: -0.06, max: 0.06, step: 0.002, label: 'Echo zoom' },
+  rotate: { value: +rt.random(-1.5, 1.5).toFixed(1), min: -4, max: 4, step: 0.1, label: 'Echo rotate (°)' },
   additive: { value: false, type: 'bool', label: 'Additive (glow) echoes' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })

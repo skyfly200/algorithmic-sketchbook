@@ -8,11 +8,11 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  heat: { value: 1.4, min: 0, max: 3, step: 0.05, label: 'Heat (nucleation)' },
+  heat: { value: +rt.random(0.9, 2.2).toFixed(2), min: 0, max: 3, step: 0.05, label: 'Heat (nucleation)' },
   rise: { value: 0.8, min: 0.3, max: 3, step: 0.05, label: 'Rise speed' },
   wobble: { value: 1, min: 0, max: 3, step: 0.05, label: 'Wobble' },
   bubbleSize: { value: 1, min: 0.4, max: 2.5, step: 0.05, label: 'Bubble size' },
-  tint: { value: 0.55, min: 0, max: 1, step: 0.01, label: 'Water hue' },
+  tint: { value: +rt.rng().toFixed(2), min: 0, max: 1, step: 0.01, label: 'Water hue' },
 })
 // Music: beats throw a burst of bubbles, loudness cranks the heat.
 rt.mapInput('audio.pulse', 'heat', 1.2)

@@ -13,10 +13,10 @@ const rt = createRuntime()
 
 const params = rt.params({
   size: { value: 1.0, min: 0.4, max: 2.5, step: 0.05, label: 'Dot size' },
-  spacing: { value: 1.0, min: 0.5, max: 2.5, step: 0.05, label: 'Spacing' },
+  spacing: { value: +rt.random(0.8, 1.4).toFixed(2), min: 0.5, max: 2.5, step: 0.05, label: 'Spacing' },
   jitter: { value: 0.6, min: 0, max: 1.2, step: 0.05, label: 'Jitter' },
-  stroke: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Brush strokes' },
-  saturation: { value: 1.3, min: 0.5, max: 2.2, step: 0.05, label: 'Saturation' },
+  stroke: { value: +rt.random(0.2, 0.7).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Brush strokes' },
+  saturation: { value: +rt.random(1.1, 1.6).toFixed(2), min: 0.5, max: 2.2, step: 0.05, label: 'Saturation' },
   variation: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Size variation' },
   opacity: { value: 0.92, min: 0.3, max: 1, step: 0.02, label: 'Dot opacity' },
   paper: { value: false, type: 'bool', label: 'Paper (light) ground' },
