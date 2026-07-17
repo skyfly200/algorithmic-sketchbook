@@ -1,0 +1,9 @@
+{
+  "title": "Pointillism",
+  "description": "A pointillist filter: it repaints a live source as thousands of little colour dots the way Seurat and Signac built an image from pure pigment specks, letting the eye do the mixing. Point your camera at something, drop in a photo or video, or watch the demo — inside the Mixer or Patch it repaints the layers stacked below it. A stable jittered grid samples the source each frame and stamps a dot in the colour it finds; short strokes can be oriented along the image's contours for an impressionist, brushed feel. Dot size, spacing, jitter, brush-stroke length, saturation, size variation, opacity, and a light/dark ground are live and audio-mappable (loudness fattens the dots, beats jostle them).",
+  "tags": ["pointillism", "filter", "video", "impressionist", "audio-reactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}

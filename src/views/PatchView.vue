@@ -27,22 +27,35 @@ const effectOptions = computed(() =>
 
 // Internal compositor resolution — a user setting (all node canvases and the
 // ring buffers are sized to it). Higher = sharper piping, more GPU/CPU.
+// `native` sizes the compositor to the actual screen (device pixels), capped so
+// huge displays don't melt the GPU; its dimensions are resolved at apply time.
 const RESOLUTIONS = [
   { label: '384 × 216', w: 384, h: 216 },
   { label: '640 × 360', w: 640, h: 360 },
   { label: '960 × 540', w: 960, h: 540 },
   { label: '1280 × 720', w: 1280, h: 720 },
   { label: '1920 × 1080', w: 1920, h: 1080 },
+  { label: 'Native', native: true },
 ]
+function resolveRes(r) {
+  if (!r?.native) return { w: r.w, h: r.h }
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  const scale = Math.min(1, 2560 / (window.innerWidth * dpr)) // cap the long edge ~2560
+  return {
+    w: Math.round(window.innerWidth * dpr * scale),
+    h: Math.round(window.innerHeight * dpr * scale),
+  }
+}
 const RES_KEY = 'sketchbook-patch-res'
 const resLabel = ref(localStorage.getItem(RES_KEY) || RESOLUTIONS[0].label)
-let W = (RESOLUTIONS.find((r) => r.label === resLabel.value) ?? RESOLUTIONS[0]).w
-let H = (RESOLUTIONS.find((r) => r.label === resLabel.value) ?? RESOLUTIONS[0]).h
+let W = resolveRes(RESOLUTIONS.find((r) => r.label === resLabel.value) ?? RESOLUTIONS[0]).w
+let H = resolveRes(RESOLUTIONS.find((r) => r.label === resLabel.value) ?? RESOLUTIONS[0]).h
 function applyResolution(label) {
   const r = RESOLUTIONS.find((x) => x.label === label)
   if (!r) return
-  W = r.w
-  H = r.h
+  const dim = resolveRes(r)
+  W = dim.w
+  H = dim.h
   resLabel.value = label
   localStorage.setItem(RES_KEY, label)
   // Resize every existing node canvas + ring buffer to the new resolution.
@@ -719,6 +732,8 @@ function resizeStage() {
   if (!c) return
   c.width = window.innerWidth
   c.height = window.innerHeight
+  // Native resolution tracks the window, so re-resolve it when the window changes.
+  if (RESOLUTIONS.find((r) => r.label === resLabel.value)?.native) applyResolution(resLabel.value)
 }
 function fullscreen() {
   board.value?.parentElement?.requestFullscreen?.()

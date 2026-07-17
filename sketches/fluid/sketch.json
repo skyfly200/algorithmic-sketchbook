@@ -1,0 +1,9 @@
+{
+  "title": "Fluid",
+  "description": "A real-time incompressible fluid on a grid, after Jos Stam's Stable Fluids: semi-Lagrangian advection carries the velocity field and coloured dye along the flow, a Jacobi pressure solve keeps it divergence-free so it swirls instead of piling up, and vorticity confinement feeds energy back into the curl to keep the eddies alive. Drag to push the fluid and inject dye; drifting auto-emitters keep it moving with no input. Push force, vorticity, dye fade, solver quality, emitters, and palette are live and audio-mappable (beats shove it, loudness spins the swirl).",
+  "tags": ["fluid", "simulation", "stable-fluids", "interactive", "audio-reactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}
