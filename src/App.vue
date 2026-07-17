@@ -42,6 +42,12 @@ import BrandLogo from './components/BrandLogo.vue'
         Display mode
       </v-btn>
       <v-btn
+        icon="mdi-book-open-variant"
+        variant="text"
+        title="Docs — how the sketchbook works"
+        :to="{ name: 'docs' }"
+      />
+      <v-btn
         icon="mdi-github"
         variant="text"
         title="View the source on GitHub"
