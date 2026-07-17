@@ -19,11 +19,11 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  forage: { value: +rt.random(0.7, 1.1).toFixed(2), min: 0, max: 2, step: 0.05, label: 'Forage (margin advance)' },
-  chemotaxis: { value: +rt.random(1.4, 2.2).toFixed(2), min: 0, max: 4, step: 0.05, label: 'Chemotaxis (to food)' },
-  prune: { value: +rt.random(0.9, 1.3).toFixed(2), min: 0.1, max: 3, step: 0.05, label: 'Prune (retraction)' },
-  veins: { value: +rt.random(0.3, 0.5).toFixed(2), min: 0, max: 0.9, step: 0.02, label: 'Vein sharpening' },
-  reach: { value: +rt.random(0.9, 1.3).toFixed(2), min: 0.3, max: 2.5, step: 0.05, label: 'Chem reach' },
+  forage: { value: 1.0, min: 0, max: 2, step: 0.05, label: 'Forage (margin advance)' },
+  chemotaxis: { value: 2.0, min: 0, max: 4, step: 0.05, label: 'Chemotaxis (to food)' },
+  prune: { value: 1.0, min: 0.1, max: 3, step: 0.05, label: 'Prune (retraction)' },
+  veins: { value: 0.4, min: 0, max: 0.9, step: 0.02, label: 'Vein sharpening' },
+  reach: { value: 1.1, min: 0.3, max: 2.5, step: 0.05, label: 'Chem reach' },
   hue: { value: +rt.random(0.12, 0.18).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
   pulse: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Pulse (grow/recede)' },
   pulseRate: { value: 0.7, min: 0, max: 12, step: 0.05, label: 'Pulse rate (→ timelapse)' },
@@ -36,7 +36,8 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 const hint = document.getElementById('hint')
 
-let W, H, mass, chem, mtmp, ctmp, noise, wavePhase, img, sim, sctx
+let W, H, mass, chem, mtmp, ctmp, noise, terrain, wavePhase, img, sim, sctx
+let massFrac = 0 // fraction of the dish covered — drives density regulation
 const foods = []
 
 function build() {
@@ -53,6 +54,19 @@ function build() {
   // rather than perfect concentric rings.
   noise = new Float32Array(W * H)
   for (let i = 0; i < W * H; i++) noise[i] = 0.7 + rt.random(0, 0.6)
+  // Smooth low-frequency terrain: a few random sinusoids. It biases where the
+  // foraging front pushes fastest, so the colony explores as irregular lobes and
+  // fingers reaching in different directions rather than perfect concentric rings.
+  terrain = new Float32Array(W * H)
+  const waves = Array.from({ length: 4 }, () => ({
+    fx: rt.random(-1, 1) * 5.5 / W, fy: rt.random(-1, 1) * 5.5 / H, ph: rt.random(0, 6.28), a: rt.random(0.3, 0.7),
+  }))
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      let v = 0
+      for (const w of waves) v += w.a * Math.sin(x * w.fx * Math.PI * 2 + y * w.fy * Math.PI * 2 + w.ph)
+      terrain[idx(x, y)] = Math.max(0.15, 1 + v)
+    }
   // Spatial phase for the peristaltic contraction wave: distance from the
   // colony centre (so the pulse travels through the body instead of the whole
   // thing throbbing in unison), roughened by the substrate for organic fronts.
@@ -70,12 +84,25 @@ function build() {
   // Inoculate a small central colony sitting on its first food resource.
   const cx = (W / 2) | 0
   const cy = (H / 2) | 0
-  const R = Math.max(3, Math.min(W, H) * 0.04)
+  const R = Math.round(Math.max(3, Math.min(W, H) * 0.05))
   for (let y = -R; y <= R; y++)
-    for (let x = -R; x <= R; x++)
-      if (x * x + y * y <= R * R) mass[(cy + y) * W + cx + x] = 1
+    for (let x = -R; x <= R; x++) {
+      if (x * x + y * y > R * R) continue
+      const px = cx + x
+      const py = cy + y
+      if (px >= 0 && px < W && py >= 0 && py < H) mass[py * W + px] = 1
+    }
   foods.length = 0
   foods.push({ x: cx, y: cy, amount: 1, home: true }) // the home flake keeps a base
+  // Scatter a few resources out in the field so the colony explores and reaches
+  // toward food from a distance by default (click to drop more).
+  const nFood = 3 + Math.floor(rt.random(0, 3))
+  let a0 = rt.random(0, Math.PI * 2)
+  for (let k = 0; k < nFood; k++) {
+    a0 += (Math.PI * 2) / nFood + rt.random(-0.5, 0.5)
+    const rr = Math.min(W, H) * rt.random(0.16, 0.32)
+    foods.push({ x: cx + Math.cos(a0) * rr, y: cy + Math.sin(a0) * rr, amount: 1 })
+  }
 }
 
 function resize() {
@@ -100,7 +127,9 @@ function stepSim(phase) {
         const px = cx + x
         const py = cy + y
         if (px < 0 || px >= W || py < 0 || py >= H) continue
-        chem[idx(px, py)] += 0.12 * f.amount
+        // A strong source: its gradient (flux) stays above the growth threshold
+        // out to a large radius, so veins nucleate and reach the food from afar.
+        chem[idx(px, py)] += 0.3 * f.amount
       }
     }
   }
@@ -108,7 +137,7 @@ function stepSim(phase) {
   // 2) Chem diffusion (4-neighbour) + strong decay so it forms a local gradient;
   //    the body consumes it hard, so chem flows from food into the colony (the
   //    gradient the margin climbs). `reach` widens the foraging radius.
-  const spread = 0.24 * params.reach
+  const spread = Math.min(0.23, 0.24 * params.reach) // cap for numerical stability (avoids flood)
   const decay = 0.9
   for (let y = 0; y < H; y++) {
     const yu = y > 0 ? y - 1 : 0
@@ -139,6 +168,11 @@ function stepSim(phase) {
   const starveBase = params.prune * 0.055
   const pulse = params.pulse
   const waveK = 0.09 // spatial frequency of the travelling contraction wave
+  // Density regulation: finite protoplasm. As coverage rises, new growth is
+  // throttled toward zero so the colony can't flood — it plateaus into a
+  // reaching, reticulated network across every seed and food layout.
+  const grow2 = Math.max(0.06, 1 - Math.max(0, massFrac - 0.2) * 4)
+  let massSum = 0
   for (let y = 0; y < H; y++) {
     const yu = y > 0 ? y - 1 : 0
     const yd = y < H - 1 ? y + 1 : H - 1
@@ -150,27 +184,36 @@ function stepSim(phase) {
       // troughs sweep outward through the body as the wave travels, so mass
       // shuttles back and forth along the veins (protoplasmic streaming).
       const b = Math.sin(phase - waveK * wavePhase[i])
-      const grow = forageBase * (1 + b * pulse * 0.7)
+      const grow = forageBase * (1 + b * pulse * 0.35) // wave breathes the growth (kept gentle so it doesn't ring)
       const starve = starveBase * (1 - b * pulse * 0.5)
       const nMax = Math.max(mass[idx(xl, y)], mass[idx(xr, y)], mass[idx(x, yu)], mass[idx(x, yd)])
       let m = mass[i]
       const c = chem[i]
-      if (nMax > 0.12 && m < nMax) {
-        // Margin cell: chemotactic advance up the food gradient, plus a whisper
-        // of blind creep so a colony can still nose toward nearby resources.
-        m += grow * (0.0015 + chemo * c) * (nMax - m)
+      if (nMax > 0.06 && m < nMax) {
+        // Margin cell advances: a substrate-biased blind creep that pushes
+        // pseudopods outward to *explore* the dish (physically crossing the gaps
+        // that chemoattractant can't diffuse across), plus a chemotactic pull up
+        // the food gradient that steers and thickens the ones nearing a resource.
+        m += grow2 * grow * (0.11 * noise[i] + chemo * c) * (nMax - m)
       }
-      // Standing body is sustained by chem *flux* (the gradient it sits on), not
-      // by chem level. A flat plateau of chem carries no flux, so idle bulk
-      // starves away; only cells on the gradient lines that actually shuttle
-      // attractant — near food and along the routes linking one food to another —
-      // stay fed. This is what refines the colony into an efficient vein network.
+      // Standing tissue is sustained by chem *flux* (the gradient it sits on): high
+      // near food and along the veins between resources, ~0 on flat plateaus, so
+      // idle exploratory bulk starves to dark while flux-fed routes thicken into
+      // the persistent network reaching every resource it has found.
       const flux = Math.abs(chem[idx(xr, y)] - chem[idx(xl, y)]) + Math.abs(chem[idx(x, yd)] - chem[idx(x, yu)])
-      m += 4.5 * noise[i] * flux // chem flux sustains veins; substrate biases where
-      m -= starve // constant retraction; only flux-carrying body survives
-      mtmp[i] = m < 0 ? 0 : m > 1 ? 1 : m
+      m += 4.5 * noise[i] * flux
+      // Self-reinforcing growth (a Fisher–KPP reaction on existing tissue): the
+      // plasmodium spreads outward as a living front, so it survives the gaps
+      // between food zones and explores the dish. The density throttle caps how
+      // far it ranges; chem flux then thickens the routes that found food.
+      m += grow2 * 0.26 * terrain[i] * m * (1 - m)
+      m -= starve
+      m = m < 0 ? 0 : m > 1 ? 1 : m
+      mtmp[i] = m
+      massSum += m
     }
   }
+  massFrac = massSum / (W * H)
   const ms = mass
   mass = mtmp
   mtmp = ms
@@ -300,3 +343,4 @@ canvas.addEventListener('pointerdown', (e) => {
 window.addEventListener('resize', resize)
 resize()
 requestAnimationFrame(frame)
+

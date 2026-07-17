@@ -1,6 +1,6 @@
 {
   "title": "Slime Mold",
-  "description": "A continuous Physarum plasmodium — no agents, no dots. Two coupled fields drive it: the body's local mass and a food chemoattractant that diffuses from resources. A foraging margin grows outward toward food, and standing body survives only where it carries chem flux, so idle bulk recedes and the colony refines into an efficient reticulated vein network linking the resources. Click to drop food (a red berry) the colony reaches toward and consumes. Forage, chemotaxis, prune, vein sharpening, reach, and a grow/recede pulse (up to timelapse speed) are live and audio-mappable; randomized each load.",
+  "description": "A continuous Physarum plasmodium — no agents, no dots. Two coupled fields drive it: the body's local mass and a food chemoattractant. By default the colony explores outward as irregular amoeboid lobes and fingers (a self-reinforcing foraging front over a random substrate terrain), reaching and engulfing scattered food resources from a distance; a finite-protoplasm density cap keeps it a spreading network rather than a solid flood, and chem flux thickens the routes that found food. Click to drop more food (a red berry) the colony reaches toward and consumes. Forage, chemotaxis, prune, vein sharpening, reach, and a grow/recede pulse (up to timelapse speed) are live and audio-mappable.",
   "tags": ["simulation", "physarum", "reaction-diffusion", "generative", "audio-reactive"],
   "tech": ["canvas2d"],
   "created": "2026-07-14"
