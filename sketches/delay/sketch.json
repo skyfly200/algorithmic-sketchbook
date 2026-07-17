@@ -1,0 +1,9 @@
+{
+  "title": "Delay",
+  "description": "A video delay line with feedback: the output of N frames ago is mixed back over the present, so echoes of echoes pile up and decay — like looping two VHS decks or pointing a camera at its own monitor. Each echo generation can hue-shift further around the wheel and zoom/rotate slightly, tunnelling the repeats into the frame. Works on a camera, a dropped photo/video, the demo, or the Mixer layers below. Delay length, feedback, dry level, hue shift, zoom and rotation are live and audio-mappable (beats swell the feedback).",
+  "tags": ["delay", "feedback", "echo", "filter", "video"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}

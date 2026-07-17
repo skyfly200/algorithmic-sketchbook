@@ -246,7 +246,7 @@ window.addEventListener('drop', (e) => {
   const f = e.dataTransfer?.files?.[0]
   if (!f || !f.type.startsWith('image')) return
   const im = new Image()
-  im.onload = () => { baseImage = im; const h = document.getElementById('hint'); if (h) h.style.opacity = 0 }
+  im.onload = () => { baseImage = im }
   im.src = URL.createObjectURL(f)
 })
 

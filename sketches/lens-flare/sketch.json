@@ -1,0 +1,9 @@
+{
+  "title": "Lens Flare",
+  "description": "An anamorphic lens flare that locks onto the brightest point of a live image (smoothed so it glides) or a dragged position: hot core with chromatic fringe, the long cyan streak, a double halo ring, and a chain of polygonal ghosts spaced along the line through the frame centre — all additive, scaled by how bright the found light really is, with a subtle flicker. Works on a camera, a dropped photo/video, the demo, or the Mixer layers below. Intensity, streak, ghosts, halo, fringe, and threshold are live and audio-mappable (loudness surges the flare).",
+  "tags": ["lens-flare", "optics", "anamorphic", "filter", "cinematic"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}

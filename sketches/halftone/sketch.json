@@ -1,0 +1,9 @@
+{
+  "title": "Halftone",
+  "description": "A live halftone press: rotated screens of dots whose size carries the tone, printed over a camera feed, a dropped photo/video, the demo, or (in the Mixer/Patch) the layers below. Mono mode is one ink screen at 45°; CMYK lays four multiply-blended screens at the classic press angles (C 15°, M 75°, Y 0°, K 45°) so the rosette pattern emerges on its own. Paper-white or glowing-dots-on-black grounds. Dot pitch, contrast, screen angle, and dot gain are live and audio-mappable (beats fatten the dots).",
+  "tags": ["halftone", "print", "cmyk", "filter", "retro"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}
