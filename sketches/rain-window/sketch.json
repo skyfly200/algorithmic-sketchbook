@@ -1,0 +1,9 @@
+{
+  "title": "Rain on a Window",
+  "description": "A rainy pane laid over a live scene — a camera, a dropped photo/video, the demo, or (in the Mixer/Patch) the layers below. The glass is misted so the view reads soft and pale; droplets nucleate on it, grow, and each becomes a little lens that magnifies and point-inverts the scene behind it, with a bright specular and a dark refracted rim. When a drop gets heavy it breaks loose and slides down, swallowing the beads in its path (merging, area-conserving) and wiping a clear streak through the fog that slowly mists back over. Drop density, fog, run speed, size, refraction, sideways wind (mouse/tilt), and streak clarity are all live and mappable.",
+  "tags": ["rain", "water", "refraction", "glass", "filter"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}
