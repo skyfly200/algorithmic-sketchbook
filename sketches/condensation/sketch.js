@@ -91,23 +91,25 @@ function bakeSprite(tint) {
 
 let tintBaked = -1
 
-function dropTarget() {
-  // Dense packed field: roughly one droplet per ~330 px² at full density.
-  return Math.round(((width * height) / 330) * rt.detail * params.density)
+function safetyCap() {
+  // Only a ceiling to protect performance — the real population is regulated by
+  // how much open surface there is (see nucleation below), which lets the field
+  // coarsen into a few big drops instead of a frozen carpet of tiny ones.
+  return Math.round(((width * height) / 260) * rt.detail * params.density)
 }
 
 function resize() {
   width = canvas.width = window.innerWidth * rt.pixelRatio
   height = canvas.height = window.innerHeight * rt.pixelRatio
-  maxDrops = dropTarget()
-  // Seed a dense scattering of tiny droplets so it starts covered.
+  maxDrops = safetyCap()
+  // Seed a scattering of tiny nuclei; growth + coalescence take it from there.
   drops = []
-  const seed = Math.round(maxDrops * 0.6)
+  const seed = Math.round(safetyCap() * 0.35)
   for (let i = 0; i < seed; i++) {
     drops.push({
       x: Math.random() * width,
       y: Math.random() * height,
-      r: (1.5 + Math.random() * 3) * rt.pixelRatio,
+      r: (1.2 + Math.random() * 2.5) * rt.pixelRatio,
       g: 0.4 + Math.random() * 1.4,
     })
   }
@@ -145,12 +147,17 @@ function frame(now) {
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
   lastNow = now
   const minDim = Math.min(width, height)
-  const maxR = minDim * 0.08
-  maxDrops = dropTarget()
+  const maxR = minDim * 0.12
+  maxDrops = safetyCap()
 
-  // Grow every droplet a little (bigger ones grow slightly faster: more area).
+  // Grow every droplet a little (bigger ones grow slightly faster: more area),
+  // easing off near the maximum so giant drops sit and collect rather than
+  // ballooning without limit.
   const grow = params.growth * rt.pixelRatio * 7 * dt
-  for (const d of drops) d.r += grow * (0.5 + d.r / (maxR * 2)) * (d.g ?? 1)
+  for (const d of drops) {
+    const ease = d.r < maxR ? 1 : Math.max(0, 1 - (d.r - maxR) / maxR)
+    d.r += grow * (0.5 + d.r / (maxR * 2)) * (d.g ?? 1) * ease
+  }
 
   // Gravity drip: big droplets slide down and sweep up what they touch.
   if (params.drip > 0) {
@@ -193,24 +200,27 @@ function frame(now) {
   // Remove droplets that dripped off the bottom.
   if (params.drip > 0) drops = drops.filter((d) => d.y - d.r < height + maxR)
 
-  // Nucleate new droplets in open gaps.
+  // Nucleate new droplets — but only in genuinely open surface, at a steady
+  // rate rather than backfilling every gap. Because a nucleus only takes where
+  // there's bare surface, the population regulates itself: as drops grow and
+  // merge (clearing patches), fresh nuclei seed the cleared areas, and a
+  // polydisperse breath figure — a few big drops among many small — emerges.
   if (drops.length < maxDrops) {
     const gh = buildGrid(cell)
-    // Fill gaps aggressively so the surface stays densely covered.
-    const deficit = maxDrops - drops.length
-    const tries = Math.min(deficit, Math.round(params.nucleation * 30 * params.density) + 40)
+    const tries = Math.round(params.nucleation * (width * height) * 1.1e-5 * params.density) + 4
     for (let n = 0; n < tries && drops.length < maxDrops; n++) {
       const x = Math.random() * width
       const y = Math.random() * height
       let open = true
       for (const k of nearbyIndices(gh, x, y)) {
         const d = drops[k]
-        if (d && Math.hypot(d.x - x, d.y - y) < d.r * 0.95) {
+        if (d && Math.hypot(d.x - x, d.y - y) < d.r * 0.9) {
           open = false
           break
         }
       }
-      if (open) drops.push({ x, y, r: (2 + Math.random() * 2) * rt.pixelRatio, g: 0.4 + Math.random() * 1.4 })
+      if (open)
+        drops.push({ x, y, r: (1.8 + Math.random() * 2.4) * rt.pixelRatio, g: 0.4 + Math.random() * 1.4 })
     }
   }
 
