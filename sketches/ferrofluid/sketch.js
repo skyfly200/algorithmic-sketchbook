@@ -44,9 +44,9 @@ function hslArr(h, s, l) {
 function build() {
   W = canvas.width = window.innerWidth * rt.pixelRatio
   H = canvas.height = window.innerHeight * rt.pixelRatio
-  gsc = Math.max(2.5, 3 * rt.pixelRatio) / rt.detail // grid downsample
-  gw = Math.max(80, Math.floor(W / gsc))
-  gh = Math.max(80, Math.floor(H / gsc))
+  gsc = Math.max(1.6, 1.9 * rt.pixelRatio) / rt.detail // grid downsample (finer = smoother)
+  gw = Math.max(120, Math.floor(W / gsc))
+  gh = Math.max(120, Math.floor(H / gsc))
   buf.width = gw
   buf.height = gh
   img = bctx.createImageData(gw, gh)
@@ -136,7 +136,7 @@ function frame(now) {
       const il = 1 / Math.sqrt(nx * nx + ny * ny + 1)
       nx *= il; ny *= il; nz *= il
       const diff = Math.max(0, nx * lx0 + ny * ly0 + nz * lz0)
-      const spec = Math.pow(Math.max(0, nx * lx0 * hn + ny * ly0 * hn + nz * hlz * hn), 80)
+      const spec = Math.pow(Math.max(0, nx * lx0 * hn + ny * ly0 * hn + nz * hlz * hn), 55)
       // Reflection of the top-down view about the normal, sampled against two
       // narrow bright studio strips → mirror-black metal with sharp reflected
       // bands on the flanks, and mostly-black valleys for that oily contrast.
@@ -157,7 +157,12 @@ function frame(now) {
   }
   bctx.putImageData(img, 0, 0)
   ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+  // A whisper of blur on the upscale dissolves any residual grid stepping in the
+  // sharp specular glints without softening the overall chrome read.
+  ctx.filter = `blur(${0.6 * rt.pixelRatio}px)`
   ctx.drawImage(buf, 0, 0, W, H)
+  ctx.filter = 'none'
 
   requestAnimationFrame(frame)
 }

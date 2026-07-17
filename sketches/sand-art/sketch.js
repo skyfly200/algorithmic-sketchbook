@@ -12,7 +12,7 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  cell: { value: 4, min: 2, max: 10, step: 1, label: 'Grain size' },
+  cell: { value: 2, min: 1, max: 8, step: 1, label: 'Grain size' },
   pour: { value: 1.4, min: 0, max: 3, step: 0.05, label: 'Pour rate' },
   looseness: { value: 0.5, min: 0.1, max: 1, step: 0.02, label: 'Looseness (slope)' },
   hueRate: { value: 0.7, min: 0, max: 3, step: 0.05, label: 'Colour cycling' },

@@ -1,0 +1,9 @@
+{
+  "title": "Zen Garden",
+  "description": "A raked-sand karesansui you tend with the cursor. The sand is a lit height field: drag a rake to carve a band of parallel grooves that follow your stroke and curve as you curve, and click open sand to set a stone — concentric ripples ring it the way real gardens are raked around rocks. A low grazing light makes every furrow cast a soft shadow and catch a highlight on its crest, for the calm tactile look of combed sand. Rake tines, groove spacing/depth, light height, sand hue, and stone size are live. Drag to rake, click to place a stone, press C to clear.",
+  "tags": ["zen", "sand", "interactive", "generative", "relaxing"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-16"
+}

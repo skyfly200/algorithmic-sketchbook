@@ -16,6 +16,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'v
 import { useSketchStore } from '../stores/sketches'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
+import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
 
 const store = useSketchStore()
 // Only local, same-origin sketches can be captured for piping. Motion Extraction
@@ -66,6 +67,15 @@ const TYPES = {
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
   output: { title: 'Output', ins: 1, color: '#ffffff' },
+  // An Input node emits a 0..1 control value (not video); its output jack wires
+  // into the parameter jacks of other nodes to modulate them live.
+  input: { title: 'Input', ins: 0, color: '#e0a060' },
+}
+// Numeric params a control wire can drive on the non-effect operator nodes
+// (effect params come from the sketch's own schema over postMessage).
+const PARAM_RANGES = {
+  motion: { delay: [1, 29], gain: [0.5, 4] },
+  blend: { mix: [0, 1] },
 }
 const BLENDS = ['screen', 'add', 'lighten', 'multiply', 'difference', 'exclusion', 'overlay']
 
@@ -82,10 +92,12 @@ const saved = loadGraph()
 let nextId = 1
 const nodes = reactive(saved?.nodes ?? [])
 const edges = reactive(saved?.edges ?? [])
+// Control links: an Input node's value → a numeric param on another node.
+const links = reactive(saved?.links ?? [])
 if (nodes.length) nextId = Math.max(...nodes.map((n) => n.id)) + 1
 
 function persist() {
-  localStorage.setItem(STORE_KEY, JSON.stringify({ nodes, edges }))
+  localStorage.setItem(STORE_KEY, JSON.stringify({ nodes, edges, links }))
 }
 
 // Non-reactive per-node runtime state (canvases, iframes, video, ring buffers).
@@ -115,17 +127,22 @@ function addNode(type) {
           ? { mode: 'screen' }
           : type === 'effect'
             ? { slug: effectOptions.value[0]?.slug ?? '' }
-            : {},
+            : type === 'input'
+              ? { source: 'audio.volume', scale: 1, offset: 0 }
+              : {},
   })
   nodes.push(n)
   st(n.id) // create runtime state
   persist()
+  nextTick(() => layoutTick.value++)
 }
 function removeNode(id) {
   const i = nodes.findIndex((n) => n.id === id)
   if (i >= 0) nodes.splice(i, 1)
   for (let k = edges.length - 1; k >= 0; k--)
     if (edges[k].from === id || edges[k].to === id) edges.splice(k, 1)
+  for (let k = links.length - 1; k >= 0; k--)
+    if (links[k].from === id || links[k].node === id) links.splice(k, 1)
   rtState.delete(id)
   persist()
 }
@@ -207,7 +224,49 @@ function inKind(node, port) {
   return 'image'
 }
 function outKind(node) {
-  return node.type === 'motion' ? 'matte' : 'image'
+  return node.type === 'input' ? 'control' : node.type === 'motion' ? 'matte' : 'image'
+}
+
+// --- control input sources (mirror of the sketch runtime's resolver) -------
+const cin = { midi: createMidiInput(), leap: createLeapInput(), artnet: createArtnetInput() }
+const started = { midi: false, leap: false, artnet: false }
+const mouseN = { x: 0.5, y: 0.5 }
+function ensureInput(src) {
+  if (src.startsWith('midi.') && !started.midi) { started.midi = true; cin.midi.start() }
+  else if (src.startsWith('leap.') && !started.leap) { started.leap = true; cin.leap.start() }
+  else if (src.startsWith('artnet.') && !started.artnet) { started.artnet = true; cin.artnet.start() }
+}
+function sourceValue(src, now) {
+  const s = src?.startsWith('beat.') ? 'audio.' + src.slice(5) : src
+  if (!s) return 0
+  if (s.startsWith('midi.cc')) return cin.midi.state.cc[parseInt(s.slice(7), 10)] ?? 0
+  if (s.startsWith('artnet.ch')) return cin.artnet.state.ch[parseInt(s.slice(9), 10) - 1] ?? 0
+  const b = beat.state
+  switch (s) {
+    case 'audio.pulse': return b.pulse
+    case 'audio.level': return b.level
+    case 'audio.low': return b.low
+    case 'audio.mid': return b.mid
+    case 'audio.high': return b.high
+    case 'audio.volume': return b.volume
+    case 'audio.centroid': return b.centroid
+    case 'audio.flux': return b.flux
+    case 'mouse.x': return mouseN.x
+    case 'mouse.y': return mouseN.y
+    case 'time.sin': return 0.5 + 0.5 * Math.sin(now * 0.001 * Math.PI * 0.2)
+    case 'midi.note': return cin.midi.state.note
+    case 'midi.velocity': return cin.midi.state.velocity
+    case 'leap.x': return cin.leap.state.x
+    case 'leap.y': return cin.leap.state.y
+    case 'leap.z': return cin.leap.state.z
+    case 'leap.pinch': return cin.leap.state.pinch
+    case 'leap.grab': return cin.leap.state.grab
+    default: return 0
+  }
+}
+function inputValue(node, now) {
+  ensureInput(node.params.source)
+  return clamp(sourceValue(node.params.source, now) * node.params.scale + node.params.offset, 0, 1)
 }
 
 const wires = computed(() =>
@@ -225,8 +284,63 @@ const wires = computed(() =>
   }).filter(Boolean),
 )
 
+// --- control links: Input node output → a param jack on another node -------
+// Param-jack DOM elements register here so we can find their board position
+// (their offset within the node is in the same unscaled space as node.x/y).
+const jackEls = new Map()
+const layoutTick = ref(0) // bump when a node's inner layout changes (panels, adds)
+function bindJack(nodeId, param, el) {
+  if (el) jackEls.set(nodeId + ':' + param, el)
+  else jackEls.delete(nodeId + ':' + param) // panel closed → jack gone
+}
+function jackPos(nodeId, param) {
+  const n = nodes.find((x) => x.id === nodeId)
+  const el = jackEls.get(nodeId + ':' + param)
+  if (!n || !el) return null
+  return { x: n.x + el.offsetLeft + el.offsetWidth / 2, y: n.y + el.offsetTop + el.offsetHeight / 2 }
+}
+const linkWires = computed(() => {
+  layoutTick.value // dependency: recompute when inner layout shifts
+  return links
+    .map((l, idx) => {
+      const from = nodes.find((n) => n.id === l.from)
+      const jp = jackPos(l.node, l.param)
+      if (!from || !jp) return null
+      return { idx, d: wirePath(outPort(from), jp) }
+    })
+    .filter(Boolean)
+})
+function endLink(node, param) {
+  if (!wire.active || wire.kind !== 'control' || wire.from === node.id) return
+  for (let k = links.length - 1; k >= 0; k--)
+    if (links[k].node === node.id && links[k].param === param) links.splice(k, 1)
+  links.push({ from: wire.from, node: node.id, param })
+  wire.active = false
+  persist()
+}
+function removeLink(idx) {
+  links.splice(idx, 1)
+  persist()
+}
+// Push each Input node's live value onto the params it's wired to.
+function applyLinks(now) {
+  for (const l of links) {
+    const from = nodes.find((n) => n.id === l.from)
+    const tgt = nodes.find((n) => n.id === l.node)
+    if (!from || !tgt || from.type !== 'input') continue
+    const v = inputValue(from, now)
+    if (tgt.type === 'effect') {
+      const spec = effectControls.get(tgt.id)?.schema?.[l.param]
+      if (spec && typeof spec.min === 'number') setEffectParam(tgt.id, l.param, spec.min + v * (spec.max - spec.min))
+    } else {
+      const rng = PARAM_RANGES[tgt.type]?.[l.param]
+      if (rng) tgt.params[l.param] = rng[0] + v * (rng[1] - rng[0])
+    }
+  }
+}
+
 const drag = reactive({ node: null, dx: 0, dy: 0 })
-const wire = reactive({ active: false, from: null, x: 0, y: 0 })
+const wire = reactive({ active: false, from: null, x: 0, y: 0, kind: 'video' })
 const selected = ref(null) // node id last clicked — target for copy/delete
 
 // --- pan & zoom: the graph lives in a transformed "space" so it can be
@@ -286,11 +400,12 @@ function startWire(n, e) {
   const p = outPort(n)
   wire.active = true
   wire.from = n.id
+  wire.kind = outKind(n) === 'control' ? 'control' : 'video'
   wire.x = p.x
   wire.y = p.y
 }
 function endWire(n, port) {
-  if (!wire.active || wire.from === n.id) return
+  if (!wire.active || wire.from === n.id || wire.kind === 'control') return
   // one edge per input port
   for (let k = edges.length - 1; k >= 0; k--)
     if (edges[k].to === n.id && edges[k].port === port) edges.splice(k, 1)
@@ -355,6 +470,12 @@ async function bindVideo(id, el) {
 // node can be tuned and made audio/MIDI/etc. reactive right in the graph.
 const effectControls = reactive(new Map()) // node id -> { schema, values, mappings }
 const showParams = reactive(new Map()) // node id -> bool
+// Opening/closing the params panel shifts the param jacks below it, so nudge
+// the control-wire geometry to re-measure after the DOM settles.
+function toggleParams(id) {
+  showParams.set(id, !showParams.get(id))
+  nextTick(() => layoutTick.value++)
+}
 function onEffectMessage(e) {
   if (e.data?.type !== 'sketch:ready') return
   for (const n of nodes) {
@@ -530,6 +651,17 @@ function evalNode(node) {
   } else if (node.type === 'output') {
     const input = inputCanvas(node, 0)
     if (input) octx.drawImage(input, 0, 0, W, H)
+  } else if (node.type === 'input') {
+    // A VU-style meter of the control value the node is emitting.
+    const v = inputValue(node, performance.now())
+    octx.fillStyle = '#0c0e14'
+    octx.fillRect(0, 0, W, H)
+    octx.fillStyle = TYPES.input.color
+    octx.fillRect(0, H * (1 - v), W, H * v)
+    octx.fillStyle = 'rgba(255,255,255,0.9)'
+    octx.font = `${Math.round(H * 0.16)}px system-ui, sans-serif`
+    octx.fillText(node.params.source, W * 0.03, H * 0.22)
+    octx.fillText(v.toFixed(2), W * 0.03, H * 0.95)
   }
 }
 
@@ -560,6 +692,7 @@ function evalOrder() {
 let raf = 0
 function loop(ts) {
   broadcastBeat(ts ?? performance.now())
+  applyLinks(ts ?? performance.now()) // drive params from Input nodes first
   for (const n of evalOrder()) evalNode(n)
   // Blit the (last) Output node to the fullscreen stage.
   const out = nodes.find((n) => n.type === 'output')
@@ -617,6 +750,7 @@ function saveRouting() {
     name,
     nodes: JSON.parse(JSON.stringify(nodes)),
     edges: JSON.parse(JSON.stringify(edges)),
+    links: JSON.parse(JSON.stringify(links)),
   })
   persistSaved()
   newName.value = ''
@@ -627,6 +761,7 @@ function loadRouting(r) {
   const data = JSON.parse(JSON.stringify(r))
   nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
   edges.splice(0, edges.length, ...data.edges)
+  links.splice(0, links.length, ...(data.links ?? []))
   nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
   // Keep runtime state (canvases, bound iframes/video) for node ids that
   // survive the swap — Vue won't re-mount same-keyed iframes, so clearing
@@ -635,6 +770,7 @@ function loadRouting(r) {
   for (const id of [...rtState.keys()]) if (!ids.has(id)) rtState.delete(id)
   for (const n of nodes) st(n.id)
   persist()
+  nextTick(() => layoutTick.value++)
 }
 function deleteRouting(r) {
   const i = savedRoutings.value.findIndex((x) => x.id === r.id)
@@ -658,17 +794,24 @@ onMounted(async () => {
     persist()
   }
   await nextTick()
+  layoutTick.value++ // measure param jacks once the graph is laid out
   resizeStage()
   window.addEventListener('resize', resizeStage)
   window.addEventListener('message', onEffectMessage)
   window.addEventListener('keydown', onKey)
+  window.addEventListener('pointermove', trackMouse)
   raf = requestAnimationFrame(loop)
 })
+function trackMouse(e) {
+  mouseN.x = e.clientX / window.innerWidth
+  mouseN.y = 1 - e.clientY / window.innerHeight
+}
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
   window.removeEventListener('resize', resizeStage)
   window.removeEventListener('message', onEffectMessage)
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('pointermove', trackMouse)
   beat.stop()
   for (const s of rtState.values()) s.video?.srcObject?.getTracks?.().forEach((t) => t.stop())
 })
@@ -700,6 +843,7 @@ onBeforeUnmount(() => {
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('motion')">Motion</v-btn>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('mask')">Mask</v-btn>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('blend')">Blend</v-btn>
+      <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('input')">Input</v-btn>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('output')">Output</v-btn>
       <v-spacer />
 
@@ -793,13 +937,25 @@ onBeforeUnmount(() => {
           class="wire"
           @click="removeEdge(w.idx)"
         />
+        <!-- control links (Input node → a param jack) -->
+        <path
+          v-for="w in linkWires"
+          :key="'l' + w.idx"
+          :d="w.d"
+          stroke="#e0a060"
+          fill="none"
+          stroke-width="2"
+          stroke-dasharray="2 4"
+          class="wire wire--control"
+          @click="removeLink(w.idx)"
+        />
         <path
           v-if="wire.active"
           :d="wirePath(outPort(nodes.find((n) => n.id === wire.from)), { x: wire.x, y: wire.y })"
-          stroke="#fff"
+          :stroke="wire.kind === 'control' ? '#e0a060' : '#fff'"
           fill="none"
           stroke-width="2"
-          stroke-dasharray="4 4"
+          :stroke-dasharray="wire.kind === 'control' ? '2 4' : '4 4'"
         />
       </svg>
 
@@ -845,12 +1001,13 @@ onBeforeUnmount(() => {
           :title="n.type === 'mask' ? (i === 1 ? 'content' : 'mask (matte)') : 'input'"
           @pointerup="endWire(n, i - 1)"
         />
-        <!-- output port -->
+        <!-- output port (◆ matte · ▣ control value · ● image) -->
         <div
           v-if="n.type !== 'output'"
           class="port"
-          :class="outKind(n) === 'matte' ? 'port--matte' : 'port--image'"
+          :class="outKind(n) === 'matte' ? 'port--matte' : outKind(n) === 'control' ? 'port--control' : 'port--image'"
           :style="{ left: NODE_W - 7 + 'px', top: HEAD_H + THUMB_H / 2 - 7 + 'px' }"
+          :title="outKind(n) === 'control' ? 'control out — drag to a param ▣' : 'output'"
           @pointerdown="startWire(n, $event)"
         />
 
@@ -867,7 +1024,7 @@ onBeforeUnmount(() => {
                 :class="{ on: showParams.get(n.id) }"
                 title="Parameters & input mappings"
                 @pointerdown.stop
-                @click="showParams.set(n.id, !showParams.get(n.id))"
+                @click="toggleParams(n.id)"
               >⚙</button>
             </div>
 
@@ -884,6 +1041,7 @@ onBeforeUnmount(() => {
                   </select>
                 </label>
                 <label v-else>
+                  <span class="pjack" :ref="(el) => bindJack(n.id, name, el)" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, name)" />
                   {{ spec.label ?? name }}
                   <input type="range" :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :value="effectControls.get(n.id).values[name]" @input="setEffectParam(n.id, name, +$event.target.value)" />
                 </label>
@@ -908,16 +1066,23 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
+          <template v-if="n.type === 'input'">
+            <select v-model="n.params.source" @change="persist" @pointerdown.stop title="control source">
+              <option v-for="src in INPUT_SOURCES" :key="src" :value="src">{{ src }}</option>
+            </select>
+            <label>scale <input type="range" min="-2" max="2" step="0.05" v-model.number="n.params.scale" @change="persist" @pointerdown.stop /></label>
+            <label>offset <input type="range" min="-1" max="1" step="0.02" v-model.number="n.params.offset" @change="persist" @pointerdown.stop /></label>
+          </template>
           <template v-if="n.type === 'motion'">
-            <label>delay <input type="range" min="1" max="29" step="1" v-model.number="n.params.delay" @pointerdown.stop /></label>
-            <label>gain <input type="range" min="0.5" max="4" step="0.05" v-model.number="n.params.gain" @pointerdown.stop /></label>
+            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'delay', el)" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'delay')" /> delay <input type="range" min="1" max="29" step="1" v-model.number="n.params.delay" @pointerdown.stop /></label>
+            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'gain', el)" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'gain')" /> gain <input type="range" min="0.5" max="4" step="0.05" v-model.number="n.params.gain" @pointerdown.stop /></label>
             <label class="chk"><input type="checkbox" :checked="n.params.mode > 0.5" @change="n.params.mode = $event.target.checked ? 1 : 0; persist()" @pointerdown.stop /> color</label>
           </template>
           <template v-if="n.type === 'blend'">
             <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
               <option v-for="b in BLENDS" :key="b" :value="b">{{ b }}</option>
             </select>
-            <label>mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
+            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
           </template>
         </div>
       </div>
@@ -931,7 +1096,7 @@ onBeforeUnmount(() => {
       <v-btn icon="mdi-fit-to-page-outline" size="x-small" variant="text" title="Reset view" @click="resetView" />
     </div>
 
-    <div v-show="!outputOnly" class="hint">Drag a node's right port to another node's left port to wire it. Click a wire to remove it. ◆ ports/dashed wires carry a matte or mask.</div>
+    <div v-show="!outputOnly" class="hint">Drag a node's right port to another node's left port to wire it. Drag an Input node's ▣ output to any param's ▣ jack to modulate it. Click a wire to remove it.</div>
   </div>
 </template>
 
@@ -998,9 +1163,19 @@ onBeforeUnmount(() => {
   background: #12141c; border: 2px solid #9aa4c0; cursor: crosshair; z-index: 13;
 }
 .port:hover { border-color: #fff; background: #2a2f40; }
-/* image stream = round; matte / mask = diamond */
+/* image stream = round; matte / mask = diamond; control value = amber square */
 .port--image { border-radius: 50%; }
 .port--matte { border-radius: 2px; transform: rotate(45deg); }
+.port--control { border-radius: 2px; border-color: #e0a060; }
+.port--control:hover { border-color: #ffd9a0; }
+/* a control-input jack sitting beside a param control */
+.pjack {
+  display: inline-block; width: 10px; height: 10px; box-sizing: border-box;
+  border: 2px solid #e0a060; border-radius: 2px; background: #12141c;
+  cursor: crosshair; vertical-align: middle; margin-right: 4px;
+}
+.pjack:hover { border-color: #ffd9a0; background: #2a2f40; }
+.wire--control { opacity: 0.85; }
 .hint {
   position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 30;
   color: rgba(255,255,255,0.5); font: 12px system-ui, sans-serif; pointer-events: none;
