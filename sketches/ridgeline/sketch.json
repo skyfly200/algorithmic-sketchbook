@@ -1,0 +1,9 @@
+{
+  "title": "Ridgeline",
+  "description": "Stacked ridgelines after Joy Division's 'Unknown Pleasures' cover — which was itself a plot of the pulsar CP 1919's stacked radio pulses. Each row is a rectified fractal profile drawn up under a central Gaussian, so the spikes gather toward the middle and flatten to a line at the edges. Rows are painted back-to-front and each one's under-curve is filled with the background, hiding the rows behind it for that woodcut, overlapping-mountains look. The noise field scrolls so the ridges drift and breathe. Line count, amplitude, spread, speed, spikiness, wander, glow, and colour are live and audio-mappable (loudness swells the peaks, beats flare the glow).",
+  "tags": ["lines", "generative", "joy-division", "minimal", "audio-reactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}
