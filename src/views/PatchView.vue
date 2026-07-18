@@ -24,7 +24,7 @@ const store = useSketchStore()
 // pipes its video input straight into them.
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
-  'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects',
+  'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
 ]
 // Only local, same-origin sketches can be captured for piping. Filters (and
 // Motion Extraction, which has a native node) are organized under the Filter

@@ -20,7 +20,7 @@ import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 const store = useSketchStore()
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
-  'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects',
+  'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
 ]
 const BLENDS = [
   'screen', 'lighten', 'overlay', 'soft-light', 'hard-light',
