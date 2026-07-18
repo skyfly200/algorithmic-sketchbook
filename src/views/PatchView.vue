@@ -250,6 +250,83 @@ function removeNode(id) {
   persist()
 }
 
+// --- randomize: deal out a whole new patch -------------------------------
+// Builds a fresh random-but-sensible graph: 1–3 effect sources, each pushed
+// through a random filter chain, the streams folded together with random
+// blends (or the odd mask), an Output at the end, and a control node wired
+// into a blend mix. Goes through persist(), so it's a single undo step.
+function randomPatch() {
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
+  const chance = (p) => Math.random() < p
+
+  nodes.splice(0)
+  edges.splice(0)
+  links.splice(0)
+  rtState.clear()
+
+  const col = (c) => 60 + c * 240
+  const mk = (type, params, c, y) => {
+    const n = reactive({ id: nextId++, type, x: col(c) + Math.random() * 30, y, params })
+    nodes.push(n)
+    st(n.id)
+    return n
+  }
+
+  // 1–3 source chains: effect → 0–2 filters.
+  const nChains = 1 + Math.floor(Math.random() * 3)
+  const heads = [] // last node of each chain
+  let maxCol = 0
+  for (let i = 0; i < nChains; i++) {
+    const y = 90 + i * 230
+    let prev = mk('effect', { slug: pick(effectOptions.value)?.slug ?? '' }, 0, y)
+    const nFilters = chance(0.75) ? 1 + (chance(0.3) ? 1 : 0) : 0
+    for (let f = 0; f < nFilters; f++) {
+      const filt = mk('filter', { slug: pick(filterOptions.value)?.slug ?? '' }, 1 + f, y + 20 * (f + 1))
+      edges.push({ from: prev.id, to: filt.id, port: 0 })
+      prev = filt
+      maxCol = Math.max(maxCol, 1 + f)
+    }
+    heads.push(prev)
+  }
+
+  // Fold the chains together pairwise with blends (or the odd mask).
+  let c = maxCol + 1
+  const blends = []
+  while (heads.length > 1) {
+    const a = heads.shift()
+    const b = heads.shift()
+    const useMask = chance(0.2)
+    const node = useMask
+      ? mk('mask', {}, c, (a.y + b.y) / 2)
+      : mk('blend', { mode: pick(BLENDS), mix: +(0.4 + Math.random() * 0.6).toFixed(2) }, c, (a.y + b.y) / 2)
+    edges.push({ from: a.id, to: node.id, port: 0 })
+    edges.push({ from: b.id, to: node.id, port: 1 })
+    if (!useMask) blends.push(node)
+    heads.unshift(node)
+    c++
+  }
+
+  const outNode = mk('output', {}, c, heads[0].y + 10)
+  edges.push({ from: heads[0].id, to: outNode.id, port: 0 })
+
+  // A control node driving a blend's mix, when there is one.
+  if (blends.length && chance(0.8)) {
+    const tgt = pick(blends)
+    if (chance(0.35)) {
+      const xy = mk('xy', { x: Math.random(), y: Math.random() }, Math.max(0, tgt.x > 300 ? 1 : 0), tgt.y + 240)
+      links.push({ from: xy.id, srcPort: Math.floor(Math.random() * 2), node: tgt.id, param: 'mix' })
+    } else {
+      const src = pick(['audio.volume', 'audio.pulse', 'audio.low', 'time.sin', 'mouse.x', 'mouse.y'])
+      const inp = mk('input', { source: src, scale: 1, offset: 0 }, Math.max(0, 1), tgt.y + 240)
+      links.push({ from: inp.id, srcPort: 0, node: tgt.id, param: 'mix' })
+    }
+  }
+
+  selected.value = null
+  persist()
+  nextTick(() => layoutTick.value++)
+}
+
 // --- rename ---
 const editingName = ref(null) // node id whose title is being edited
 function startRename(n) {
@@ -1123,6 +1200,7 @@ onBeforeUnmount(() => {
         </v-list>
       </v-menu>
       <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
+      <v-btn icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
       <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
       <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
       <v-spacer />
