@@ -12,6 +12,16 @@ import BrandLogo from './components/BrandLogo.vue'
         </router-link>
       </v-app-bar-title>
       <v-btn
+        prepend-icon="mdi-airplane"
+        variant="tonal"
+        size="small"
+        class="mr-2"
+        title="Autopilot — a hands-free tour through the effects"
+        :to="{ name: 'autopilot' }"
+      >
+        Autopilot
+      </v-btn>
+      <v-btn
         prepend-icon="mdi-vector-polyline"
         variant="tonal"
         size="small"

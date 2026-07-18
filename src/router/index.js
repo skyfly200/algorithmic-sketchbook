@@ -5,6 +5,7 @@ import PresentView from '../views/PresentView.vue'
 import MixerView from '../views/MixerView.vue'
 import PatchView from '../views/PatchView.vue'
 import DocsView from '../views/DocsView.vue'
+import AutopilotView from '../views/AutopilotView.vue'
 
 // Hash history keeps deep links working on static hosts (GitHub Pages etc.)
 // without any server-side rewrite rules.
@@ -18,5 +19,6 @@ export default createRouter({
     { path: '/mix', name: 'mixer', component: MixerView },
     { path: '/patch', name: 'patch', component: PatchView },
     { path: '/docs', name: 'docs', component: DocsView },
+    { path: '/auto', name: 'autopilot', component: AutopilotView },
   ],
 })
