@@ -1,7 +1,13 @@
 {
   "title": "VHS Defects",
-  "description": "The failure modes of a worn VHS tape, layered over moving footage (a synthwave scene, or drop an image to degrade your own). Processing is done in YIQ — the way analogue video separates luma from chroma — which is what makes it read as VHS: chroma bleed and lag from the tape's tiny colour bandwidth, per-scanline tracking jitter, the torn head-switching noise band along the bottom, bright dropout streaks where the oxide flaked off, tape snow, scanlines, and a vertical-hold roll that slips now and then. Tracking, chroma, snow, dropouts, scanlines, roll, and wear are live and audio-mappable (beats knock the tracking).",
-  "tags": ["vhs", "glitch", "retro", "analog", "audio-reactive"],
+  "description": "The failure modes of a worn VHS tape, run over any live source — your camera, a dropped photo or video, the synthwave demo scene, or (in the Mixer/Patch) the layers below. Processing is done in YIQ — the way analogue video separates luma from chroma — which is what makes it read as VHS: chroma bleed and lag from the tape's tiny colour bandwidth, per-scanline tracking jitter, the torn head-switching noise band along the bottom, bright dropout streaks where the oxide flaked off, tape snow, scanlines, and a vertical-hold roll that slips now and then. Tracking, chroma, snow, dropouts, scanlines, roll, and wear are live and audio-mappable (beats knock the tracking).",
+  "tags": [
+    "vhs",
+    "glitch",
+    "retro",
+    "analog",
+    "audio-reactive"
+  ],
   "tech": [
     "canvas2d"
   ],

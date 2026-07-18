@@ -17,9 +17,8 @@ const inputRows = [
 ]
 const patchNodes = [
   ['Effect', 'A generator sketch rendering live in a hidden iframe; its canvas is the node output. Open ⚙ for its params and input mappings.'],
-  ['Filter', 'A source-filter sketch (pointillism, camera lens, rain on a window, halftone, channel offset, delay, lens flare, motion extraction). Its video input is piped in as the filter\'s source each frame.'],
+  ['Filter', 'A source-filter sketch (pointillism, camera lens, rain on a window, halftone, channel offset, delay, lens flare, VHS, motion extraction). Its video input is piped in as the filter\'s source each frame.'],
   ['Camera', 'Your webcam as a source.'],
-  ['Motion Extract', 'Difference against an N-frame-delayed copy — a live motion matte (diamond output).'],
   ['Mask', 'Multiplies a content stream by a matte.'],
   ['Blend', 'Composites two streams with any blend mode and a mix amount.'],
   ['Input', 'Emits a 0..1 control value from any input source (audio, MIDI, …) with scale/offset. Wire its amber ▣ into any param jack.'],

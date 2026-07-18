@@ -24,7 +24,7 @@ const store = useSketchStore()
 // pipes its video input straight into them.
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
-  'channel-offset', 'delay', 'lens-flare', 'motion-extraction',
+  'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects',
 ]
 // Only local, same-origin sketches can be captured for piping. Filters (and
 // Motion Extraction, which has a native node) are organized under the Filter
@@ -69,14 +69,10 @@ function applyResolution(label) {
   H = dim.h
   resLabel.value = label
   localStorage.setItem(RES_KEY, label)
-  // Resize every existing node canvas + ring buffer to the new resolution.
+  // Resize every existing node canvas to the new resolution.
   for (const s of rtState.values()) {
     s.out.width = W
     s.out.height = H
-    if (s.ring) for (const c of s.ring) {
-      c.width = W
-      c.height = H
-    }
   }
   // Source iframes are CSS-sized to the compositor, so their sketches actually
   // render this many pixels (they run quality=high → pixelRatio 1).
@@ -91,7 +87,6 @@ const TYPES = {
   effect: { title: 'Effect', ins: 0, color: '#7c8cff' },
   filter: { title: 'Filter', ins: 1, color: '#c98cff' },
   camera: { title: 'Camera', ins: 0, color: '#4dd0c4' },
-  motion: { title: 'Motion Extract', ins: 1, color: '#ff7ca8' },
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
   output: { title: 'Output', ins: 1, color: '#ffffff' },
@@ -112,7 +107,6 @@ const OUT_LABELS = { xy: ['x', 'y'], tracker: ['x', 'y', 'size'] }
 // Numeric params a control wire can drive on the non-effect operator nodes
 // (effect params come from the sketch's own schema over postMessage).
 const PARAM_RANGES = {
-  motion: { delay: [1, 29], gain: [0.5, 4] },
   blend: { mix: [0, 1] },
 }
 const BLENDS = [
@@ -141,9 +135,20 @@ function loadGraph() {
     return null
   }
 }
+// Migration: Motion Extract used to be its own node type; it's now just the
+// motion-extraction sketch behind a Filter node, so legacy graphs convert.
+function normalizeNodes(list) {
+  for (const n of list ?? []) {
+    if (n.type === 'motion') {
+      n.type = 'filter'
+      n.params = { slug: 'motion-extraction' }
+    }
+  }
+  return list
+}
 const saved = loadGraph()
 let nextId = 1
-const nodes = reactive(saved?.nodes ?? [])
+const nodes = reactive(normalizeNodes(saved?.nodes) ?? [])
 const edges = reactive(saved?.edges ?? [])
 // Control links: an Input node's value → a numeric param on another node.
 const links = reactive(saved?.links ?? [])
@@ -202,7 +207,7 @@ function st(id) {
     const out = document.createElement('canvas')
     out.width = W
     out.height = H
-    s = { out, octx: out.getContext('2d'), ring: null, head: 0, iframe: null, video: null }
+    s = { out, octx: out.getContext('2d'), iframe: null, video: null }
     rtState.set(id, s)
   }
   return s
@@ -215,21 +220,19 @@ function addNode(type) {
     x: 60 + (nodes.length % 4) * 60,
     y: 90 + (nodes.length % 4) * 40,
     params:
-      type === 'motion'
-        ? { delay: 6, gain: 1.4, mode: 0 }
-        : type === 'blend'
-          ? { mode: 'screen' }
-          : type === 'effect'
-            ? { slug: effectOptions.value[0]?.slug ?? '' }
-            : type === 'filter'
-              ? { slug: filterOptions.value[0]?.slug ?? '' }
-              : type === 'input'
-                ? { source: 'audio.volume', scale: 1, offset: 0 }
-                : type === 'xy'
-                  ? { x: 0.5, y: 0.5 }
-                  : type === 'tracker'
-                    ? { thresh: 0.5, smooth: 0.7 }
-                    : {},
+      type === 'blend'
+        ? { mode: 'screen' }
+        : type === 'effect'
+          ? { slug: effectOptions.value[0]?.slug ?? '' }
+          : type === 'filter'
+            ? { slug: filterOptions.value[0]?.slug ?? '' }
+            : type === 'input'
+              ? { source: 'audio.volume', scale: 1, offset: 0 }
+              : type === 'xy'
+                ? { x: 0.5, y: 0.5 }
+                : type === 'tracker'
+                  ? { thresh: 0.5, smooth: 0.7 }
+                  : {},
   })
   nodes.push(n)
   st(n.id) // create runtime state
@@ -331,7 +334,7 @@ function inKind(node, port) {
 }
 function outKind(node) {
   if (node.type === 'input' || node.type === 'xy' || node.type === 'tracker') return 'control'
-  return node.type === 'motion' ? 'matte' : 'image'
+  return 'image'
 }
 
 // --- control input sources (mirror of the sketch runtime's resolver) -------
@@ -723,7 +726,6 @@ function bindThumb(id, el) {
 
 // --- compositor ---
 const stage = ref(null)
-const MAXD = 30
 
 function cover(octx, src, sw, sh) {
   if (!src || !sw || !sh) return false
@@ -776,38 +778,6 @@ function evalNode(node) {
     }
   } else if (node.type === 'camera') {
     if (s.video && s.video.videoWidth) cover(octx, s.video, s.video.videoWidth, s.video.videoHeight)
-  } else if (node.type === 'motion') {
-    const input = inputCanvas(node, 0)
-    if (input) {
-      if (!s.ring) {
-        s.ring = Array.from({ length: MAXD }, () => {
-          const c = document.createElement('canvas')
-          c.width = W
-          c.height = H
-          return c
-        })
-        s.head = 0
-      }
-      const delay = Math.min(MAXD - 1, Math.max(1, Math.round(node.params.delay)))
-      const ref = s.ring[(s.head - delay + MAXD) % MAXD]
-      const g = node.params.gain
-      octx.filter = g !== 1 ? `brightness(${g})` : 'none'
-      octx.drawImage(input, 0, 0, W, H)
-      octx.globalCompositeOperation = 'difference'
-      octx.drawImage(ref, 0, 0, W, H)
-      octx.globalCompositeOperation = 'source-over'
-      octx.filter = 'none'
-      if (node.params.mode < 0.5) {
-        octx.globalCompositeOperation = 'saturation'
-        octx.fillStyle = 'hsl(0,0%,50%)'
-        octx.fillRect(0, 0, W, H)
-        octx.globalCompositeOperation = 'source-over'
-      }
-      const slot = s.ring[s.head].getContext('2d')
-      slot.clearRect(0, 0, W, H)
-      slot.drawImage(input, 0, 0, W, H)
-      s.head = (s.head + 1) % MAXD
-    }
   } else if (node.type === 'mask') {
     const content = inputCanvas(node, 0)
     const mask = inputCanvas(node, 1)
@@ -947,25 +917,59 @@ function evalOrder() {
 }
 
 let raf = 0
+// Adaptive throttling: a full compositor pass can get expensive (big
+// resolutions, many nodes). Its cost is tracked as an EMA, and when a pass
+// eats more than ~half a 60 Hz frame the next rAF tick(s) are skipped — so the
+// main thread always has slack for pointer events, drags, and Vue updates.
+// Control flow (beat broadcast + links) still runs every tick, so knobs and
+// mappings feel live even when the video rate drops.
+let passCost = 6 // ms, EMA
+let skipLeft = 0
+// FPS meter (compositor passes per second), shown via the toolbar toggle.
+const FPS_KEY = 'sketchbook-patch-fps'
+const showFps = ref(localStorage.getItem(FPS_KEY) === '1')
+function toggleFps() {
+  showFps.value = !showFps.value
+  localStorage.setItem(FPS_KEY, showFps.value ? '1' : '0')
+}
+const fps = ref(0)
+let passCount = 0
+let fpsWindow = 0
+
 function loop(ts) {
-  broadcastBeat(ts ?? performance.now())
-  applyLinks(ts ?? performance.now()) // drive params from Input nodes first
-  for (const n of evalOrder()) evalNode(n)
-  // Blit the (last) Output node to the fullscreen stage.
-  const out = nodes.find((n) => n.type === 'output')
-  const cnv = stage.value
-  if (cnv) {
-    const cx = cnv.getContext('2d')
-    cx.fillStyle = '#000'
-    cx.fillRect(0, 0, cnv.width, cnv.height)
-    if (out) {
-      const s = rtState.get(out.id)
-      if (s) {
-        const scale = Math.max(cnv.width / W, cnv.height / H)
-        const w = W * scale
-        const h = H * scale
-        cx.drawImage(s.out, (cnv.width - w) / 2, (cnv.height - h) / 2, w, h)
+  const now = ts ?? performance.now()
+  broadcastBeat(now)
+  applyLinks(now) // drive params from Input nodes first
+  if (skipLeft > 0) {
+    skipLeft--
+  } else {
+    const t0 = performance.now()
+    for (const n of evalOrder()) evalNode(n)
+    // Blit the (last) Output node to the fullscreen stage.
+    const out = nodes.find((n) => n.type === 'output')
+    const cnv = stage.value
+    if (cnv) {
+      const cx = cnv.getContext('2d')
+      cx.fillStyle = '#000'
+      cx.fillRect(0, 0, cnv.width, cnv.height)
+      if (out) {
+        const s = rtState.get(out.id)
+        if (s) {
+          const scale = Math.max(cnv.width / W, cnv.height / H)
+          const w = W * scale
+          const h = H * scale
+          cx.drawImage(s.out, (cnv.width - w) / 2, (cnv.height - h) / 2, w, h)
+        }
       }
+    }
+    passCost = passCost * 0.85 + (performance.now() - t0) * 0.15
+    // Keep compositor occupancy under ~55% of the frame budget.
+    skipLeft = Math.min(5, Math.floor(passCost / 9))
+    passCount++
+    if (now - fpsWindow >= 500) {
+      fps.value = Math.round((passCount * 1000) / (now - fpsWindow || 1))
+      passCount = 0
+      fpsWindow = now
     }
   }
   raf = requestAnimationFrame(loop)
@@ -1021,6 +1025,7 @@ function loadRouting(r) {
   // r comes from the reactive saved list — deep-copy via JSON (structuredClone
   // throws DataCloneError on Vue's reactive proxies).
   const data = JSON.parse(JSON.stringify(r))
+  normalizeNodes(data.nodes)
   nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
   edges.splice(0, edges.length, ...data.edges)
   links.splice(0, links.length, ...(data.links ?? []))
@@ -1043,10 +1048,10 @@ function deleteRouting(r) {
 }
 
 onMounted(async () => {
-  // Seed a starter graph the first time.
+  // Seed a starter graph the first time: effect → filter → output.
   if (!nodes.length) {
     addNode('effect')
-    addNode('motion')
+    addNode('filter')
     addNode('output')
     await nextTick()
     nodes[1].x = 280
@@ -1101,23 +1106,23 @@ onBeforeUnmount(() => {
     <div v-show="!outputOnly" class="toolbar">
       <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
       <span class="text-subtitle-2 mr-2">Patch</span>
-      <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('effect')">Effect</v-btn>
-      <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('filter')">Filter</v-btn>
-      <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('camera')">Camera</v-btn>
-      <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('motion')">Motion</v-btn>
-      <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('mask')">Mask</v-btn>
-      <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('blend')">Blend</v-btn>
+      <!-- add-node buttons: icons tinted with each node type's colour -->
+      <v-btn icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
+      <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
+      <v-btn icon="mdi-camera" variant="tonal" size="small" title="Add Camera (webcam source)" :style="{ color: TYPES.camera.color }" @click="addNode('camera')" />
+      <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
+      <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
       <v-menu>
         <template #activator="{ props }">
-          <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-plus">Control</v-btn>
+          <v-btn v-bind="props" icon="mdi-tune-variant" variant="tonal" size="small" title="Add a control node (Input · XY Pad · Tracker)" :style="{ color: TYPES.input.color }" />
         </template>
         <v-list density="compact">
-          <v-list-item title="Input (audio · midi · …)" @click="addNode('input')" />
-          <v-list-item title="XY Pad (touch surface)" @click="addNode('xy')" />
-          <v-list-item title="Tracker (video tracking)" @click="addNode('tracker')" />
+          <v-list-item prepend-icon="mdi-sine-wave" title="Input (audio · midi · …)" @click="addNode('input')" />
+          <v-list-item prepend-icon="mdi-gesture-tap" title="XY Pad (touch surface)" @click="addNode('xy')" />
+          <v-list-item prepend-icon="mdi-target" title="Tracker (video tracking)" @click="addNode('tracker')" />
         </v-list>
       </v-menu>
-      <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('output')">Output</v-btn>
+      <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
       <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
       <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
       <v-spacer />
@@ -1161,6 +1166,14 @@ onBeforeUnmount(() => {
         :color="micOn ? 'primary' : undefined"
         title="Mic — effect nodes' audio mappings react to sound"
         @click="toggleMic"
+      />
+      <v-btn
+        icon="mdi-speedometer"
+        variant="text"
+        size="small"
+        :color="showFps ? 'primary' : undefined"
+        title="FPS counter (compositor rate)"
+        @click="toggleFps"
       />
       <v-menu>
         <template #activator="{ props }">
@@ -1383,11 +1396,6 @@ onBeforeUnmount(() => {
             <label>threshold <input type="range" min="0.05" max="0.95" step="0.01" v-model.number="n.params.thresh" @change="persist" @pointerdown.stop /></label>
             <label>smoothing <input type="range" min="0" max="0.95" step="0.01" v-model.number="n.params.smooth" @change="persist" @pointerdown.stop /></label>
           </template>
-          <template v-if="n.type === 'motion'">
-            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'delay', el)" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'delay')" /> delay <input type="range" min="1" max="29" step="1" v-model.number="n.params.delay" @pointerdown.stop /></label>
-            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'gain', el)" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'gain')" /> gain <input type="range" min="0.5" max="4" step="0.05" v-model.number="n.params.gain" @pointerdown.stop /></label>
-            <label class="chk"><input type="checkbox" :checked="n.params.mode > 0.5" @change="n.params.mode = $event.target.checked ? 1 : 0; persist()" @pointerdown.stop /> color</label>
-          </template>
           <template v-if="n.type === 'blend'">
             <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
               <option v-for="b in BLENDS" :key="b" :value="b">{{ b }}</option>
@@ -1398,6 +1406,8 @@ onBeforeUnmount(() => {
       </div>
       </div>
     </div>
+
+    <div v-if="showFps" class="fps-meter">{{ fps }} FPS</div>
 
     <div v-show="!outputOnly" class="zoom-ctrls">
       <v-btn icon="mdi-magnify-minus-outline" size="x-small" variant="text" title="Zoom out" @click="zoomStep(1 / 1.2)" />
@@ -1506,4 +1516,10 @@ onBeforeUnmount(() => {
   display: flex; gap: 6px; opacity: 0.35; transition: opacity 0.2s;
 }
 .output-ctrls:hover { opacity: 1; }
+.fps-meter {
+  position: absolute; bottom: 8px; right: 8px; z-index: 40;
+  padding: 3px 8px; border-radius: 6px;
+  font: 12px/1.4 ui-monospace, monospace; color: #8f8;
+  background: rgba(0, 0, 0, 0.55); pointer-events: none;
+}
 </style>

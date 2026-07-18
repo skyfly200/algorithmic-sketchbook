@@ -131,6 +131,31 @@ function step() {
     }
   }
 
+  // Coalescence among all drops (not just sliding sweepers): any two beads
+  // that touch merge into one, area-conserving — the bigger keeps the spot.
+  for (let i = 0; i < drops.length; i++) {
+    const a = drops[i]
+    for (let j = i + 1; j < drops.length; j++) {
+      const b = drops[j]
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const rr = a.r + b.r
+      if (dx * dx + dy * dy < rr * rr * 0.55) {
+        const big = a.r >= b.r ? a : b
+        const small = a.r >= b.r ? b : a
+        const area = a.r * a.r + b.r * b.r
+        big.r = Math.sqrt(area)
+        big.sliding = big.sliding || small.sliding
+        big.vy = Math.max(big.vy, small.vy)
+        if (small === a) {
+          drops[i] = big === a ? a : b
+        }
+        drops.splice(j, 1)
+        j--
+      }
+    }
+  }
+
   // Cull off-screen and cap the herd.
   drops = drops.filter((d) => d.y - d.r < H + 4 && d.x > -20 * PR && d.x < W + 20 * PR)
   if (drops.length > maxDrops) drops.splice(0, drops.length - maxDrops)
