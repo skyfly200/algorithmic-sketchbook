@@ -19,6 +19,7 @@ const params = rt.params({
   saturation: { value: +rt.random(1.1, 1.6).toFixed(2), min: 0.5, max: 2.2, step: 0.05, label: 'Saturation' },
   variation: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Size variation' },
   opacity: { value: 0.92, min: 0.3, max: 1, step: 0.02, label: 'Dot opacity' },
+  texture: { value: true, type: 'bool', label: 'Textured brush' },
   paper: { value: false, type: 'bool', label: 'Paper (light) ground' },
 })
 // A little audio life by default: loudness fattens the dots, beats jostle them.
@@ -40,6 +41,78 @@ let imgData = null
 // jitter and size wobble don't flicker frame to frame.
 let pts = []
 let lastSpacing = -1
+
+// --- textured brush ---------------------------------------------------------
+// A handful of baked white brush sprites: irregular blobby outline with
+// internal grain, like a loaded round brush dabbed on rough paper. Dots are
+// stamped from these (tinted through a colour-binned cache) instead of flat
+// ellipses, so every touch has body and tooth.
+const SPR = 48
+const sprites = []
+{
+  for (let k = 0; k < 8; k++) {
+    const c = document.createElement('canvas')
+    c.width = c.height = SPR
+    const g = c.getContext('2d')
+    const cx = SPR / 2
+    const R = SPR * 0.42
+    // Wobbly blob outline.
+    g.beginPath()
+    const lobes = 7 + (k % 3)
+    const ph = Math.random() * Math.PI * 2
+    for (let i = 0; i <= 40; i++) {
+      const a = (i / 40) * Math.PI * 2
+      const r = R * (1 + 0.13 * Math.sin(a * lobes + ph) + 0.07 * Math.sin(a * 3 + k))
+      const x = cx + Math.cos(a) * r
+      const y = cx + Math.sin(a) * r
+      i === 0 ? g.moveTo(x, y) : g.lineTo(x, y)
+    }
+    g.closePath()
+    g.fillStyle = '#fff'
+    g.fill()
+    // Slightly translucent halo edge so stamps blend where they overlap.
+    g.globalCompositeOperation = 'destination-out'
+    const halo = g.createRadialGradient(cx, cx, R * 0.55, cx, cx, R * 1.15)
+    halo.addColorStop(0, 'rgba(0,0,0,0)')
+    halo.addColorStop(1, 'rgba(0,0,0,0.55)')
+    g.fillStyle = halo
+    g.fillRect(0, 0, SPR, SPR)
+    // Paper-tooth grain: little bites out of the pigment.
+    for (let i = 0; i < 110; i++) {
+      const a = Math.random() * Math.PI * 2
+      const rr = Math.sqrt(Math.random()) * R
+      g.fillStyle = `rgba(0,0,0,${0.12 + Math.random() * 0.3})`
+      g.beginPath()
+      g.arc(cx + Math.cos(a) * rr, cx + Math.sin(a) * rr, 0.6 + Math.random() * 1.5, 0, Math.PI * 2)
+      g.fill()
+    }
+    g.globalCompositeOperation = 'source-over'
+    sprites.push(c)
+  }
+}
+// Tinted-sprite cache, keyed by sprite index + colour quantized to 32 levels
+// per channel — so each colour bin pays the tint cost once, and every dot
+// after that is a single drawImage.
+const tintCache = new Map()
+function tinted(si, r, g, b) {
+  const qr = r >> 3
+  const qg = g >> 3
+  const qb = b >> 3
+  const key = (((si << 5 | qr) << 5 | qg) << 5) | qb
+  let c = tintCache.get(key)
+  if (!c) {
+    if (tintCache.size > 4000) tintCache.clear()
+    c = document.createElement('canvas')
+    c.width = c.height = SPR
+    const x = c.getContext('2d')
+    x.drawImage(sprites[si], 0, 0)
+    x.globalCompositeOperation = 'source-in'
+    x.fillStyle = `rgb(${qr << 3 | 4}, ${qg << 3 | 4}, ${qb << 3 | 4})`
+    x.fillRect(0, 0, SPR, SPR)
+    tintCache.set(key, c)
+  }
+  return c
+}
 
 function resize() {
   canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
@@ -68,6 +141,8 @@ function buildPoints() {
         jx: Math.random() * 2 - 1,
         jy: Math.random() * 2 - 1,
         sz: 0.6 + Math.random() * 0.9, // per-dot size wobble
+        si: (Math.random() * 8) | 0, // which brush sprite
+        rot: Math.random() * Math.PI * 2, // fixed stamp rotation
       })
     }
   }
@@ -156,7 +231,17 @@ function frame(now) {
       ang = Math.atan2(gyv, gxv) + Math.PI / 2 // along the contour
     }
 
-    if (e > 0.02) {
+    if (params.texture) {
+      // Stamp a tinted brush sprite: rotated per-dot, stretched along the
+      // contour when the stroke elongates.
+      const spr = tinted(p.si, r | 0, g | 0, b | 0)
+      const rx = rad * (1 + e * 1.7)
+      ctx.save()
+      ctx.translate(px, py)
+      ctx.rotate(e > 0.02 ? ang : p.rot)
+      ctx.drawImage(spr, -rx, -rad, rx * 2, rad * 2)
+      ctx.restore()
+    } else if (e > 0.02) {
       const rx = rad * (1 + e * 1.7)
       ctx.save()
       ctx.translate(px, py)

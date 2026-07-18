@@ -1,6 +1,7 @@
 /**
- * VHS Defects — the failure modes of a worn VHS tape, layered over moving
- * "footage" (a synthwave scene, or drop an image/GIF frame to degrade your own).
+ * VHS Defects — the failure modes of a worn VHS tape, run over any live source
+ * (camera / dropped photo or video / the synthwave demo scene / the Mixer-Patch
+ * layers below, via the shared _lib/source.js pipeline).
  * The processing is done in YIQ, the way analogue video actually separates luma
  * from chroma, which is what makes VHS look like VHS:
  *
@@ -10,10 +11,9 @@
  *   • head-switching noise — the torn, noisy band along the bottom edge;
  *   • dropouts — bright white streaks where oxide has flaked off;
  *   • tape snow, scanlines, and a vertical-hold roll that slips now and then.
- *
- * Drag an image onto the canvas to run it through the deck instead.
  */
 import { createRuntime } from '../_lib/runtime.js'
+import { createSource } from '../_lib/source.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -31,22 +31,21 @@ rt.mapInput('audio.volume', 'noise', 0.5)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
-const src = document.createElement('canvas') // the clean "footage"
-const sctx = src.getContext('2d')
+const clean = document.createElement('canvas') // the clean "footage"
+const sctx = clean.getContext('2d', { willReadFrequently: true })
 const out = document.createElement('canvas') // the degraded frame
 const octx = out.getContext('2d')
 
 let W, H
 let Y, I, Q, Ib, Qb, srcImg, outImg
-let baseImage = null // dropped image overrides the generated scene
 
 function build() {
   const long = Math.round(Math.min(Math.max(window.innerWidth, window.innerHeight), 380) * rt.detail)
   const ar = window.innerWidth / window.innerHeight
   W = ar >= 1 ? long : Math.round(long * ar)
   H = ar >= 1 ? Math.round(long / ar) : long
-  src.width = out.width = W
-  src.height = out.height = H
+  clean.width = out.width = W
+  clean.height = out.height = H
   Y = new Float32Array(W * H)
   I = new Float32Array(W * H)
   Q = new Float32Array(W * H)
@@ -60,19 +59,10 @@ function resize() {
   build()
 }
 
-// --- the clean footage: a scrolling synthwave scene (so motion reveals the
-// tracking + chroma artifacts), or a dropped image. -----------------------
-function drawScene(t) {
-  if (baseImage) {
-    const s = Math.max(W / baseImage.width, H / baseImage.height)
-    const w = baseImage.width * s, h = baseImage.height * s
-    sctx.drawImage(baseImage, (W - w) / 2, (H - h) / 2, w, h)
-    // A little on-screen display, like a camcorder, gets degraded too.
-    sctx.fillStyle = '#fff'
-    sctx.font = `${Math.round(H * 0.05)}px monospace`
-    sctx.fillText('▶  SP', W * 0.04, H * 0.1)
-    return
-  }
+// --- demo footage: a scrolling synthwave scene (so motion reveals the
+// tracking + chroma artifacts). Any other source (camera, dropped file,
+// Mixer feed) simply replaces it via the shared pipeline. -------------------
+function synthwave(sctx, t, W, H) {
   const horizon = H * 0.55
   // Sky.
   const sky = sctx.createLinearGradient(0, 0, 0, horizon)
@@ -116,6 +106,8 @@ function drawScene(t) {
     sctx.stroke()
   }
 }
+
+const src = createSource({ demo: synthwave })
 
 const clampi = (v, hi) => (v < 0 ? 0 : v > hi ? hi : v)
 
@@ -233,22 +225,14 @@ function frame(now) {
   const dt = Math.min(0.05, lastNow ? (now - lastNow) / 1000 : 0.016)
   lastNow = now
   updateRoll(dt)
-  drawScene(now * 0.001)
-  process(now * 0.001)
-  render()
+  src.update(now * 0.001)
+  if (src.ready) {
+    src.draw(sctx, W, H) // clean footage in, degraded tape out
+    process(now * 0.001)
+    render()
+  }
   requestAnimationFrame(frame)
 }
-
-// Drag & drop an image to feed the deck.
-window.addEventListener('dragover', (e) => e.preventDefault())
-window.addEventListener('drop', (e) => {
-  e.preventDefault()
-  const f = e.dataTransfer?.files?.[0]
-  if (!f || !f.type.startsWith('image')) return
-  const im = new Image()
-  im.onload = () => { baseImage = im }
-  im.src = URL.createObjectURL(f)
-})
 
 window.addEventListener('resize', resize)
 resize()
