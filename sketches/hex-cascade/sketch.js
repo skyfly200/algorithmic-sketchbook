@@ -27,7 +27,11 @@ const initialSeed = seed
 
 const hashPairs = []
 for (let j = 0; j < 32; j++) hashPairs.push(tokenData.hash.slice(2 + j * 2, 4 + j * 2))
-const rvs = hashPairs.map((x) => parseInt(x, 16))
+// Hash bytes are 0–255 but the outcome tables below expect the original
+// script's 0–19 range — without this fold every byte cleared the top
+// threshold and the grid was stuck at hex_count 4. Folding restores the
+// intended rarity distribution, so the grid size varies per seed again.
+const rvs = hashPairs.map((x) => parseInt(x, 16) % 20)
 
 const palette_choices = [
   ['#FF0000', '#00A08A', '#F2AD00', '#F98400', '#5BBCD6'],
