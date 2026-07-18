@@ -2,8 +2,12 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  speed: { value: 1.4, min: 0.3, max: 4, step: 0.1, label: 'Particle speed' },
+  speed: { value: +rt.random(0.9, 2.2).toFixed(1), min: 0.3, max: 4, step: 0.1, label: 'Particle speed' },
   fade: { value: 0.045, min: 0.01, max: 0.15, step: 0.005, label: 'Trail fade' },
+  scale: { value: +rt.random(0.7, 1.6).toFixed(2), min: 0.3, max: 3, step: 0.05, label: 'Field scale' },
+  turbulence: { value: +rt.random(0.6, 1.4).toFixed(2), min: 0.2, max: 2.5, step: 0.05, label: 'Turbulence' },
+  hue: { value: Math.round(rt.random(0, 360)), min: 0, max: 360, step: 1, label: 'Base hue' },
+  hueSpread: { value: Math.round(rt.random(60, 140)), min: 10, max: 260, step: 1, label: 'Hue spread' },
 })
 // Beats nudge the particle speed by default — remix in the controls panel.
 rt.mapInput('audio.pulse', 'speed', 0.3)
@@ -12,6 +16,7 @@ const ctx = canvas.getContext('2d')
 
 const PARTICLE_COUNT = Math.round(2500 * rt.detail)
 const FIELD_SCALE = 0.0022
+const NSEED = rt.random(0, 100) // seeded field phase — 🎲 re-rolls the swirls
 
 let width, height
 let particles = []
@@ -28,7 +33,7 @@ function spawn() {
   return {
     x: Math.random() * width,
     y: Math.random() * height,
-    hue: 190 + Math.random() * 90,
+    hue: params.hue + Math.random() * params.hueSpread,
     life: 100 + Math.random() * 300,
   }
 }
@@ -36,11 +41,12 @@ function spawn() {
 // Cheap value-noise-ish field: layered sines are good enough for pretty
 // swirls and keep the sketch dependency-free.
 function angleAt(x, y, t) {
-  const s = FIELD_SCALE
+  const s = FIELD_SCALE * params.scale
+  const k = params.turbulence
   return (
-    Math.sin(x * s + t * 0.4) * 1.7 +
-    Math.cos(y * s * 1.3 - t * 0.3) * 1.7 +
-    Math.sin((x + y) * s * 0.6 + t * 0.15) * 2.2
+    (Math.sin(x * s + t * 0.4 + NSEED) * 1.7 +
+      Math.cos(y * s * 1.3 - t * 0.3 + NSEED) * 1.7 +
+      Math.sin((x + y) * s * 0.6 + t * 0.15 + NSEED * 0.7) * 2.2) * k
   )
 }
 

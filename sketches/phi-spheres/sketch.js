@@ -16,11 +16,11 @@ import { createRuntime } from '../_lib/runtime.js'
 const rt = createRuntime()
 const params = rt.params({
   pulse: { value: 0, min: 0, max: 1, step: 0.01, label: 'Pulse (scale)' },
-  waveAmp: { value: 0.6, min: 0, max: 3, step: 0.05, label: 'Wave amplitude' },
+  waveAmp: { value: +rt.random(0.3, 1.2).toFixed(2), min: 0, max: 3, step: 0.05, label: 'Wave amplitude' },
   waveSpeed: { value: 1, min: 0, max: 4, step: 0.05, label: 'Wave speed' },
-  scatter: { value: 1.2, min: 0, max: 4, step: 0.05, label: 'Scatter amount' },
+  scatter: { value: +rt.random(0.6, 2).toFixed(2), min: 0, max: 4, step: 0.05, label: 'Scatter amount' },
   spin: { value: 0.15, min: 0, max: 2, step: 0.01, label: 'Auto-spin (in-plane)' },
-  orbit: { value: 0.6, min: 0, max: 6, step: 0.05, label: 'Camera orbit speed' },
+  orbit: { value: +rt.random(0.3, 1.2).toFixed(2), min: 0, max: 6, step: 0.05, label: 'Camera orbit speed' },
   sphereSize: { value: 1, min: 0.4, max: 2, step: 0.05, label: 'Sphere size' },
 })
 // Default music → animation mappings (remix or add more in the controls panel).

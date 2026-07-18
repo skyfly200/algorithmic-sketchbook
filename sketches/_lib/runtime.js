@@ -47,6 +47,9 @@ export const INPUT_SOURCES = [
   'audio.flux', // spectral change — transients/onsets spike it
   'mouse.x',
   'mouse.y',
+  'touch.x', // touchscreen finger position (first touch)
+  'touch.y',
+  'touch.down', // 1 while a finger is on the screen
   'tilt.x', // device tilt left–right (accelerometer/gyro)
   'tilt.y', // device tilt front–back
   'shake', // device shake intensity (accelerometer), decays
@@ -235,6 +238,21 @@ export function createRuntime() {
     mouse.x = e.clientX / window.innerWidth
     mouse.y = 1 - e.clientY / window.innerHeight
   })
+  // Touch: the first finger's position + a held flag (distinct from mouse so a
+  // touch surface can be mapped separately from a hovering cursor).
+  const touch = { x: 0.5, y: 0.5, down: 0 }
+  const setTouch = (e) => {
+    const t = e.touches[0]
+    if (!t) return
+    touch.x = t.clientX / window.innerWidth
+    touch.y = 1 - t.clientY / window.innerHeight
+    touch.down = 1
+  }
+  window.addEventListener('touchstart', setTouch, { passive: true })
+  window.addEventListener('touchmove', setTouch, { passive: true })
+  window.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) touch.down = 0
+  })
 
   // Device motion (accelerometer + gyroscope): tilt.x/y are orientation, shake
   // is acceleration magnitude. Enabled lazily when a tilt/shake mapping is used
@@ -312,6 +330,9 @@ export function createRuntime() {
       case 'audio.flux': return beat.state.flux
       case 'mouse.x': return mouse.x
       case 'mouse.y': return mouse.y
+      case 'touch.x': return touch.x
+      case 'touch.y': return touch.y
+      case 'touch.down': return touch.down
       case 'tilt.x': return motionFallback ? mouse.x : motion.x
       case 'tilt.y': return motionFallback ? mouse.y : motion.y
       case 'shake': return motion.shake

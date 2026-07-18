@@ -2,8 +2,8 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  sides: { value: 6, min: 3, max: 12, step: 1, label: 'Polygon sides' },
-  ringSpeed: { value: 1, min: 0.3, max: 3, step: 0.1, label: 'Ring speed' },
+  sides: { value: 3 + Math.floor(rt.random(0, 10)), min: 3, max: 12, step: 1, label: 'Polygon sides' },
+  ringSpeed: { value: +rt.random(0.6, 1.8).toFixed(2), min: 0.3, max: 3, step: 0.1, label: 'Ring speed' },
   trail: { value: 0.18, min: 0.05, max: 0.4, step: 0.01, label: 'Trail fade' },
 })
 const canvas = document.getElementById('canvas')
@@ -12,7 +12,7 @@ const hint = document.getElementById('hint')
 
 let width, height
 const rings = []
-let hue = 200
+let hue = Math.round(rt.random(0, 360)) // seeded start — 🎲 re-rolls the palette walk
 
 function resize() {
   width = canvas.width = window.innerWidth * rt.pixelRatio

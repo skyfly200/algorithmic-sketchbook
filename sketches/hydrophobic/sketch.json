@@ -1,0 +1,9 @@
+{
+  "title": "Hydrophobic Surface",
+  "description": "Water on a superhydrophobic surface — a lotus leaf, a freshly waxed panel — refuses to wet it, beading into near-spherical drops that sit high and roll at the slightest tilt. Tilt the surface with the mouse (or a device's accelerometer) and the beads roll downhill, bounce off the edges, and coalesce on contact (volume-conserving, sometimes flicking out a satellite), leaving the surface dry behind them. Each bead is drawn as glossy glass — refractive body, a bright total-internal-reflection rim, a focused caustic, a sharp specular, and a contact shadow. With no input the surface tilts itself in a slow circle so the drops keep roaming. Tilt, wetting rate, drop size, adhesion, gloss, wobble, and hue are live and mappable.",
+  "tags": ["water", "physics", "surface-tension", "interactive", "simulation"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}

@@ -7,6 +7,10 @@
  * catches a highlight on its far crest — the calm, tactile look of combed sand.
  *
  * Drag to rake · click to place a stone · press C to clear the sand.
+ *
+ * Left alone, the garden tends itself: an unseen monk rakes slow meandering
+ * paths (pausing whenever you take over), the light drifts through the day on
+ * a time.sin mapping, and now and then a stone is set or retired.
  */
 import { createRuntime } from '../_lib/runtime.js'
 
@@ -18,7 +22,13 @@ const params = rt.params({
   light: { value: 0.3, min: 0, max: 1, step: 0.02, label: 'Light height' },
   sand: { value: 0.09, min: 0, max: 1, step: 0.01, label: 'Sand hue' },
   stoneSize: { value: 1, min: 0.5, max: 2.2, step: 0.05, label: 'Stone size' },
+  auto: { value: 0.6, min: 0, max: 2, step: 0.05, label: 'Auto-tend speed' },
+  wander: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Path wander' },
 })
+// The garden lives on its own: the sun arcs through the day, and loudness
+// (when a mic or the Mixer feeds audio) quickens the monk's raking.
+rt.mapInput('time.sin', 'light', 0.5)
+rt.mapInput('audio.volume', 'auto', 0.5)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
@@ -156,7 +166,62 @@ function drawStones() {
   }
 }
 
-function frame() {
+// --- the unseen monk: autonomous raking when the visitor is idle ------------
+const monk = {
+  x: 0, y: 0, heading: 0,
+  ph1: rt.random(0, 6.28), ph2: rt.random(0, 6.28), // wander oscillator phases
+  idleSince: 0, // last user interaction (ms)
+  nextStone: 12 + rt.random(0, 14), // seconds until the next stone event
+}
+function stepMonk(now, dt) {
+  if (params.auto <= 0.01) return
+  if (now - monk.idleSince < 6000) return // the visitor has the rake
+  const speed = params.auto * 26 * dt // grid cells per second, scaled
+  if (speed <= 0) return
+  // Meander: heading turns by two slow incommensurate oscillators, plus a
+  // gentle pull back toward the middle so the path stays in the bed.
+  const w = params.wander
+  monk.ph1 += dt * (0.5 + w * 0.7)
+  monk.ph2 += dt * 0.23
+  monk.heading += (Math.sin(monk.ph1) * 0.9 + Math.sin(monk.ph2) * 0.5) * w * dt * 2.2
+  const toCx = gw / 2 - monk.x
+  const toCy = gh / 2 - monk.y
+  const toC = Math.atan2(toCy, toCx)
+  const dCentre = Math.hypot(toCx, toCy) / (Math.min(gw, gh) / 2)
+  let dh = toC - monk.heading
+  dh = Math.atan2(Math.sin(dh), Math.cos(dh))
+  monk.heading += dh * Math.min(1, Math.max(0, dCentre - 0.55)) * dt * 3
+  const nx = monk.x + Math.cos(monk.heading) * speed
+  const ny = monk.y + Math.sin(monk.heading) * speed
+  rakeSeg(monk.x, monk.y, nx, ny)
+  monk.x = nx
+  monk.y = ny
+  // Stone events: occasionally set a new stone off the raked path — and once
+  // the garden is crowded, quietly retire the oldest with a fresh ripple ring.
+  monk.nextStone -= dt * params.auto
+  if (monk.nextStone <= 0) {
+    monk.nextStone = 18 + rt.random(0, 20)
+    if (stones.length >= 6) {
+      const old = stones.shift()
+      ripples(old.x, old.y, old.r / gsc + (params.spacing / gsc) * 2.5)
+    } else {
+      placeStone(rt.random(0.15, 0.85) * gw, rt.random(0.15, 0.85) * gh)
+    }
+  }
+}
+
+let lastLight = -1
+let lastNow = 0
+function frame(now) {
+  rt.tick(now)
+  const dt = lastNow ? Math.min(0.1, (now - lastNow) / 1000) : 0.016
+  lastNow = now
+  stepMonk(now, dt)
+  // Mapped params (the drifting sun) re-shade the standing field.
+  if (Math.abs(params.light - lastLight) > 0.004) {
+    lastLight = params.light
+    dirty = true
+  }
   if (dirty) shade()
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
@@ -179,7 +244,7 @@ let down = false
 let moved = false
 let prev = null
 function toGrid(e) { return [(e.clientX * rt.pixelRatio) / gsc, (e.clientY * rt.pixelRatio) / gsc] }
-canvas.addEventListener('pointerdown', (e) => { down = true; moved = false; prev = toGrid(e) })
+canvas.addEventListener('pointerdown', (e) => { down = true; moved = false; prev = toGrid(e); monk.idleSince = performance.now() })
 canvas.addEventListener('pointermove', (e) => {
   if (!down) return
   const p = toGrid(e)
@@ -187,6 +252,7 @@ canvas.addEventListener('pointermove', (e) => {
     moved = true
     rakeSeg(prev[0], prev[1], p[0], p[1])
     prev = p
+    monk.idleSince = performance.now()
   }
 })
 window.addEventListener('pointerup', (e) => {
@@ -197,7 +263,13 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'c' || e.key === 'C') { height.fill(0); stones.length = 0; dirty = true }
 })
 
-function resize() { build(); seedGarden() }
+function resize() {
+  build()
+  seedGarden()
+  monk.x = rt.random(0.2, 0.8) * gw
+  monk.y = rt.random(0.2, 0.8) * gh
+  monk.heading = rt.random(0, Math.PI * 2)
+}
 window.addEventListener('resize', resize)
 resize()
 requestAnimationFrame(frame)

@@ -7,10 +7,12 @@
  * Extras: music reactivity (gain/flash mapped from audio), an option to sync
  * the frame delay to the detected tempo, output modes (glow / mask / reveal),
  * and broadcasting the motion mask on the motion bus so other sketches can use
- * it as a mask or layer.
+ * it as a mask or layer. The source (camera / upload / demo / Mixer feed) comes
+ * from the shared _lib/source.js pipeline.
  */
 import { createRuntime } from '../_lib/runtime.js'
 import { createMotionPublisher } from '../_lib/motion-bus.js'
+import { createSource } from '../_lib/source.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -35,7 +37,39 @@ const bus = createMotionPublisher()
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
-const chooser = document.getElementById('chooser')
+
+// Synthetic demo scene (drifting shapes over a static backdrop) so the sketch
+// works without camera permission — and shows the effect clearly: the backdrop
+// cancels to gray, only the movers glow.
+const movers = Array.from({ length: 5 }, (_, i) => ({
+  x: Math.random() * 960,
+  y: Math.random() * 540,
+  vx: (Math.random() - 0.5) * 4,
+  vy: (Math.random() - 0.5) * 4,
+  r: 25 + i * 12,
+  hue: i * 70,
+}))
+function motionDemo(d, _t, W, H) {
+  d.fillStyle = '#20242e'
+  d.fillRect(0, 0, W, H)
+  d.fillStyle = '#39404f'
+  for (let i = 0; i < 12; i++) d.fillRect(i * 80, (i % 3) * 180, 40, 180)
+  d.fillStyle = '#556'
+  d.font = 'bold 90px system-ui'
+  d.fillText('STATIC', 330, 300)
+  for (const m of movers) {
+    m.x += m.vx
+    m.y += m.vy
+    if (m.x < 0 || m.x > W) m.vx *= -1
+    if (m.y < 0 || m.y > H) m.vy *= -1
+    d.beginPath()
+    d.arc(m.x, m.y, m.r, 0, Math.PI * 2)
+    d.fillStyle = `hsl(${m.hue}, 45%, 45%)`
+    d.fill()
+  }
+}
+
+const src = createSource({ demo: motionDemo })
 
 // Small offscreen canvas that always holds the current motion mask (motion
 // bright, static black) — used for the bus broadcast to other sketches.
@@ -47,33 +81,6 @@ const maskCtx = maskCanvas.getContext('2d')
 // Smoothed frame time, so beat-synced delay can convert tempo (ms) to frames.
 let lastNow = 0
 let frameDt = 16.7
-
-let source = null // <video>, demo <canvas>, or the Mixer feed <canvas>
-let sourceW = 0
-let sourceH = 0
-let demoTick = null
-
-// In the Mixer, the parent streams the composite of the layers stacked below
-// this one as frames — auto-select that as the source (no camera needed) so
-// motion extraction processes the effects beneath it.
-let mixerFeed = null
-let isMixerFeed = false
-window.addEventListener('message', (e) => {
-  const d = e.data
-  if (!d || d.type !== 'mixer:frame' || !d.bitmap) return
-  const bmp = d.bitmap
-  if (!mixerFeed) mixerFeed = document.createElement('canvas')
-  if (mixerFeed.width !== bmp.width) mixerFeed.width = bmp.width
-  if (mixerFeed.height !== bmp.height) mixerFeed.height = bmp.height
-  mixerFeed.getContext('2d').drawImage(bmp, 0, 0)
-  bmp.close?.()
-  demoTick = null
-  source = mixerFeed
-  sourceW = mixerFeed.width
-  sourceH = mixerFeed.height
-  isMixerFeed = true
-  if (chooser) chooser.style.display = 'none'
-})
 
 // Ring buffer of past frames for the delay line.
 const MAX_DELAY = 30
@@ -95,25 +102,10 @@ function resize() {
   frozen = null
 }
 
-// Cover-fit the source onto a target of size (tw, th), optionally mirrored.
-// The delay-line snapshots and the mask canvas also go through here, so
-// mirroring stays consistent frame to frame.
-function drawSource(target, tw = canvas.width, th = canvas.height, img = source) {
-  const scale = Math.max(tw / sourceW, th / sourceH)
-  const w = sourceW * scale
-  const h = sourceH * scale
-  const x = (tw - w) / 2
-  const y = (th - h) / 2
-  // Mirror is a selfie convenience for the camera — never flip the Mixer feed.
-  if (params.mirror && !isMixerFeed) {
-    target.save()
-    target.translate(tw, 0)
-    target.scale(-1, 1)
-    target.drawImage(img, x, y, w, h)
-    target.restore()
-  } else {
-    target.drawImage(img, x, y, w, h)
-  }
+// Cover-fit the live source (mirrored per the param) — the shared pipeline
+// never flips the Mixer feed, so it stays registered with the layers below.
+function drawSource(target, tw = canvas.width, th = canvas.height) {
+  src.draw(target, tw, th, { mirror: params.mirror })
 }
 
 // Cover-fit an already-rasterized full-frame ring canvas onto a target.
@@ -121,129 +113,9 @@ function drawFrame(target, frame, tw, th) {
   target.drawImage(frame, 0, 0, canvas.width, canvas.height, 0, 0, tw, th)
 }
 
-async function useCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: 1280, height: 720, facingMode: 'user' },
-  })
-  const video = document.createElement('video')
-  video.srcObject = stream
-  video.muted = true
-  video.playsInline = true
-  await video.play()
-  source = video
-  sourceW = video.videoWidth
-  sourceH = video.videoHeight
-}
-
-// Synthetic scene (drifting shapes over a static backdrop) so the sketch
-// works without camera permission — and shows the effect clearly: the
-// backdrop cancels to gray, only the movers glow.
-function useDemo() {
-  const c = document.createElement('canvas')
-  c.width = 960
-  c.height = 540
-  const dctx = c.getContext('2d')
-  const movers = Array.from({ length: 5 }, (_, i) => ({
-    x: Math.random() * 960,
-    y: Math.random() * 540,
-    vx: (Math.random() - 0.5) * 4,
-    vy: (Math.random() - 0.5) * 4,
-    r: 25 + i * 12,
-    hue: i * 70,
-  }))
-  demoTick = () => {
-    // Static busy backdrop — should vanish in the extraction.
-    dctx.fillStyle = '#20242e'
-    dctx.fillRect(0, 0, 960, 540)
-    dctx.fillStyle = '#39404f'
-    for (let i = 0; i < 12; i++) dctx.fillRect(i * 80, (i % 3) * 180, 40, 180)
-    dctx.fillStyle = '#556'
-    dctx.font = 'bold 90px system-ui'
-    dctx.fillText('STATIC', 330, 300)
-
-    for (const m of movers) {
-      m.x += m.vx
-      m.y += m.vy
-      if (m.x < 0 || m.x > 960) m.vx *= -1
-      if (m.y < 0 || m.y > 540) m.vy *= -1
-      dctx.beginPath()
-      dctx.arc(m.x, m.y, m.r, 0, Math.PI * 2)
-      dctx.fillStyle = `hsl(${m.hue}, 45%, 45%)`
-      dctx.fill()
-    }
-  }
-  source = c
-  sourceW = 960
-  sourceH = 540
-}
-
-// Load an uploaded video (looped) or image as the motion-extraction source.
-function loadFile(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file)
-    demoTick = null
-    if (file.type.startsWith('image/')) {
-      const img = new Image()
-      img.onload = () => {
-        source = img
-        sourceW = img.naturalWidth
-        sourceH = img.naturalHeight
-        resolve()
-      }
-      img.onerror = reject
-      img.src = url
-    } else {
-      const video = document.createElement('video')
-      video.src = url
-      video.loop = true
-      video.muted = true
-      video.playsInline = true
-      video.onloadeddata = async () => {
-        try {
-          await video.play()
-        } catch {
-          /* autoplay may need the user gesture we already have; ignore */
-        }
-        source = video
-        sourceW = video.videoWidth
-        sourceH = video.videoHeight
-        resolve()
-      }
-      video.onerror = () => reject(new Error('Could not decode that file'))
-    }
-  })
-}
-
-const fileInput = document.getElementById('file-input')
-document.getElementById('use-upload').addEventListener('click', () => fileInput.click())
-fileInput.addEventListener('change', async () => {
-  const file = fileInput.files?.[0]
-  if (!file) return
-  try {
-    await loadFile(file)
-    chooser.style.display = 'none'
-  } catch {
-    chooser.querySelector('p').textContent = 'Could not load that file — try another video or image.'
-  }
-})
-
-for (const [id, fn] of [
-  ['use-camera', useCamera],
-  ['use-demo', useDemo],
-]) {
-  document.getElementById(id).addEventListener('click', async () => {
-    try {
-      await fn()
-      chooser.style.display = 'none'
-    } catch {
-      chooser.querySelector('p').textContent =
-        'Camera unavailable or permission denied — try the demo source instead.'
-    }
-  })
-}
-
 function frame(now) {
   rt.tick(now)
+  const t = now * 0.001
 
   // Smoothed frame time, so beat-synced delay can turn tempo (ms) into frames.
   if (lastNow) {
@@ -252,9 +124,8 @@ function frame(now) {
   }
   lastNow = now
 
-  if (source) {
-    demoTick?.()
-
+  src.update(t)
+  if (src.ready) {
     const gain = params.gain
 
     // Reference frame: a frozen snapshot, or the frame from `activeDelay` ago.
@@ -306,7 +177,6 @@ function frame(now) {
       if (params.reveal) {
         // Multiply a drifting hue field through the motion: movement "paints"
         // the effect, static stays black — the mask used as an effect layer.
-        const t = now * 0.001
         const g = ctx.createLinearGradient(0, 0, canvas.width, canvas.height)
         for (let i = 0; i <= 6; i++) {
           g.addColorStop(i / 6, `hsl(${(t * 40 + i * 60) % 360}, 90%, 60%)`)

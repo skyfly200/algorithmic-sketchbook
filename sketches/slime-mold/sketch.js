@@ -36,7 +36,7 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 const hint = document.getElementById('hint')
 
-let W, H, mass, chem, mtmp, ctmp, noise, terrain, wavePhase, img, sim, sctx
+let W, H, mass, chem, mtmp, ctmp, noise, terrain, wavePhase, img, sim, sctx, vblur, vtmp
 let massFrac = 0 // fraction of the dish covered — drives density regulation
 const foods = []
 
@@ -49,6 +49,8 @@ function build() {
   chem = new Float32Array(W * H)
   mtmp = new Float32Array(W * H)
   ctmp = new Float32Array(W * H)
+  vblur = new Float32Array(W * H)
+  vtmp = new Float32Array(W * H)
   // Static heterogeneity of the substrate — breaks the radial symmetry of the
   // point food sources so the network nucleates as irregular reticulated veins
   // rather than perfect concentric rings.
@@ -165,7 +167,7 @@ function stepSim(phase) {
   //    Pulse rocks growth vs. starvation for the grow/recede breathing.
   const forageBase = params.forage
   const chemo = params.chemotaxis
-  const starveBase = params.prune * 0.055
+  const starveBase = params.prune * 0.06
   const pulse = params.pulse
   const waveK = 0.09 // spatial frequency of the travelling contraction wave
   // Density regulation: finite protoplasm. As coverage rises, new growth is
@@ -206,7 +208,10 @@ function stepSim(phase) {
       // plasmodium spreads outward as a living front, so it survives the gaps
       // between food zones and explores the dish. The density throttle caps how
       // far it ranges; chem flux then thickens the routes that found food.
-      m += grow2 * 0.26 * terrain[i] * m * (1 - m)
+      // Regrowth targets ~0.75, not full thickness: bulk tissue sits below
+      // saturation, leaving headroom for the aggregation pass to differentiate
+      // it into tubes; only chem-flux-fed veins push all the way to 1.
+      m += grow2 * 0.3 * terrain[i] * m * (0.75 - m)
       m -= starve
       m = m < 0 ? 0 : m > 1 ? 1 : m
       mtmp[i] = m
@@ -223,27 +228,35 @@ function stepSim(phase) {
   //    faint cells down and firm cells up — so diffuse foraging fronts fade
   //    unless they are reinforced, and surviving mass tightens into tubes.
   const k = params.veins
+  const cl = (v, hi) => (v < 0 ? 0 : v > hi ? hi : v)
   for (let y = 0; y < H; y++) {
     const yu = y > 0 ? y - 1 : 0
     const yd = y < H - 1 ? y + 1 : H - 1
-    const yu2 = y > 1 ? y - 2 : 0
-    const yd2 = y < H - 2 ? y + 2 : H - 1
+    const yu3 = cl(y - 3, H - 1)
+    const yd3 = cl(y + 3, H - 1)
+    const yu2 = cl(y - 2, H - 1)
+    const yd2 = cl(y + 2, H - 1)
     for (let x = 0; x < W; x++) {
       const xl = x > 0 ? x - 1 : 0
       const xr = x < W - 1 ? x + 1 : W - 1
-      const xl2 = x > 1 ? x - 2 : 0
-      const xr2 = x < W - 2 ? x + 2 : W - 1
+      const xl3 = cl(x - 3, W - 1)
+      const xr3 = cl(x + 3, W - 1)
+      const xl2 = cl(x - 2, W - 1)
+      const xr2 = cl(x + 2, W - 1)
       const i = idx(x, y)
-      // Wide (radius-2) neighbourhood average — a fatter blur that raises the
-      // pattern wavelength, so bands coalesce into a few bold branching veins
-      // separated by broad dark gaps rather than many thin concentric rings.
-      const near = (mass[idx(xl, y)] + mass[idx(xr, y)] + mass[idx(x, yu)] + mass[idx(x, yd)])
-      const far = (mass[idx(xl2, y)] + mass[idx(xr2, y)] + mass[idx(x, yu2)] + mass[idx(x, yd2)])
-      const avg = near * 0.08 + far * 0.045 // neighbour weights sum to 0.5
-      // Smooth toward the neighbourhood, then bias by how a cell compares to it:
-      // above-average cells firm up, below-average cells thin out.
-      let m = mass[i] * 0.5 + avg
-      m += k * 0.18 * (m - avg)
+      // Mexican-hat aggregation: short-range activation (4-neighbour average)
+      // minus a wider inhibition ring (radius ~3). On a uniform plateau the two
+      // cancel, so nothing blows up — but any dent or crest at the ring scale
+      // self-amplifies, and the interior differentiates into a labyrinth of
+      // tubes ~one ring-radius wide: the reticulated Physarum vein look.
+      const near = (mass[idx(xl, y)] + mass[idx(xr, y)] + mass[idx(x, yu)] + mass[idx(x, yd)]) * 0.25
+      const far =
+        (mass[idx(xl3, y)] + mass[idx(xr3, y)] + mass[idx(x, yu3)] + mass[idx(x, yd3)] +
+          mass[idx(xl2, yu2)] + mass[idx(xr2, yu2)] + mass[idx(xl2, yd2)] + mass[idx(xr2, yd2)]) * 0.125
+      // Light cohesion smoothing (keeps the sheet continuous, no checkerboard)…
+      let m = mass[i] * 0.55 + near * 0.45
+      // …then the activator–inhibitor term that carves the tubes.
+      m += k * 1.1 * (near - far)
       mtmp[i] = m < 0 ? 0 : m > 1 ? 1 : m
     }
   }
@@ -273,11 +286,44 @@ function render() {
   const data = img.data
   const [hr, hg, hb] = hslRGB(params.hue, 0.85, 0.55)
   const [er, eg, eb] = hslRGB(params.hue + 0.04, 0.9, 0.72) // brighter vein cores
+
+  // Display-side vein extraction: a wide separable box blur of the mass, then
+  // an unsharp ridge boost — cells above their neighbourhood (tube crests) pop
+  // bright while the surrounding membrane sinks toward dark. This is purely a
+  // rendering pass; the simulated field (and behaviour) is untouched.
+  const R = 3
+  const inv = 1 / (2 * R + 1)
+  for (let y = 0; y < H; y++) {
+    const row = y * W
+    let acc = 0
+    for (let x = -R; x <= R; x++) acc += mass[row + Math.min(W - 1, Math.max(0, x))]
+    for (let x = 0; x < W; x++) {
+      vtmp[row + x] = acc * inv
+      const xa = Math.min(W - 1, x + R + 1)
+      const xs = Math.max(0, x - R)
+      acc += mass[row + xa] - mass[row + xs]
+    }
+  }
+  for (let x = 0; x < W; x++) {
+    let acc = 0
+    for (let y = -R; y <= R; y++) acc += vtmp[Math.min(H - 1, Math.max(0, y)) * W + x]
+    for (let y = 0; y < H; y++) {
+      vblur[y * W + x] = acc * inv
+      const ya = Math.min(H - 1, y + R + 1)
+      const ys = Math.max(0, y - R)
+      acc += vtmp[ya * W + x] - vtmp[ys * W + x]
+    }
+  }
+
+  const kv = 1.2 + params.veins * 2.6 // ridge boost strength
   for (let i = 0; i < W * H; i++) {
     const m = mass[i]
-    const g = Math.pow(Math.min(1, m * 1.15), 0.7)
+    // Ridge-enhanced display value: crests lifted, membrane pressed down.
+    let v = m + kv * (m - vblur[i])
+    v = v < 0 ? 0 : v > 1 ? 1 : v
+    const g = Math.pow(v, 1.25) // >1 gamma keeps the gaps properly dark
     // Blend toward a lighter core on the thick veins.
-    const t = Math.min(1, m * 1.4)
+    const t = Math.min(1, v * 1.5)
     data[i * 4] = (hr * (1 - t) + er * t) * g * 255
     data[i * 4 + 1] = (hg * (1 - t) + eg * t) * g * 255
     data[i * 4 + 2] = (hb * (1 - t) + eb * t) * g * 255

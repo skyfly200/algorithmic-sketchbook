@@ -1,0 +1,9 @@
+{
+  "title": "Neon Fluid",
+  "description": "Thousands of luminous particles swept along a divergence-free curl-noise flow field, leaving glowing trails on a dark ground. Taking the curl of a slowly scrolling fractal potential gives an incompressible, fluid-like velocity field — it swirls and folds instead of piling up — and additive blending with a bloom pass makes the streaks read as neon. Drag to stir the fluid and drag colour through it. Flow speed, swirl, field scale, particle count, trail length, bloom, and the hue range are live and audio-mappable (loudness drives the flow, beats pulse the swirl).",
+  "tags": ["fluid", "neon", "curl-noise", "particles", "audio-reactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}

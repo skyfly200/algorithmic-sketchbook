@@ -1,0 +1,9 @@
+{
+  "title": "Channel Offset",
+  "description": "Splits a live image into its red, green and blue channels and pushes them apart — chromatic aberration, anaglyph ghosting, glitch fringing. Each channel is isolated and the three re-added with independent offsets fanned around a settable angle; a wobble swings them in slow circles and a glitch mode shears horizontal bands sideways. Works on a camera, a dropped photo/video, the demo, or the Mixer layers below. Offset, angle, spread, wobble, and glitch are live and audio-mappable (beats kick the channels apart, highs shear the bands).",
+  "tags": ["glitch", "rgb", "chromatic-aberration", "filter", "audio-reactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}

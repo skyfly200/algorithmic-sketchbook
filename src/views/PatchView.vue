@@ -19,10 +19,21 @@ import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
 
 const store = useSketchStore()
-// Only local, same-origin sketches can be captured for piping. Motion Extraction
-// has its own dedicated node type, so it's excluded from the Effect source list.
+// Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
+// feed, so in the graph they live behind a dedicated Filter node type that
+// pipes its video input straight into them.
+const FILTER_SLUGS = [
+  'pointillism', 'camera-lens', 'rain-window', 'halftone',
+  'channel-offset', 'delay', 'lens-flare', 'motion-extraction',
+]
+// Only local, same-origin sketches can be captured for piping. Filters (and
+// Motion Extraction, which has a native node) are organized under the Filter
+// node type instead of the Effect source list.
 const effectOptions = computed(() =>
-  store.sketches.filter((s) => s.type === 'local' && s.embed && s.slug !== 'motion-extraction'),
+  store.sketches.filter((s) => s.type === 'local' && s.embed && !FILTER_SLUGS.includes(s.slug)),
+)
+const filterOptions = computed(() =>
+  store.sketches.filter((s) => s.type === 'local' && s.embed && FILTER_SLUGS.includes(s.slug)),
 )
 
 // Internal compositor resolution — a user setting (all node canvases and the
@@ -67,6 +78,9 @@ function applyResolution(label) {
       c.height = H
     }
   }
+  // Source iframes are CSS-sized to the compositor, so their sketches actually
+  // render this many pixels (they run quality=high → pixelRatio 1).
+  frameSize.value = { w: W, h: H }
 }
 
 const NODE_W = 190
@@ -75,22 +89,48 @@ const THUMB_H = 107
 
 const TYPES = {
   effect: { title: 'Effect', ins: 0, color: '#7c8cff' },
+  filter: { title: 'Filter', ins: 1, color: '#c98cff' },
   camera: { title: 'Camera', ins: 0, color: '#4dd0c4' },
   motion: { title: 'Motion Extract', ins: 1, color: '#ff7ca8' },
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
   output: { title: 'Output', ins: 1, color: '#ffffff' },
-  // An Input node emits a 0..1 control value (not video); its output jack wires
-  // into the parameter jacks of other nodes to modulate them live.
+  // Control emitters (0..1 values, not video): their output jacks wire into the
+  // parameter jacks of other nodes to modulate them live.
   input: { title: 'Input', ins: 0, color: '#e0a060' },
+  xy: { title: 'XY Pad', ins: 0, color: '#e0a060' },
+  tracker: { title: 'Tracker', ins: 1, color: '#e0a060' },
 }
+// How many control/video outputs a node exposes (xy: x,y · tracker: x,y,size).
+function outCount(n) {
+  if (n.type === 'output') return 0
+  if (n.type === 'xy') return 2
+  if (n.type === 'tracker') return 3
+  return 1
+}
+const OUT_LABELS = { xy: ['x', 'y'], tracker: ['x', 'y', 'size'] }
 // Numeric params a control wire can drive on the non-effect operator nodes
 // (effect params come from the sketch's own schema over postMessage).
 const PARAM_RANGES = {
   motion: { delay: [1, 29], gain: [0.5, 4] },
   blend: { mix: [0, 1] },
 }
-const BLENDS = ['screen', 'add', 'lighten', 'multiply', 'difference', 'exclusion', 'overlay']
+const BLENDS = [
+  'screen', 'add', 'lighten', 'darken', 'multiply', 'overlay', 'soft-light',
+  'hard-light', 'color-dodge', 'color-burn', 'difference', 'exclusion',
+  'hue', 'saturation', 'color', 'luminosity',
+]
+// Input sources grouped for the pickers (audio, midi, mouse, touch, tilt,
+// time, leap, artnet — per-category optgroups instead of one long list).
+const INPUT_GROUPS = computed(() => {
+  const groups = { audio: [], midi: [], mouse: [], touch: [], tilt: [], time: [], leap: [], artnet: [] }
+  for (const s of INPUT_SOURCES) {
+    const head = s.split('.')[0]
+    const g = head === 'shake' ? 'tilt' : head
+    ;(groups[g] ?? (groups[g] = [])).push(s)
+  }
+  return Object.entries(groups).filter(([, list]) => list.length)
+})
 
 // --- persisted graph ---
 const STORE_KEY = 'sketchbook-patch'
@@ -109,8 +149,49 @@ const edges = reactive(saved?.edges ?? [])
 const links = reactive(saved?.links ?? [])
 if (nodes.length) nextId = Math.max(...nodes.map((n) => n.id)) + 1
 
+// --- undo / redo: every persisted change pushes the previous graph state ----
+const undoStack = reactive([])
+const redoStack = reactive([])
+let restoring = false
+const snapshot = () => JSON.stringify({ nodes, edges, links })
+let lastSnap = snapshot()
+
 function persist() {
   localStorage.setItem(STORE_KEY, JSON.stringify({ nodes, edges, links }))
+  if (restoring) return
+  const s = snapshot()
+  if (s !== lastSnap) {
+    undoStack.push(lastSnap)
+    if (undoStack.length > 60) undoStack.shift()
+    redoStack.splice(0)
+    lastSnap = s
+  }
+}
+
+function applySnap(s) {
+  restoring = true
+  const data = JSON.parse(s)
+  nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
+  edges.splice(0, edges.length, ...data.edges)
+  links.splice(0, links.length, ...(data.links ?? []))
+  nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
+  const ids = new Set(nodes.map((n) => n.id))
+  for (const id of [...rtState.keys()]) if (!ids.has(id)) rtState.delete(id)
+  for (const n of nodes) st(n.id)
+  localStorage.setItem(STORE_KEY, s)
+  lastSnap = s
+  restoring = false
+  nextTick(() => layoutTick.value++)
+}
+function undo() {
+  if (!undoStack.length) return
+  redoStack.push(snapshot())
+  applySnap(undoStack.pop())
+}
+function redo() {
+  if (!redoStack.length) return
+  undoStack.push(snapshot())
+  applySnap(redoStack.pop())
 }
 
 // Non-reactive per-node runtime state (canvases, iframes, video, ring buffers).
@@ -140,9 +221,15 @@ function addNode(type) {
           ? { mode: 'screen' }
           : type === 'effect'
             ? { slug: effectOptions.value[0]?.slug ?? '' }
-            : type === 'input'
-              ? { source: 'audio.volume', scale: 1, offset: 0 }
-              : {},
+            : type === 'filter'
+              ? { slug: filterOptions.value[0]?.slug ?? '' }
+              : type === 'input'
+                ? { source: 'audio.volume', scale: 1, offset: 0 }
+                : type === 'xy'
+                  ? { x: 0.5, y: 0.5 }
+                  : type === 'tracker'
+                    ? { thresh: 0.5, smooth: 0.7 }
+                    : {},
   })
   nodes.push(n)
   st(n.id) // create runtime state
@@ -203,6 +290,8 @@ function onKey(e) {
   const mod = e.ctrlKey || e.metaKey
   if (mod && e.key === 'c') copySelection()
   else if (mod && e.key === 'v') pasteClipboard()
+  else if (mod && (e.key === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo() }
+  else if (mod && e.key === 'z') { e.preventDefault(); undo() }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && selected.value != null) {
     removeNode(selected.value)
     selected.value = null
@@ -217,8 +306,12 @@ function clearAll() {
 
 // --- ports & wiring ---
 const board = ref(null)
+function outPortAt(n, i = 0) {
+  const cnt = outCount(n) || 1
+  return { x: n.x + NODE_W, y: n.y + HEAD_H + (THUMB_H * (i + 1)) / (cnt + 1) }
+}
 function outPort(n) {
-  return { x: n.x + NODE_W, y: n.y + HEAD_H + THUMB_H / 2 }
+  return outPortAt(n, 0)
 }
 function inPort(n, i) {
   const cnt = TYPES[n.type].ins
@@ -237,13 +330,15 @@ function inKind(node, port) {
   return 'image'
 }
 function outKind(node) {
-  return node.type === 'input' ? 'control' : node.type === 'motion' ? 'matte' : 'image'
+  if (node.type === 'input' || node.type === 'xy' || node.type === 'tracker') return 'control'
+  return node.type === 'motion' ? 'matte' : 'image'
 }
 
 // --- control input sources (mirror of the sketch runtime's resolver) -------
 const cin = { midi: createMidiInput(), leap: createLeapInput(), artnet: createArtnetInput() }
 const started = { midi: false, leap: false, artnet: false }
 const mouseN = { x: 0.5, y: 0.5 }
+const touchN = { x: 0.5, y: 0.5, down: 0 }
 function ensureInput(src) {
   if (src.startsWith('midi.') && !started.midi) { started.midi = true; cin.midi.start() }
   else if (src.startsWith('leap.') && !started.leap) { started.leap = true; cin.leap.start() }
@@ -266,6 +361,9 @@ function sourceValue(src, now) {
     case 'audio.flux': return b.flux
     case 'mouse.x': return mouseN.x
     case 'mouse.y': return mouseN.y
+    case 'touch.x': return touchN.x
+    case 'touch.y': return touchN.y
+    case 'touch.down': return touchN.down
     case 'time.sin': return 0.5 + 0.5 * Math.sin(now * 0.001 * Math.PI * 0.2)
     case 'midi.note': return cin.midi.state.note
     case 'midi.velocity': return cin.midi.state.velocity
@@ -280,6 +378,16 @@ function sourceValue(src, now) {
 function inputValue(node, now) {
   ensureInput(node.params.source)
   return clamp(sourceValue(node.params.source, now) * node.params.scale + node.params.offset, 0, 1)
+}
+// Control value emitted by any control node's given output port.
+function controlValue(node, port, now) {
+  if (node.type === 'input') return inputValue(node, now)
+  if (node.type === 'xy') return port === 1 ? node.params.y : node.params.x
+  if (node.type === 'tracker') {
+    const tr = rtState.get(node.id)?.track
+    return tr ? (port === 0 ? tr.x : port === 1 ? tr.y : tr.z) : 0
+  }
+  return 0
 }
 
 const wires = computed(() =>
@@ -306,11 +414,29 @@ function bindJack(nodeId, param, el) {
   if (el) jackEls.set(nodeId + ':' + param, el)
   else jackEls.delete(nodeId + ':' + param) // panel closed → jack gone
 }
+// Left-edge control dots: linked params whose live jack isn't mounted (the
+// node's settings panel is closed) get a small always-visible dot on the
+// node's left side, so control wires never vanish when settings are hidden.
+function nodeDots(n) {
+  const linked = links.filter((l) => l.node === n.id)
+  return linked
+    .map((l, i) => ({ param: l.param, i }))
+    .filter((d) => !jackEls.has(n.id + ':' + d.param))
+}
+function dotPos(n, param) {
+  const dots = nodeDots(n)
+  const d = dots.find((x) => x.param === param)
+  if (!d) return null
+  const di = dots.indexOf(d)
+  return { x: n.x, y: n.y + HEAD_H + THUMB_H + 12 + di * 15 }
+}
 function jackPos(nodeId, param) {
   const n = nodes.find((x) => x.id === nodeId)
+  if (!n) return null
   const el = jackEls.get(nodeId + ':' + param)
-  if (!n || !el) return null
-  return { x: n.x + el.offsetLeft + el.offsetWidth / 2, y: n.y + el.offsetTop + el.offsetHeight / 2 }
+  if (el)
+    return { x: n.x + el.offsetLeft + el.offsetWidth / 2, y: n.y + el.offsetTop + el.offsetHeight / 2 }
+  return dotPos(n, param) // panel closed → the left-edge dot carries the wire
 }
 const linkWires = computed(() => {
   layoutTick.value // dependency: recompute when inner layout shifts
@@ -319,7 +445,7 @@ const linkWires = computed(() => {
       const from = nodes.find((n) => n.id === l.from)
       const jp = jackPos(l.node, l.param)
       if (!from || !jp) return null
-      return { idx, d: wirePath(outPort(from), jp) }
+      return { idx, d: wirePath(outPortAt(from, l.srcPort ?? 0), jp) }
     })
     .filter(Boolean)
 })
@@ -327,7 +453,7 @@ function endLink(node, param) {
   if (!wire.active || wire.kind !== 'control' || wire.from === node.id) return
   for (let k = links.length - 1; k >= 0; k--)
     if (links[k].node === node.id && links[k].param === param) links.splice(k, 1)
-  links.push({ from: wire.from, node: node.id, param })
+  links.push({ from: wire.from, srcPort: wire.fromPort ?? 0, node: node.id, param })
   wire.active = false
   persist()
 }
@@ -340,9 +466,9 @@ function applyLinks(now) {
   for (const l of links) {
     const from = nodes.find((n) => n.id === l.from)
     const tgt = nodes.find((n) => n.id === l.node)
-    if (!from || !tgt || from.type !== 'input') continue
-    const v = inputValue(from, now)
-    if (tgt.type === 'effect') {
+    if (!from || !tgt || outKind(from) !== 'control') continue
+    const v = controlValue(from, l.srcPort ?? 0, now)
+    if (tgt.type === 'effect' || tgt.type === 'filter') {
       const spec = effectControls.get(tgt.id)?.schema?.[l.param]
       if (spec && typeof spec.min === 'number') setEffectParam(tgt.id, l.param, spec.min + v * (spec.max - spec.min))
     } else {
@@ -353,7 +479,7 @@ function applyLinks(now) {
 }
 
 const drag = reactive({ node: null, dx: 0, dy: 0 })
-const wire = reactive({ active: false, from: null, x: 0, y: 0, kind: 'video' })
+const wire = reactive({ active: false, from: null, fromPort: 0, x: 0, y: 0, kind: 'video' })
 const selected = ref(null) // node id last clicked — target for copy/delete
 
 // --- pan & zoom: the graph lives in a transformed "space" so it can be
@@ -408,11 +534,28 @@ function startDrag(n, e) {
   drag.dx = p.x - n.x
   drag.dy = p.y - n.y
 }
-function startWire(n, e) {
+
+// XY Pad: dragging on the pad's thumbnail sets the node's x/y (y up = 1).
+function xySet(n, e) {
+  const r = e.currentTarget.getBoundingClientRect()
+  n.params.x = clamp((e.clientX - r.left) / r.width, 0, 1)
+  n.params.y = clamp(1 - (e.clientY - r.top) / r.height, 0, 1)
+}
+function xyDown(n, e) {
   e.stopPropagation()
-  const p = outPort(n)
+  e.currentTarget.setPointerCapture(e.pointerId)
+  selected.value = n.id
+  xySet(n, e)
+}
+function xyMove(n, e) {
+  if (e.buttons) xySet(n, e)
+}
+function startWire(n, e, port = 0) {
+  e.stopPropagation()
+  const p = outPortAt(n, port)
   wire.active = true
   wire.from = n.id
+  wire.fromPort = port
   wire.kind = outKind(n) === 'control' ? 'control' : 'video'
   wire.x = p.x
   wire.y = p.y
@@ -457,9 +600,14 @@ function removeEdge(idx) {
 }
 
 // --- source binding (iframes / video) ---
+// Iframes render at quality=high (pixelRatio 1) and are CSS-sized to the
+// compositor resolution, so a 1080p/native compositor really captures
+// 1080p/native pixels — previously they ran 384×216 at quality=low (half
+// pixel ratio), so "1080p" upscaled a 192×108 canvas.
+const frameSize = ref({ w: W, h: H })
 function effectSrc(n) {
   const s = store.bySlug(n.params.slug)
-  return s ? `${s.url}?capture=1&preview=1&quality=low` : ''
+  return s ? `${s.url}?capture=1&preview=1&quality=high` : ''
 }
 function bindFrame(id, el) {
   if (el) st(id).iframe = el
@@ -492,7 +640,7 @@ function toggleParams(id) {
 function onEffectMessage(e) {
   if (e.data?.type !== 'sketch:ready') return
   for (const n of nodes) {
-    if (n.type !== 'effect') continue
+    if (n.type !== 'effect' && n.type !== 'filter') continue
     if (rtState.get(n.id)?.iframe?.contentWindow === e.source) {
       effectControls.set(n.id, {
         schema: e.data.schema ?? {},
@@ -607,6 +755,25 @@ function evalNode(node) {
     } catch {
       /* cross-origin / not ready */
     }
+  } else if (node.type === 'filter') {
+    // Feed the upstream frame into the filter sketch as its mixer:frame source
+    // (the shared source pipeline auto-selects it), then capture its canvas.
+    const input = inputCanvas(node, 0)
+    if (input && s.iframe?.contentWindow && !s.feeding) {
+      s.feeding = true
+      createImageBitmap(input)
+        .then((bmp) => {
+          s.iframe?.contentWindow?.postMessage({ type: 'mixer:frame', bitmap: bmp }, '*', [bmp])
+        })
+        .catch(() => {})
+        .finally(() => (s.feeding = false))
+    }
+    try {
+      const cv = s.iframe?.contentDocument?.querySelector('canvas')
+      if (cv && cv.width) cover(octx, cv, cv.width, cv.height)
+    } catch {
+      /* not ready */
+    }
   } else if (node.type === 'camera') {
     if (s.video && s.video.videoWidth) cover(octx, s.video, s.video.videoWidth, s.video.videoHeight)
   } else if (node.type === 'motion') {
@@ -675,6 +842,83 @@ function evalNode(node) {
     octx.font = `${Math.round(H * 0.16)}px system-ui, sans-serif`
     octx.fillText(node.params.source, W * 0.03, H * 0.22)
     octx.fillText(v.toFixed(2), W * 0.03, H * 0.95)
+  } else if (node.type === 'xy') {
+    // Touch surface: the thumbnail *is* the pad — drag on it to set x/y.
+    const x = node.params.x * W
+    const y = (1 - node.params.y) * H
+    octx.fillStyle = '#0c0e14'
+    octx.fillRect(0, 0, W, H)
+    octx.strokeStyle = 'rgba(224,160,96,0.25)'
+    octx.lineWidth = Math.max(1, H / 108)
+    for (let i = 1; i < 4; i++) {
+      octx.beginPath(); octx.moveTo((W * i) / 4, 0); octx.lineTo((W * i) / 4, H); octx.stroke()
+      octx.beginPath(); octx.moveTo(0, (H * i) / 4); octx.lineTo(W, (H * i) / 4); octx.stroke()
+    }
+    octx.strokeStyle = TYPES.xy.color
+    octx.beginPath(); octx.moveTo(x, 0); octx.lineTo(x, H); octx.stroke()
+    octx.beginPath(); octx.moveTo(0, y); octx.lineTo(W, y); octx.stroke()
+    octx.fillStyle = TYPES.xy.color
+    octx.beginPath(); octx.arc(x, y, H * 0.06, 0, Math.PI * 2); octx.fill()
+    octx.fillStyle = 'rgba(255,255,255,0.85)'
+    octx.font = `${Math.round(H * 0.14)}px system-ui, sans-serif`
+    octx.fillText(`${node.params.x.toFixed(2)}, ${node.params.y.toFixed(2)}`, W * 0.03, H * 0.95)
+  } else if (node.type === 'tracker') {
+    // Camera/video tracking: find the brightest region of the input, emit its
+    // smoothed x / y and apparent size (a stand-in for depth — nearer = bigger).
+    const input = inputCanvas(node, 0)
+    if (input) {
+      octx.drawImage(input, 0, 0, W, H)
+      if (!s.tinyT) {
+        s.tinyT = document.createElement('canvas')
+        s.tinyT.width = 48
+        s.tinyT.height = 27
+        s.tinyTx = s.tinyT.getContext('2d', { willReadFrequently: true })
+        s.track = { x: 0.5, y: 0.5, z: 0 }
+      }
+      s.tinyTx.drawImage(input, 0, 0, 48, 27)
+      try {
+        const d = s.tinyTx.getImageData(0, 0, 48, 27).data
+        const th = node.params.thresh * 255
+        let sx = 0, sy = 0, sw = 0
+        for (let yy = 0; yy < 27; yy++) {
+          for (let xx = 0; xx < 48; xx++) {
+            const i = (yy * 48 + xx) * 4
+            const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+            if (l > th) {
+              const w = l - th
+              sx += xx * w
+              sy += yy * w
+              sw += w
+            }
+          }
+        }
+        const sm = node.params.smooth
+        if (sw > 0) {
+          const nx = sx / sw / 48
+          const ny = 1 - sy / sw / 27
+          const nz = clamp(sw / (48 * 27 * (255 - th) * 0.25), 0, 1)
+          s.track.x = s.track.x * sm + nx * (1 - sm)
+          s.track.y = s.track.y * sm + ny * (1 - sm)
+          s.track.z = s.track.z * sm + nz * (1 - sm)
+        } else {
+          s.track.z *= sm // lost the target: size decays, position holds
+        }
+      } catch { /* tainted input */ }
+      // Crosshair overlay at the tracked point, ring sized by z.
+      const tx = s.track.x * W
+      const ty = (1 - s.track.y) * H
+      octx.strokeStyle = TYPES.tracker.color
+      octx.lineWidth = Math.max(1.5, H / 80)
+      octx.beginPath(); octx.moveTo(tx - W * 0.04, ty); octx.lineTo(tx + W * 0.04, ty); octx.stroke()
+      octx.beginPath(); octx.moveTo(tx, ty - W * 0.04); octx.lineTo(tx, ty + W * 0.04); octx.stroke()
+      octx.beginPath(); octx.arc(tx, ty, Math.max(2, s.track.z * H * 0.45), 0, Math.PI * 2); octx.stroke()
+    } else {
+      octx.fillStyle = '#0c0e14'
+      octx.fillRect(0, 0, W, H)
+      octx.fillStyle = 'rgba(255,255,255,0.5)'
+      octx.font = `${Math.round(H * 0.13)}px system-ui, sans-serif`
+      octx.fillText('wire a camera / video input', W * 0.06, H * 0.5)
+    }
   }
 }
 
@@ -730,8 +974,11 @@ function loop(ts) {
 function resizeStage() {
   const c = stage.value
   if (!c) return
-  c.width = window.innerWidth
-  c.height = window.innerHeight
+  // Back the stage with real device pixels (CSS scales it), so a native/1080p
+  // compositor isn't thrown away in the final blit on hi-DPI screens.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  c.width = Math.round(window.innerWidth * dpr)
+  c.height = Math.round(window.innerHeight * dpr)
   // Native resolution tracks the window, so re-resolve it when the window changes.
   if (RESOLUTIONS.find((r) => r.label === resLabel.value)?.native) applyResolution(resLabel.value)
 }
@@ -836,13 +1083,14 @@ onBeforeUnmount(() => {
   <div class="patch">
     <canvas ref="stage" class="stage" />
 
-    <!-- hidden capture sources -->
+    <!-- hidden capture sources (iframes render at the compositor resolution) -->
     <div class="sources" aria-hidden="true">
       <template v-for="n in nodes" :key="'src' + n.id">
         <iframe
-          v-if="n.type === 'effect' && n.params.slug"
+          v-if="(n.type === 'effect' || n.type === 'filter') && n.params.slug"
           :ref="(el) => bindFrame(n.id, el)"
           :src="effectSrc(n)"
+          :style="{ width: frameSize.w + 'px', height: frameSize.h + 'px' }"
           allow="microphone; camera; midi; accelerometer; gyroscope"
         />
         <video v-else-if="n.type === 'camera'" :ref="(el) => bindVideo(n.id, el)" muted playsinline />
@@ -854,12 +1102,24 @@ onBeforeUnmount(() => {
       <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
       <span class="text-subtitle-2 mr-2">Patch</span>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('effect')">Effect</v-btn>
+      <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('filter')">Filter</v-btn>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('camera')">Camera</v-btn>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('motion')">Motion</v-btn>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('mask')">Mask</v-btn>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('blend')">Blend</v-btn>
-      <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('input')">Input</v-btn>
+      <v-menu>
+        <template #activator="{ props }">
+          <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-plus">Control</v-btn>
+        </template>
+        <v-list density="compact">
+          <v-list-item title="Input (audio · midi · …)" @click="addNode('input')" />
+          <v-list-item title="XY Pad (touch surface)" @click="addNode('xy')" />
+          <v-list-item title="Tracker (video tracking)" @click="addNode('tracker')" />
+        </v-list>
+      </v-menu>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="addNode('output')">Output</v-btn>
+      <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
+      <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
       <v-spacer />
 
       <!-- save / load named routings -->
@@ -1001,7 +1261,14 @@ onBeforeUnmount(() => {
           <v-icon icon="mdi-close" size="14" class="node-close" @pointerdown.stop @click="removeNode(n.id)" />
         </div>
 
-        <div class="node-thumb" :ref="(el) => bindThumb(n.id, el)" :style="{ height: THUMB_H + 'px' }" />
+        <div
+          class="node-thumb"
+          :ref="(el) => bindThumb(n.id, el)"
+          :style="{ height: THUMB_H + 'px', cursor: n.type === 'xy' ? 'crosshair' : undefined, touchAction: n.type === 'xy' ? 'none' : undefined }"
+          @pointerdown="n.type === 'xy' && xyDown(n, $event)"
+          @pointermove="n.type === 'xy' && xyMove(n, $event)"
+          @pointerup="n.type === 'xy' && persist()"
+        />
 
         <!-- input ports (centered on the wire endpoint; diamond = matte/mask) -->
         <div
@@ -1016,22 +1283,42 @@ onBeforeUnmount(() => {
           :title="n.type === 'mask' ? (i === 1 ? 'content' : 'mask (matte)') : 'input'"
           @pointerup="endWire(n, i - 1)"
         />
-        <!-- output port (◆ matte · ▣ control value · ● image) -->
+        <!-- always-visible control dots for linked params whose settings panel
+             is closed — control wires terminate here instead of vanishing -->
         <div
-          v-if="n.type !== 'output'"
+          v-for="d in nodeDots(n)"
+          :key="'dot' + d.param"
+          class="ldot"
+          :style="{ left: '-5px', top: dotPos(n, d.param).y - n.y - 5 + 'px' }"
+          :title="'control: ' + d.param"
+          @pointerup="endLink(n, d.param)"
+        />
+        <!-- output ports (◆ matte · ▣ control value · ● image); XY Pad and
+             Tracker expose several control outs (x / y / size) -->
+        <div
+          v-for="oi in outCount(n)"
+          :key="'out' + oi"
           class="port"
           :class="outKind(n) === 'matte' ? 'port--matte' : outKind(n) === 'control' ? 'port--control' : 'port--image'"
-          :style="{ left: NODE_W - 7 + 'px', top: HEAD_H + THUMB_H / 2 - 7 + 'px' }"
-          :title="outKind(n) === 'control' ? 'control out — drag to a param ▣' : 'output'"
-          @pointerdown="startWire(n, $event)"
+          :style="{ left: NODE_W - 7 + 'px', top: HEAD_H + (THUMB_H * oi) / (outCount(n) + 1) - 7 + 'px' }"
+          :title="OUT_LABELS[n.type]?.[oi - 1] ?? (outKind(n) === 'control' ? 'control out — drag to a param ▣' : 'output')"
+          @pointerdown="startWire(n, $event, oi - 1)"
         />
+        <template v-if="OUT_LABELS[n.type]">
+          <span
+            v-for="oi in outCount(n)"
+            :key="'ol' + oi"
+            class="port-label"
+            :style="{ left: NODE_W + 9 + 'px', top: HEAD_H + (THUMB_H * oi) / (outCount(n) + 1) - 7 + 'px' }"
+          >{{ OUT_LABELS[n.type][oi - 1] }}</span>
+        </template>
 
         <!-- per-node controls -->
         <div class="node-body">
-          <template v-if="n.type === 'effect'">
+          <template v-if="n.type === 'effect' || n.type === 'filter'">
             <div class="d-flex ga-1 align-center">
               <select v-model="n.params.slug" class="flex-grow-1" @change="persist" @pointerdown.stop>
-                <option v-for="o in effectOptions" :key="o.slug" :value="o.slug">{{ o.title }}</option>
+                <option v-for="o in n.type === 'filter' ? filterOptions : effectOptions" :key="o.slug" :value="o.slug">{{ o.title }}</option>
               </select>
               <button
                 v-if="effectControls.has(n.id)"
@@ -1068,7 +1355,9 @@ onBeforeUnmount(() => {
               </div>
               <div v-for="(m, mi) in effectControls.get(n.id).mappings" :key="mi" class="map-row">
                 <select v-model="m.source" @change="syncEffectMappings(n.id)">
-                  <option v-for="src in INPUT_SOURCES" :key="src" :value="src">{{ src }}</option>
+                  <optgroup v-for="[g, list] in INPUT_GROUPS" :key="g" :label="g">
+                    <option v-for="src in list" :key="src" :value="src">{{ src }}</option>
+                  </optgroup>
                 </select>
                 <span>→</span>
                 <select v-model="m.param" @change="syncEffectMappings(n.id)">
@@ -1083,10 +1372,16 @@ onBeforeUnmount(() => {
 
           <template v-if="n.type === 'input'">
             <select v-model="n.params.source" @change="persist" @pointerdown.stop title="control source">
-              <option v-for="src in INPUT_SOURCES" :key="src" :value="src">{{ src }}</option>
+              <optgroup v-for="[g, list] in INPUT_GROUPS" :key="g" :label="g">
+                <option v-for="src in list" :key="src" :value="src">{{ src }}</option>
+              </optgroup>
             </select>
             <label>scale <input type="range" min="-2" max="2" step="0.05" v-model.number="n.params.scale" @change="persist" @pointerdown.stop /></label>
             <label>offset <input type="range" min="-1" max="1" step="0.02" v-model.number="n.params.offset" @change="persist" @pointerdown.stop /></label>
+          </template>
+          <template v-if="n.type === 'tracker'">
+            <label>threshold <input type="range" min="0.05" max="0.95" step="0.01" v-model.number="n.params.thresh" @change="persist" @pointerdown.stop /></label>
+            <label>smoothing <input type="range" min="0" max="0.95" step="0.01" v-model.number="n.params.smooth" @change="persist" @pointerdown.stop /></label>
           </template>
           <template v-if="n.type === 'motion'">
             <label><span class="pjack" :ref="(el) => bindJack(n.id, 'delay', el)" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'delay')" /> delay <input type="range" min="1" max="29" step="1" v-model.number="n.params.delay" @pointerdown.stop /></label>
@@ -1190,6 +1485,17 @@ onBeforeUnmount(() => {
   cursor: crosshair; vertical-align: middle; margin-right: 4px;
 }
 .pjack:hover { border-color: #ffd9a0; background: #2a2f40; }
+/* left-edge dot for a linked param whose settings panel is closed */
+.ldot {
+  position: absolute; box-sizing: border-box; width: 10px; height: 10px;
+  background: #12141c; border: 2px solid #e0a060; border-radius: 2px;
+  cursor: crosshair; z-index: 13;
+}
+.ldot:hover { border-color: #ffd9a0; }
+.port-label {
+  position: absolute; z-index: 13; pointer-events: none;
+  font: 10px system-ui, sans-serif; color: #e0a060;
+}
 .wire--control { opacity: 0.85; }
 .hint {
   position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 30;

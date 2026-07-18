@@ -20,8 +20,9 @@ const viewer = useViewerStore()
 
 const options = computed(() => store.sketches.filter((s) => s.embed && s.url))
 const BLENDS = [
-  'normal', 'screen', 'lighten', 'add', 'multiply',
-  'difference', 'exclusion', 'overlay', 'hard-light', 'color-dodge',
+  'normal', 'screen', 'add', 'lighten', 'darken', 'multiply',
+  'overlay', 'soft-light', 'hard-light', 'color-dodge', 'color-burn',
+  'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity',
 ]
 
 const STORE_KEY = 'sketchbook-mixer'

@@ -7,16 +7,16 @@
  * blends the dots the way it does a Seurat or Signac canvas.
  */
 import { createRuntime } from '../_lib/runtime.js'
+import { createSource, clamp } from '../_lib/source.js'
 
 const rt = createRuntime()
-const preview = new URLSearchParams(location.search).get('preview') === '1'
 
 const params = rt.params({
   size: { value: 1.0, min: 0.4, max: 2.5, step: 0.05, label: 'Dot size' },
-  spacing: { value: 1.0, min: 0.5, max: 2.5, step: 0.05, label: 'Spacing' },
+  spacing: { value: +rt.random(0.8, 1.4).toFixed(2), min: 0.5, max: 2.5, step: 0.05, label: 'Spacing' },
   jitter: { value: 0.6, min: 0, max: 1.2, step: 0.05, label: 'Jitter' },
-  stroke: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Brush strokes' },
-  saturation: { value: 1.3, min: 0.5, max: 2.2, step: 0.05, label: 'Saturation' },
+  stroke: { value: +rt.random(0.2, 0.7).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Brush strokes' },
+  saturation: { value: +rt.random(1.1, 1.6).toFixed(2), min: 0.5, max: 2.2, step: 0.05, label: 'Saturation' },
   variation: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Size variation' },
   opacity: { value: 0.92, min: 0.3, max: 1, step: 0.02, label: 'Dot opacity' },
   paper: { value: false, type: 'bool', label: 'Paper (light) ground' },
@@ -27,7 +27,7 @@ rt.mapInput('audio.pulse', 'jitter', 0.4)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
-const chooser = document.getElementById('chooser')
+const src = createSource()
 
 // Offscreen buffer that holds the cover-fit source, sampled per frame.
 const buf = document.createElement('canvas')
@@ -35,12 +35,6 @@ const bctx = buf.getContext('2d', { willReadFrequently: true })
 let bufW = 0
 let bufH = 0
 let imgData = null
-
-let source = null // <video>, <img>, demo <canvas>, or the Mixer feed <canvas>
-let sourceW = 0
-let sourceH = 0
-let demoTick = null
-let isMixerFeed = false
 
 // Stable stipple points (canvas px). Each carries fixed random offsets so its
 // jitter and size wobble don't flicker frame to frame.
@@ -80,199 +74,21 @@ function buildPoints() {
   lastSpacing = params.spacing
 }
 
-// --- source acquisition (mirrors motion-extraction's chooser flow) ----------
-window.addEventListener('message', (e) => {
-  const d = e.data
-  if (!d || d.type !== 'mixer:frame' || !d.bitmap) return
-  const bmp = d.bitmap
-  if (!source || !isMixerFeed) source = document.createElement('canvas')
-  if (source.width !== bmp.width) source.width = bmp.width
-  if (source.height !== bmp.height) source.height = bmp.height
-  source.getContext('2d').drawImage(bmp, 0, 0)
-  bmp.close?.()
-  demoTick = null
-  sourceW = source.width
-  sourceH = source.height
-  isMixerFeed = true
-  if (chooser) chooser.style.display = 'none'
-})
-
-async function useCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: 1280, height: 720, facingMode: 'user' },
-  })
-  const video = document.createElement('video')
-  video.srcObject = stream
-  video.muted = true
-  video.playsInline = true
-  await video.play()
-  demoTick = null
-  isMixerFeed = false
-  source = video
-  sourceW = video.videoWidth
-  sourceH = video.videoHeight
-}
-
-// Animated demo scene — soft drifting colour blobs over a warm gradient, the
-// kind of impressionist sky that pointillism flatters. Also runs the thumbnail.
-function useDemo() {
-  const c = document.createElement('canvas')
-  c.width = 960
-  c.height = 540
-  const d = c.getContext('2d')
-  const blobs = Array.from({ length: 7 }, (_, i) => ({
-    x: Math.random(),
-    y: Math.random(),
-    r: 0.18 + Math.random() * 0.22,
-    hue: (i * 47 + Math.random() * 30) % 360,
-    px: Math.random() * Math.PI * 2,
-    py: Math.random() * Math.PI * 2,
-    sx: 0.4 + Math.random() * 0.5,
-    sy: 0.4 + Math.random() * 0.5,
-  }))
-  demoTick = (t) => {
-    const g = d.createLinearGradient(0, 0, 0, 540)
-    g.addColorStop(0, '#12203a')
-    g.addColorStop(0.55, '#3a2a55')
-    g.addColorStop(1, '#6a3f4a')
-    d.fillStyle = g
-    d.fillRect(0, 0, 960, 540)
-    d.globalCompositeOperation = 'lighter'
-    for (const b of blobs) {
-      const cx = (b.x + 0.12 * Math.sin(t * b.sx + b.px)) * 960
-      const cy = (b.y + 0.12 * Math.cos(t * b.sy + b.py)) * 540
-      const rr = b.r * 540
-      const rg = d.createRadialGradient(cx, cy, 0, cx, cy, rr)
-      rg.addColorStop(0, `hsla(${b.hue}, 85%, 62%, 0.9)`)
-      rg.addColorStop(1, 'hsla(0, 0%, 0%, 0)')
-      d.fillStyle = rg
-      d.beginPath()
-      d.arc(cx, cy, rr, 0, Math.PI * 2)
-      d.fill()
-    }
-    // A low sun for a horizon the dots can render.
-    d.fillStyle = 'rgba(255, 224, 170, 0.9)'
-    d.beginPath()
-    d.arc(720, 150, 46, 0, Math.PI * 2)
-    d.fill()
-    d.globalCompositeOperation = 'source-over'
-  }
-  isMixerFeed = false
-  source = c
-  sourceW = 960
-  sourceH = 540
-}
-
-function loadFile(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file)
-    demoTick = null
-    isMixerFeed = false
-    if (file.type.startsWith('image/')) {
-      const img = new Image()
-      img.onload = () => {
-        source = img
-        sourceW = img.naturalWidth
-        sourceH = img.naturalHeight
-        resolve()
-      }
-      img.onerror = reject
-      img.src = url
-    } else {
-      const video = document.createElement('video')
-      video.src = url
-      video.loop = true
-      video.muted = true
-      video.playsInline = true
-      video.onloadeddata = async () => {
-        try {
-          await video.play()
-        } catch {
-          /* the click that opened the picker is our gesture; ignore */
-        }
-        source = video
-        sourceW = video.videoWidth
-        sourceH = video.videoHeight
-        resolve()
-      }
-      video.onerror = () => reject(new Error('decode failed'))
-    }
-  })
-}
-
-if (chooser) {
-  const fileInput = document.getElementById('file-input')
-  document.getElementById('use-upload').addEventListener('click', () => fileInput.click())
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files?.[0]
-    if (!file) return
-    try {
-      await loadFile(file)
-      chooser.style.display = 'none'
-    } catch {
-      chooser.querySelector('p').textContent = 'Could not load that file — try another photo or video.'
-    }
-  })
-  for (const [id, fn] of [
-    ['use-camera', useCamera],
-    ['use-demo', useDemo],
-  ]) {
-    document.getElementById(id).addEventListener('click', async () => {
-      try {
-        await fn()
-        chooser.style.display = 'none'
-      } catch {
-        chooser.querySelector('p').textContent =
-          'Camera unavailable — try the demo source or upload a file instead.'
-      }
-    })
-  }
-  // Drag-and-drop a file anywhere.
-  window.addEventListener('dragover', (e) => e.preventDefault())
-  window.addEventListener('drop', async (e) => {
-    e.preventDefault()
-    const file = e.dataTransfer?.files?.[0]
-    if (!file) return
-    try {
-      await loadFile(file)
-      chooser.style.display = 'none'
-    } catch {
-      /* ignore */
-    }
-  })
-}
-
-// Never sit on a blank screen: start the demo so the gallery card and the
-// first view show the effect. The chooser stays up (in the solo viewer) so the
-// camera/upload options are one click away.
-useDemo()
-if (preview && chooser) chooser.style.display = 'none'
-
-// Cover-fit the source into the sampling buffer.
-function drawSourceToBuf() {
-  const scale = Math.max(bufW / sourceW, bufH / sourceH)
-  const w = sourceW * scale
-  const h = sourceH * scale
-  bctx.drawImage(source, (bufW - w) / 2, (bufH - h) / 2, w, h)
-}
-
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
-
 function frame(now) {
   rt.tick(now)
   const t = now * 0.001
 
   if (params.spacing !== lastSpacing || !pts.length) buildPoints()
 
-  if (!source) {
+  src.update(t)
+  if (!src.ready) {
     requestAnimationFrame(frame)
     return
   }
-  demoTick?.(t)
 
   // Refresh the sampled source.
   try {
-    drawSourceToBuf()
+    src.draw(bctx, bufW, bufH)
     imgData = bctx.getImageData(0, 0, bufW, bufH)
   } catch {
     // Video not ready yet (or tainted) — keep the last sample.

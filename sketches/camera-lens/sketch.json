@@ -1,0 +1,9 @@
+{
+  "title": "Camera Lens",
+  "description": "A lens simulator you can rack in real time. Point it at a camera, a dropped photo/video, the demo, or — inside the Mixer/Patch — the layers below, and it renders the optics: a focal plane you set (and pull with the mouse) that keeps one depth sharp while everything a focus-depth away melts into aperture blur and bokeh, either as a tilt-shift band or a radial portrait focus. Over that go the tells of real glass — highlight bloom, a procedural smear of lens dirt (smudges, dust and stray hairs) that flares against bright areas, and a soft vignette. Focal plane, focus depth, aperture, bloom, dirt, and vignette are all live and mappable.",
+  "tags": ["lens", "depth-of-field", "bokeh", "filter", "photography"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-17"
+}
