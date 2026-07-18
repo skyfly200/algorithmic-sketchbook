@@ -1,0 +1,10 @@
+{
+  "title": "4D Space",
+  "description": "A viewer drifting through a pocket of four-dimensional space: 5-cells, tesseracts, 16-cells and 24-cells scattered across a hypercubic volume, each tumbling in its own double rotation (two independent planes at once — the generic rigid motion of 4D). Move the mouse to turn the whole universe through the extra-dimensional XW/YW planes and watch objects shrink, dim and hue-shift as they recede along w, then swell back inside-out as the rotation returns them to our 3-slice; drag to orbit the ordinary 3D camera. W-perspective strength, the three extra-dimensional turn angles, auto-spin, object count/size and hue are live and mappable (beats shove the 4D spin). Seeded — every 🎲 lays out a different pocket of hyperspace.",
+  "tags": ["4d", "polytopes", "hyperspace", "three-js", "interactive"],
+  "tech": [
+    "three.js",
+    "webgl"
+  ],
+  "created": "2026-07-18"
+}
