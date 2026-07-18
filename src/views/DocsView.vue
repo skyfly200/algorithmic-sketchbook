@@ -84,6 +84,16 @@ const patchNodes = [
       screens — pick a sketch (or let it rotate) and put it on a wall.
     </p>
 
+    <h2 class="text-h5 mt-8 mb-2">Autopilot</h2>
+    <p>
+      A hands-free tour: one effect plays fullscreen at a time (fresh random
+      seed each visit), crossfading to a random next one when the dwell timer
+      runs out — and skipping ahead early if the frame rate stays below the
+      floor for five seconds. The current effect's params and input mappings
+      are editable live in a side drawer, and a shared mic drives its audio
+      reactivity, just like the solo viewer.
+    </p>
+
     <h2 class="text-h5 mt-8 mb-2">Mixer</h2>
     <p>
       Stacks several sketches as layers, each with a blend mode (screen, add,

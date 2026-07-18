@@ -1,0 +1,16 @@
+{
+  "title": "Disco Ball",
+  "description": "A mirrored ball built the way real ones are: rows of little square mirror tiles laid over a sphere, each tilted a hair off-true so it sparkles instead of reading as smooth. Three coloured lights orbit the room, and every facet throws a spot onto the surrounding walls — the dot field is computed from the actual facet normals as the ball turns, so it wheels around the room exactly like the real thing, with volumetric beams and random facet flares on top. Beats flash the lights, spots and beams; loudness spins the ball. Spin, wall spots, beams, sparkle, light hue/spread and beat flash are live and mappable. Drag to orbit.",
+  "tags": [
+    "disco",
+    "mirror-ball",
+    "lights",
+    "three-js",
+    "audio-reactive"
+  ],
+  "tech": [
+    "three.js",
+    "webgl"
+  ],
+  "created": "2026-07-18"
+}
