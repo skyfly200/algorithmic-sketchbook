@@ -113,7 +113,11 @@ const patchNodes = [
       edge). Undo/redo with Ctrl/Cmd+Z / Shift+Z. The compositor resolution —
       up to 1080p or native — sets how many pixels actually flow through the
       graph. Cycles are allowed: an upstream node holds its last frame, which
-      is how you build video feedback.
+      is how you build video feedback. The board works on touch screens — drag
+      nodes and wires with a finger, pinch to zoom — and the monitor button
+      pops the composite out into its own window: drag it onto a projector or
+      second display (double-click it for fullscreen) and keep adjusting the
+      graph here without disturbing the show.
     </p>
     <v-table density="compact" class="mb-4">
       <tbody>

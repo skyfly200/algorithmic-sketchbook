@@ -599,8 +599,16 @@ function resetView() {
   view.panX = 0
   view.panY = 0
 }
+// Two-finger pinch state (pointerId -> last client point).
+const pinch = new Map()
 function onBoardDown(e) {
   if (e.target.closest('.node')) return // let node/port handlers run
+  try { e.target.releasePointerCapture?.(e.pointerId) } catch { /* not held */ }
+  pinch.set(e.pointerId, { x: e.clientX, y: e.clientY })
+  if (pinch.size >= 2) {
+    pan.active = false // second finger down → pinch, not pan
+    return
+  }
   pan.active = true
   pan.sx = e.clientX
   pan.sy = e.clientY
@@ -632,6 +640,10 @@ function xyMove(n, e) {
 }
 function startWire(n, e, port = 0) {
   e.stopPropagation()
+  // Touch pointers are implicitly captured by the origin port, which would
+  // make pointerup fire back on this port instead of the drop target —
+  // release the capture so wiring works with a finger.
+  try { e.target.releasePointerCapture?.(e.pointerId) } catch { /* not held */ }
   const p = outPortAt(n, port)
   wire.active = true
   wire.from = n.id
@@ -650,6 +662,25 @@ function endWire(n, port) {
   persist()
 }
 function onMove(e) {
+  // Pinch zoom: with two touch points down, scale about their midpoint.
+  if (pinch.size >= 2 && pinch.has(e.pointerId)) {
+    const prev = new Map(pinch)
+    pinch.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const pts = [...pinch.values()]
+    const old = [...prev.values()]
+    if (pts.length >= 2 && old.length >= 2) {
+      const dNew = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
+      const dOld = Math.hypot(old[0].x - old[1].x, old[0].y - old[1].y)
+      if (dOld > 0) {
+        const r = board.value.getBoundingClientRect()
+        const mx = (pts[0].x + pts[1].x) / 2 - r.left
+        const my = (pts[0].y + pts[1].y) / 2 - r.top
+        zoomAround(mx, my, dNew / dOld)
+      }
+    }
+    return
+  }
+  if (pinch.has(e.pointerId)) pinch.set(e.pointerId, { x: e.clientX, y: e.clientY })
   if (pan.active) {
     view.panX = pan.ox + (e.clientX - pan.sx)
     view.panY = pan.oy + (e.clientY - pan.sy)
@@ -668,11 +699,27 @@ function onMove(e) {
     wire.y = p.y
   }
 }
-function onUp() {
+function onUp(e) {
   if (drag.node != null) persist()
   drag.node = null
+  // Belt and braces for touch: if a wire is in flight, resolve the drop
+  // target by hit-testing the release point (data attributes on ports/jacks),
+  // since touch event routing doesn't always land pointerup on the target.
+  if (wire.active && e) {
+    const el = document.elementFromPoint(e.clientX, e.clientY)
+    const portEl = el?.closest?.('[data-in-node]')
+    const jackEl = el?.closest?.('[data-jack-node]')
+    if (portEl) {
+      const n = nodes.find((x) => x.id === +portEl.dataset.inNode)
+      if (n) endWire(n, +portEl.dataset.inPort)
+    } else if (jackEl) {
+      const n = nodes.find((x) => x.id === +jackEl.dataset.jackNode)
+      if (n) endLink(n, jackEl.dataset.jackParam)
+    }
+  }
   wire.active = false
   pan.active = false
+  pinch.clear()
 }
 function removeEdge(idx) {
   edges.splice(idx, 1)
@@ -1039,6 +1086,7 @@ function loop(ts) {
         }
       }
     }
+    blitPopup()
     passCost = passCost * 0.85 + (performance.now() - t0) * 0.15
     // Keep compositor occupancy under ~55% of the frame budget.
     skipLeft = Math.min(5, Math.floor(passCost / 9))
@@ -1065,6 +1113,73 @@ function resizeStage() {
 }
 function fullscreen() {
   board.value?.parentElement?.requestFullscreen?.()
+}
+
+// --- pop-out output: a separate window for a second display -----------------
+// The composite is mirrored into a popup you can drag onto a projector or
+// second monitor (double-click it for fullscreen) while the routing UI —
+// wires, params, mappings — stays here, adjustable without disturbing the
+// show. Same-origin about:blank, so the parent draws into it directly.
+const popupOpen = ref(false)
+let popup = null
+function togglePopup() {
+  if (popup && !popup.closed) {
+    popup.close()
+    popup = null
+    popupOpen.value = false
+    return
+  }
+  popup = window.open('', 'patch-output', 'width=960,height=540')
+  if (!popup) return // blocked
+  const d = popup.document
+  d.title = 'Patch Output'
+  d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;'
+  const c = d.createElement('canvas')
+  c.id = 'out'
+  c.style.cssText = 'display:block;width:100vw;height:100vh;cursor:none;'
+  d.body.appendChild(c)
+  const hint = d.createElement('div')
+  hint.textContent = 'drag me to the display · double-click for fullscreen'
+  hint.style.cssText =
+    'position:fixed;left:50%;bottom:14px;transform:translateX(-50%);color:rgba(255,255,255,0.5);font:13px system-ui;transition:opacity 1s;pointer-events:none;'
+  d.body.appendChild(hint)
+  setTimeout(() => (hint.style.opacity = 0), 6000)
+  c.addEventListener('dblclick', () => {
+    if (d.fullscreenElement) d.exitFullscreen()
+    else c.requestFullscreen?.()
+  })
+  popup.addEventListener('beforeunload', () => {
+    popup = null
+    popupOpen.value = false
+  })
+  popupOpen.value = true
+}
+function blitPopup() {
+  if (!popup || popup.closed) {
+    if (popupOpen.value) {
+      popupOpen.value = false
+      popup = null
+    }
+    return
+  }
+  const c = popup.document.getElementById('out')
+  if (!c) return
+  const dpr = Math.min(popup.devicePixelRatio || 1, 2)
+  const pw = Math.round(popup.innerWidth * dpr)
+  const ph = Math.round(popup.innerHeight * dpr)
+  if (c.width !== pw || c.height !== ph) {
+    c.width = pw
+    c.height = ph
+  }
+  const out = nodes.find((n) => n.type === 'output')
+  const s = out && rtState.get(out.id)
+  const cx = c.getContext('2d')
+  cx.fillStyle = '#000'
+  cx.fillRect(0, 0, pw, ph)
+  if (s) {
+    const scale = Math.max(pw / W, ph / H)
+    cx.drawImage(s.out, (pw - W * scale) / 2, (ph - H * scale) / 2, W * scale, H * scale)
+  }
 }
 
 // --- output-only view: hide the routing UI, show just the composite -------
@@ -1157,6 +1272,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('pointermove', trackMouse)
   beat.stop()
+  if (popup && !popup.closed) popup.close()
   for (const s of rtState.values()) s.video?.srcObject?.getTracks?.().forEach((t) => t.stop())
 })
 </script>
@@ -1269,6 +1385,14 @@ onBeforeUnmount(() => {
         </v-list>
       </v-menu>
       <v-btn icon="mdi-content-paste" variant="text" size="small" title="Paste node (Ctrl/Cmd+V)" :disabled="!clipboard" @click="pasteClipboard" />
+      <v-btn
+        icon="mdi-monitor-shimmer"
+        variant="text"
+        size="small"
+        :color="popupOpen ? 'primary' : undefined"
+        title="Pop out the output — drag it to a second display and keep adjusting here"
+        @click="togglePopup"
+      />
       <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
       <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
@@ -1371,6 +1495,8 @@ onBeforeUnmount(() => {
             left: '-7px',
             top: HEAD_H + (THUMB_H * i) / (TYPES[n.type].ins + 1) - 7 + 'px',
           }"
+          :data-in-node="n.id"
+          :data-in-port="i - 1"
           :title="n.type === 'mask' ? (i === 1 ? 'content' : 'mask (matte)') : 'input'"
           @pointerup="endWire(n, i - 1)"
         />
@@ -1380,6 +1506,8 @@ onBeforeUnmount(() => {
           v-for="d in nodeDots(n)"
           :key="'dot' + d.param"
           class="ldot"
+          :data-jack-node="n.id"
+          :data-jack-param="d.param"
           :style="{ left: '-5px', top: dotPos(n, d.param).y - n.y - 5 + 'px' }"
           :title="'control: ' + d.param"
           @pointerup="endLink(n, d.param)"
@@ -1434,7 +1562,7 @@ onBeforeUnmount(() => {
                   </select>
                 </label>
                 <label v-else>
-                  <span class="pjack" :ref="(el) => bindJack(n.id, name, el)" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, name)" />
+                  <span class="pjack" :ref="(el) => bindJack(n.id, name, el)" :data-jack-node="n.id" :data-jack-param="name" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, name)" />
                   {{ spec.label ?? name }}
                   <input type="range" :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :value="effectControls.get(n.id).values[name]" @input="setEffectParam(n.id, name, +$event.target.value)" />
                 </label>
@@ -1478,7 +1606,7 @@ onBeforeUnmount(() => {
             <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
               <option v-for="b in BLENDS" :key="b" :value="b">{{ b }}</option>
             </select>
-            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
+            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" :data-jack-node="n.id" data-jack-param="mix" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
           </template>
         </div>
       </div>
@@ -1506,9 +1634,10 @@ onBeforeUnmount(() => {
 .toolbar {
   position: absolute; top: 0; left: 0; right: 0; z-index: 30;
   display: flex; align-items: center; gap: 6px; padding: 8px 12px;
+  flex-wrap: wrap; row-gap: 2px;
   background: linear-gradient(to bottom, rgba(0,0,0,0.75), rgba(0,0,0,0.1));
 }
-.board { position: absolute; inset: 0; z-index: 10; cursor: grab; }
+.board { position: absolute; inset: 0; z-index: 10; cursor: grab; touch-action: none; }
 .board:active { cursor: grabbing; }
 .space { position: absolute; inset: 0; transform-origin: 0 0; }
 .zoom-ctrls {
@@ -1522,6 +1651,7 @@ onBeforeUnmount(() => {
 .wire:hover { stroke-width: 4; }
 .node {
   position: absolute; z-index: 12; border-radius: 8px; overflow: visible;
+  touch-action: none;
   background: rgba(20,22,30,0.96); border: 1px solid rgba(255,255,255,0.14);
   box-shadow: 0 6px 20px rgba(0,0,0,0.4); user-select: none;
 }
@@ -1594,6 +1724,12 @@ onBeforeUnmount(() => {
   display: flex; gap: 6px; opacity: 0.35; transition: opacity 0.2s;
 }
 .output-ctrls:hover { opacity: 1; }
+/* fingers need fatter targets than a mouse */
+@media (pointer: coarse) {
+  .port { width: 20px; height: 20px; }
+  .pjack, .ldot { width: 16px; height: 16px; }
+  .node-body input[type=range] { height: 26px; }
+}
 .fps-meter {
   position: absolute; bottom: 8px; right: 8px; z-index: 40;
   padding: 3px 8px; border-radius: 6px;
