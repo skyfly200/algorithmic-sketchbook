@@ -1,0 +1,10 @@
+{
+  "title": "Bloom",
+  "description": "Hyperreal generative flowers in the spirit of Flume's album art — glossy parametric petals with cup, curl and ruffle stacked in golden-angle whorls around a stamen crown, unfurling on a slow bloom cycle. Every seed grows a different cultivar.",
+  "tags": ["3d", "generative", "organic", "flowers", "audio-reactive"],
+  "tech": [
+    "three.js",
+    "webgl"
+  ],
+  "created": "2026-07-19"
+}
