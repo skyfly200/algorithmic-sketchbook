@@ -1,0 +1,10 @@
+{
+  "title": "Infinity Mirror",
+  "description": "A regular polytope traced in LED light between two facing mirrors — reflections recede down a dimming, twisting, hue-shifting tunnel. Platonic solids plus the regular 4-polytopes (which morph through w as they spin); move the mouse to look in off-axis, beats send light waves down the tunnel.",
+  "tags": ["3d", "4d", "polytopes", "light", "audio-reactive", "interactive"],
+  "tech": [
+    "three.js",
+    "webgl"
+  ],
+  "created": "2026-07-19"
+}
