@@ -1,0 +1,17 @@
+{
+  "title": "Turing Patterns",
+  "description": "Gray-Scott reaction-diffusion — the chemical mechanism Turing proposed for animal markings — simulated on the GPU. Presets grow leopard spots, coral, mazes, gliding solitons, worms or boiling chaos; tune feed/kill live, paint catalyst with the pointer, and beats splash the dish.",
+  "tags": [
+    "simulation",
+    "reaction-diffusion",
+    "biology",
+    "shader",
+    "interactive",
+    "audio-reactive"
+  ],
+  "tech": [
+    "webgl",
+    "glsl"
+  ],
+  "created": "2026-07-19"
+}
