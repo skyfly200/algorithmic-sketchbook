@@ -1,0 +1,16 @@
+{
+  "title": "Voronoi Fractal",
+  "description": "Cells within cells: an animated Voronoi diagram where every cell contains its own smaller Voronoi, recursively — each level rotated and drifted by its parent cell's id. Neon walls thin with depth, the points swim, a breathing zoom dives toward the centre, and beats ripple light down the hierarchy.",
+  "tags": [
+    "fractal",
+    "voronoi",
+    "shader",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "webgl",
+    "glsl"
+  ],
+  "created": "2026-07-19"
+}
