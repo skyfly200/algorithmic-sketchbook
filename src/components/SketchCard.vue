@@ -13,21 +13,92 @@ const fallbackGradient = computed(() => {
   return `linear-gradient(135deg, hsl(${hash}, 55%, 22%), hsl(${(hash + 60) % 360}, 65%, 40%))`
 })
 
-// A live preview runs the real sketch in the card. Any embeddable sketch with
-// a URL qualifies — local sketches at low quality, external projects at their
-// live URL. It mounts lazily (IntersectionObserver) so off-screen cards don't
-// all run at once. If a particular external site refuses to be framed it'll
-// look blank; set "embed": false for that entry to fall back to the cover.
+// A live preview runs the real sketch in the card — but only while the card
+// is hovered, so the gallery itself stays smooth. At rest each local sketch
+// shows a poster: a single frame captured from a short offscreen warm-up run
+// and cached for the session. External sites can't be captured (cross-
+// origin), so they rest on their cover gradient and come alive on hover.
 const canPreview = computed(() => props.sketch.embed && props.sketch.url)
+const isLocal = computed(() => props.sketch.type === 'local')
 const previewSrc = computed(() =>
-  props.sketch.type === 'local' ? `${props.sketch.url}?quality=low&preview=1` : props.sketch.url,
+  isLocal.value ? `${props.sketch.url}?quality=low&preview=1` : props.sketch.url,
 )
 
-// Mount the iframe only once the card scrolls into view, so off-screen cards
-// don't all animate at once.
+const hovering = ref(false)
+const poster = ref(null)
 const root = ref(null)
 const inView = ref(false)
 let observer = null
+let cancelled = false
+
+const POSTER_W = 480
+const POSTER_H = 270
+
+function posterKey(slug) {
+  return `sketchbook-poster-${slug}`
+}
+
+// Capture posters two at a time so a fresh visit doesn't boot every sketch
+// at once — each card takes a turn, runs ~2s hidden, gets snapshotted.
+let capturing = 0
+const waiters = []
+async function slot() {
+  if (capturing >= 2) await new Promise((r) => waiters.push(r))
+  capturing++
+}
+function release() {
+  capturing--
+  waiters.shift()?.()
+}
+
+async function capturePoster() {
+  try {
+    const cached = sessionStorage.getItem(posterKey(props.sketch.slug))
+    if (cached) {
+      poster.value = cached
+      return
+    }
+  } catch {}
+  await slot()
+  if (cancelled) {
+    release()
+    return
+  }
+  const frame = document.createElement('iframe')
+  frame.src = `${props.sketch.url}?quality=low&preview=1&capture=1`
+  frame.setAttribute('aria-hidden', 'true')
+  frame.tabIndex = -1
+  frame.style.cssText = `position:fixed;left:-10000px;top:0;width:${POSTER_W}px;height:${POSTER_H}px;border:0;`
+  document.body.appendChild(frame)
+  try {
+    await new Promise((resolve) => {
+      frame.addEventListener('load', resolve, { once: true })
+      setTimeout(resolve, 4000)
+    })
+    await new Promise((r) => setTimeout(r, 2200)) // let the sketch settle in
+    const canvas = frame.contentDocument?.querySelector('canvas')
+    if (canvas && canvas.width > 0) {
+      const out = document.createElement('canvas')
+      out.width = POSTER_W
+      out.height = POSTER_H
+      const ctx = out.getContext('2d')
+      // cover-fit the sketch canvas into the poster
+      const s = Math.max(POSTER_W / canvas.width, POSTER_H / canvas.height)
+      const dw = canvas.width * s
+      const dh = canvas.height * s
+      ctx.drawImage(canvas, (POSTER_W - dw) / 2, (POSTER_H - dh) / 2, dw, dh)
+      const url = out.toDataURL('image/jpeg', 0.72)
+      poster.value = url
+      try {
+        sessionStorage.setItem(posterKey(props.sketch.slug), url)
+      } catch {}
+    }
+  } catch {
+  } finally {
+    frame.remove()
+    release()
+  }
+}
 
 onMounted(() => {
   if (!canPreview.value || props.sketch.thumbnail) return
@@ -36,6 +107,7 @@ onMounted(() => {
       if (entries[0].isIntersecting) {
         inView.value = true
         observer.disconnect()
+        if (isLocal.value) capturePoster()
       }
     },
     { rootMargin: '200px' },
@@ -43,7 +115,10 @@ onMounted(() => {
   const el = root.value?.$el ?? root.value
   if (el) observer.observe(el)
 })
-onBeforeUnmount(() => observer?.disconnect())
+onBeforeUnmount(() => {
+  cancelled = true
+  observer?.disconnect()
+})
 </script>
 
 <template>
@@ -52,21 +127,28 @@ onBeforeUnmount(() => observer?.disconnect())
     :to="{ name: 'sketch', params: { slug: sketch.slug } }"
     class="sketch-card"
     hover
+    @mouseenter="hovering = true"
+    @mouseleave="hovering = false"
   >
     <div
       class="card-preview"
-      :style="sketch.thumbnail || (canPreview && inView) ? {} : { background: fallbackGradient }"
+      :style="sketch.thumbnail || poster || (canPreview && hovering) ? {} : { background: fallbackGradient }"
     >
       <v-img v-if="sketch.thumbnail" :src="sketch.thumbnail" cover height="160" />
-      <iframe
-        v-else-if="canPreview && inView"
-        :src="previewSrc"
-        class="preview-frame"
-        loading="lazy"
-        scrolling="no"
-        tabindex="-1"
-        aria-hidden="true"
-      />
+      <template v-else-if="canPreview">
+        <!-- resting state: a still frame; hover: the real sketch, live -->
+        <img v-if="poster" :src="poster" class="poster" :class="{ 'poster-under': hovering }" alt="" />
+        <iframe
+          v-if="hovering && inView"
+          :src="previewSrc"
+          class="preview-frame"
+          loading="lazy"
+          scrolling="no"
+          tabindex="-1"
+          aria-hidden="true"
+        />
+        <v-icon v-else-if="!poster" icon="mdi-shimmer" size="42" class="preview-icon" />
+      </template>
       <v-icon v-else icon="mdi-shimmer" size="42" class="preview-icon" />
 
       <v-chip
@@ -111,7 +193,20 @@ onBeforeUnmount(() => observer?.disconnect())
   overflow: hidden;
   background: #05060a;
 }
+.poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* keep the poster under the live frame so there's no flash while it boots */
+.poster-under {
+  z-index: 0;
+}
 .preview-frame {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   border: 0;
@@ -125,6 +220,7 @@ onBeforeUnmount(() => observer?.disconnect())
   position: absolute;
   top: 8px;
   right: 8px;
+  z-index: 2;
 }
 .description {
   display: -webkit-box;

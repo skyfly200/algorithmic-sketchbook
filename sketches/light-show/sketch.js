@@ -1,7 +1,10 @@
 // Light Show — moving-head fixtures sweeping through a hazy room: volumetric
 // beams (gradient cones, additive), real spotlights pooling on the floor,
 // drifting dust catching the light, and a beat that snaps the rig to new
-// sweeps and flashes the haze. A tiny concert lighting simulator.
+// sweeps and flashes the haze. The heads carry a gobo wheel (patterns
+// projected through the beam onto the floor via SpotLight.map, slowly
+// rotating), an iris (aperture), and a focus knob that runs the projection
+// from knife-sharp to soft wash. A tiny concert lighting simulator.
 import { createRuntime } from '../_lib/runtime.js'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
@@ -21,12 +24,17 @@ const params = rt.params({
   speed: { value: 1, min: 0, max: 3, step: 0.05, label: 'Sweep speed' },
   spread: { value: 0.7, min: 0.1, max: 1, step: 0.01, label: 'Sweep spread' },
   beamWidth: { value: 0.5, min: 0.15, max: 1, step: 0.01, label: 'Beam width' },
+  gobo: { value: rt.pick(['open', 'dots', 'bars', 'star', 'breakup']), type: 'select', options: ['open', 'dots', 'bars', 'star', 'breakup'], label: 'Gobo' },
+  aperture: { value: 1, min: 0.15, max: 1, step: 0.01, label: 'Aperture (iris)' },
+  focus: { value: 0.85, min: 0, max: 1, step: 0.01, label: 'Focus' },
+  goboSpin: { value: 0.3, min: 0, max: 2, step: 0.02, label: 'Gobo rotation' },
   hue: { value: rt.random(0, 360), min: 0, max: 360, step: 1, label: 'Palette hue' },
   white: { value: 0.15, min: 0, max: 1, step: 0.01, label: 'Whiteness' },
   flash: { value: 0.8, min: 0, max: 2, step: 0.02, label: 'Beat flash' },
 })
 rt.mapInput('audio.pulse', 'flash', 0.5)
 rt.mapInput('audio.high', 'beamWidth', 0.2)
+rt.mapInput('audio.low', 'aperture', 0.2)
 
 const scene = new THREE.Scene()
 scene.background = new THREE.Color(0x04050a)
@@ -74,6 +82,92 @@ beamCanvas.height = 128
   c.fillRect(0, 0, 1, 128)
 }
 const beamTex = new THREE.CanvasTexture(beamCanvas)
+
+// --- gobo wheel -------------------------------------------------------------
+// One shared 256px canvas; every fixture projects it through its SpotLight
+// (each with its own texture object so rotations differ). Focus blurs the
+// pattern edges, the iris masks the opening — both baked here.
+const GOBO = 256
+const goboCanvas = document.createElement('canvas')
+goboCanvas.width = goboCanvas.height = GOBO
+const goboPattern = document.createElement('canvas') // crisp pattern, pre-blur
+goboPattern.width = goboPattern.height = GOBO
+const breakupSeed = []
+for (let i = 0; i < 14; i++) breakupSeed.push([rt.random(0.15, 0.85), rt.random(0.15, 0.85), rt.random(0.05, 0.16)])
+
+function paintPattern(kind) {
+  const c = goboPattern.getContext('2d')
+  const m = GOBO / 2
+  c.clearRect(0, 0, GOBO, GOBO)
+  c.fillStyle = '#fff'
+  if (kind === 'open') {
+    c.beginPath()
+    c.arc(m, m, m * 0.92, 0, Math.PI * 2)
+    c.fill()
+  } else if (kind === 'dots') {
+    for (let ring = 0; ring < 3; ring++) {
+      const rr = m * (0.22 + ring * 0.28)
+      const n = 4 + ring * 5
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2 + ring
+        c.beginPath()
+        c.arc(m + Math.cos(a) * rr, m + Math.sin(a) * rr, m * 0.09, 0, Math.PI * 2)
+        c.fill()
+      }
+    }
+  } else if (kind === 'bars') {
+    for (let k = -2; k <= 2; k++) c.fillRect(m + k * m * 0.38 - m * 0.09, m * 0.1, m * 0.18, GOBO - m * 0.2)
+  } else if (kind === 'star') {
+    c.beginPath()
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2
+      const rr = k % 2 === 0 ? m * 0.9 : m * 0.32
+      c[k === 0 ? 'moveTo' : 'lineTo'](m + Math.cos(a) * rr, m + Math.sin(a) * rr)
+    }
+    c.closePath()
+    c.fill()
+  } else {
+    // breakup: a seeded scatter of foliage-like blobs
+    for (const [x, y, r] of breakupSeed) {
+      c.beginPath()
+      c.ellipse(x * GOBO, y * GOBO, r * GOBO, r * GOBO * 0.6, x * 9, 0, Math.PI * 2)
+      c.fill()
+    }
+  }
+}
+
+let goboKey = ''
+function bakeGobo() {
+  const key = `${params.gobo}|${params.focus.toFixed(2)}|${params.aperture.toFixed(2)}`
+  if (key === goboKey) return false
+  goboKey = key
+  paintPattern(params.gobo)
+  const c = goboCanvas.getContext('2d')
+  c.globalCompositeOperation = 'source-over'
+  c.filter = 'none'
+  c.fillStyle = '#000'
+  c.fillRect(0, 0, GOBO, GOBO)
+  c.filter = `blur(${(1 - params.focus) * 9}px)` // defocus softens the pattern
+  c.drawImage(goboPattern, 0, 0)
+  c.filter = 'none'
+  // iris: circular mask whose edge is sharp in focus, soft out of focus
+  const m = GOBO / 2
+  const r0 = m * 0.96 * params.aperture
+  const soft = 3 + (1 - params.focus) * 26
+  const g = c.createRadialGradient(m, m, Math.max(0, r0 - soft), m, m, r0)
+  g.addColorStop(0, 'rgba(255,255,255,1)')
+  g.addColorStop(1, 'rgba(255,255,255,0)')
+  c.globalCompositeOperation = 'destination-in'
+  c.fillStyle = g
+  c.beginPath()
+  c.arc(m, m, r0, 0, Math.PI * 2)
+  c.fill()
+  c.globalCompositeOperation = 'destination-over'
+  c.fillStyle = '#000' // the projected map must stay opaque black outside
+  c.fillRect(0, 0, GOBO, GOBO)
+  c.globalCompositeOperation = 'source-over'
+  return true
+}
 
 // drifting dust: faint points that make the haze feel inhabited
 const DUST = Math.round(700 * rt.detail) + 100
@@ -134,6 +228,11 @@ function makeFixture(i, n) {
 
   const spot = new THREE.SpotLight(0xffffff, 60, BEAM_LEN * 1.6, 0.35, 0.5, 1.2)
   spot.position.set(0, -0.25, 0)
+  // gobo projection: shared canvas, per-fixture texture so rotations differ
+  const goboTex = new THREE.CanvasTexture(goboCanvas)
+  goboTex.center.set(0.5, 0.5)
+  goboTex.colorSpace = THREE.SRGBColorSpace
+  spot.map = goboTex
   const target = new THREE.Object3D()
   target.position.set(0, -BEAM_LEN, 0)
   tilt.add(spot, target)
@@ -141,12 +240,13 @@ function makeFixture(i, n) {
 
   scene.add(root)
   return {
-    root, pan, tilt, outer, inner, lens, spot,
+    root, pan, tilt, outer, inner, lens, spot, goboTex,
     beamMatOuter, beamMatInner,
     phase: rt.random(0, Math.PI * 2),
     rate: rt.random(0.6, 1.4),
     panAmp: rt.random(0.5, 1.1),
     tiltAmp: rt.random(0.3, 0.6),
+    goboRate: rt.random(0.5, 1.5) * (i % 2 === 0 ? 1 : -1),
     hueOff: (i / n) * 360,
     color: new THREE.Color(),
   }
@@ -182,7 +282,11 @@ renderer.setAnimationLoop((now) => {
   const flash = 1 + pulse * params.flash * 1.6
   scene.fog.density = 0.03 + params.haze * 0.045
 
-  const wR = 0.2 + params.beamWidth * 0.85 // beam radius at the floor
+  // re-bake the gobo when its knobs move; every fixture shares the canvas
+  if (bakeGobo()) for (const f of fixtures) f.goboTex.needsUpdate = true
+
+  const iris = 0.35 + 0.65 * params.aperture
+  const wR = (0.2 + params.beamWidth * 0.85) * iris // beam radius at the floor
   for (const f of fixtures) {
     const ph = t * params.speed * f.rate + f.phase
     f.pan.rotation.y = Math.sin(ph * 0.9) * 1.4 * f.panAmp * params.spread
@@ -193,7 +297,9 @@ renderer.setAnimationLoop((now) => {
     const hue = (((params.hue + f.hueOff + t * 6) % 360) + 360) / 360
     f.color.setHSL(hue, 1 - params.white * 0.7, 0.5 + params.white * 0.25)
 
-    const alpha = (0.28 + params.haze * 0.45) * flash
+    // a patterned gobo splits the beam, so the solid cone reads dimmer
+    const goboDim = params.gobo === 'open' ? 1 : 0.7
+    const alpha = (0.28 + params.haze * 0.45) * flash * goboDim
     f.beamMatOuter.color.copy(f.color)
     f.beamMatOuter.opacity = alpha * 0.6
     f.beamMatInner.color.copy(f.color).lerp(new THREE.Color(1, 1, 1), 0.35)
@@ -208,7 +314,10 @@ renderer.setAnimationLoop((now) => {
 
     f.spot.color.copy(f.color)
     f.spot.intensity = 110 * flash * (0.6 + params.haze * 0.4)
-    f.spot.angle = 0.15 + params.beamWidth * 0.3
+    f.spot.angle = (0.15 + params.beamWidth * 0.3) * iris
+    // focus: knife-edge pool in focus, wide soft penumbra out of focus
+    f.spot.penumbra = 0.15 + (1 - params.focus) * 0.7
+    f.goboTex.rotation = t * params.goboSpin * f.goboRate
   }
 
   controls.update()
