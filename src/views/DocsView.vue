@@ -17,7 +17,7 @@ const inputRows = [
 ]
 const patchNodes = [
   ['Effect', 'A generator sketch rendering live in a hidden iframe; its canvas is the node output. Open ⚙ for its params and input mappings.'],
-  ['Filter', 'A source-filter sketch (pointillism, camera lens, rain on a window, halftone, channel offset, delay, lens flare, VHS, motion extraction). Its video input is piped in as the filter\'s source each frame.'],
+  ['Filter', 'A source-filter sketch (pointillism, camera lens, rain on a window, halftone, channel offset, delay, lens flare, VHS, motion extraction, kaleidoscope, fog, mist, glow). Its video input is piped in as the filter\'s source each frame.'],
   ['Camera', 'Your webcam as a source.'],
   ['Mask', 'Multiplies a content stream by a matte.'],
   ['Blend', 'Composites two streams with any blend mode and a mix amount.'],
@@ -86,12 +86,13 @@ const patchNodes = [
 
     <h2 class="text-h5 mt-8 mb-2">Autopilot</h2>
     <p>
-      A hands-free tour: one effect plays fullscreen at a time (fresh random
-      seed each visit), crossfading to a random next one when the dwell timer
-      runs out — and skipping ahead early if the frame rate stays below the
-      floor for five seconds. The current effect's params and input mappings
-      are editable live in a side drawer, and a shared mic drives its audio
-      reactivity, just like the solo viewer.
+      A hands-free tour of random <em>mixes</em>: each scene is dealt like the
+      Patch dice roll — one to three effect layers stacked with random blend
+      modes, often topped by a filter fed the live composite below it — then
+      crossfaded to the next when the dwell timer runs out, skipping ahead
+      early if the frame rate stays below the floor for five seconds. Every
+      layer's params and input mappings are editable live in the side drawer,
+      and a shared mic drives the whole mix's audio reactivity.
     </p>
 
     <h2 class="text-h5 mt-8 mb-2">Mixer</h2>
@@ -113,7 +114,11 @@ const patchNodes = [
       edge). Undo/redo with Ctrl/Cmd+Z / Shift+Z. The compositor resolution —
       up to 1080p or native — sets how many pixels actually flow through the
       graph. Cycles are allowed: an upstream node holds its last frame, which
-      is how you build video feedback.
+      is how you build video feedback. The board works on touch screens — drag
+      nodes and wires with a finger, pinch to zoom — and the monitor button
+      pops the composite out into its own window: drag it onto a projector or
+      second display (double-click it for fullscreen) and keep adjusting the
+      graph here without disturbing the show.
     </p>
     <v-table density="compact" class="mb-4">
       <tbody>

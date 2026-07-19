@@ -1,0 +1,9 @@
+{
+  "title": "Vine Growth",
+  "description": "Climbing ivy painted stroke by stroke — growth tips wander up the wall under curl noise, branching and sprouting leaves and blossoms until the wall fills and the painting regrows. Click to plant a vine; beats fire branch bursts.",
+  "tags": ["generative", "organic", "growth", "audio-reactive", "interactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-19"
+}

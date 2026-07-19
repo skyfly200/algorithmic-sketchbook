@@ -24,7 +24,8 @@ const store = useSketchStore()
 // pipes its video input straight into them.
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
-  'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects',
+  'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
+  'fog', 'mist', 'glow',
 ]
 // Only local, same-origin sketches can be captured for piping. Filters (and
 // Motion Extraction, which has a native node) are organized under the Filter
@@ -599,8 +600,16 @@ function resetView() {
   view.panX = 0
   view.panY = 0
 }
+// Two-finger pinch state (pointerId -> last client point).
+const pinch = new Map()
 function onBoardDown(e) {
   if (e.target.closest('.node')) return // let node/port handlers run
+  try { e.target.releasePointerCapture?.(e.pointerId) } catch { /* not held */ }
+  pinch.set(e.pointerId, { x: e.clientX, y: e.clientY })
+  if (pinch.size >= 2) {
+    pan.active = false // second finger down → pinch, not pan
+    return
+  }
   pan.active = true
   pan.sx = e.clientX
   pan.sy = e.clientY
@@ -632,6 +641,10 @@ function xyMove(n, e) {
 }
 function startWire(n, e, port = 0) {
   e.stopPropagation()
+  // Touch pointers are implicitly captured by the origin port, which would
+  // make pointerup fire back on this port instead of the drop target —
+  // release the capture so wiring works with a finger.
+  try { e.target.releasePointerCapture?.(e.pointerId) } catch { /* not held */ }
   const p = outPortAt(n, port)
   wire.active = true
   wire.from = n.id
@@ -650,6 +663,25 @@ function endWire(n, port) {
   persist()
 }
 function onMove(e) {
+  // Pinch zoom: with two touch points down, scale about their midpoint.
+  if (pinch.size >= 2 && pinch.has(e.pointerId)) {
+    const prev = new Map(pinch)
+    pinch.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const pts = [...pinch.values()]
+    const old = [...prev.values()]
+    if (pts.length >= 2 && old.length >= 2) {
+      const dNew = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
+      const dOld = Math.hypot(old[0].x - old[1].x, old[0].y - old[1].y)
+      if (dOld > 0) {
+        const r = board.value.getBoundingClientRect()
+        const mx = (pts[0].x + pts[1].x) / 2 - r.left
+        const my = (pts[0].y + pts[1].y) / 2 - r.top
+        zoomAround(mx, my, dNew / dOld)
+      }
+    }
+    return
+  }
+  if (pinch.has(e.pointerId)) pinch.set(e.pointerId, { x: e.clientX, y: e.clientY })
   if (pan.active) {
     view.panX = pan.ox + (e.clientX - pan.sx)
     view.panY = pan.oy + (e.clientY - pan.sy)
@@ -668,11 +700,27 @@ function onMove(e) {
     wire.y = p.y
   }
 }
-function onUp() {
+function onUp(e) {
   if (drag.node != null) persist()
   drag.node = null
+  // Belt and braces for touch: if a wire is in flight, resolve the drop
+  // target by hit-testing the release point (data attributes on ports/jacks),
+  // since touch event routing doesn't always land pointerup on the target.
+  if (wire.active && e) {
+    const el = document.elementFromPoint(e.clientX, e.clientY)
+    const portEl = el?.closest?.('[data-in-node]')
+    const jackEl = el?.closest?.('[data-jack-node]')
+    if (portEl) {
+      const n = nodes.find((x) => x.id === +portEl.dataset.inNode)
+      if (n) endWire(n, +portEl.dataset.inPort)
+    } else if (jackEl) {
+      const n = nodes.find((x) => x.id === +jackEl.dataset.jackNode)
+      if (n) endLink(n, jackEl.dataset.jackParam)
+    }
+  }
   wire.active = false
   pan.active = false
+  pinch.clear()
 }
 function removeEdge(idx) {
   edges.splice(idx, 1)
@@ -1039,6 +1087,7 @@ function loop(ts) {
         }
       }
     }
+    blitPopup()
     passCost = passCost * 0.85 + (performance.now() - t0) * 0.15
     // Keep compositor occupancy under ~55% of the frame budget.
     skipLeft = Math.min(5, Math.floor(passCost / 9))
@@ -1065,6 +1114,73 @@ function resizeStage() {
 }
 function fullscreen() {
   board.value?.parentElement?.requestFullscreen?.()
+}
+
+// --- pop-out output: a separate window for a second display -----------------
+// The composite is mirrored into a popup you can drag onto a projector or
+// second monitor (double-click it for fullscreen) while the routing UI —
+// wires, params, mappings — stays here, adjustable without disturbing the
+// show. Same-origin about:blank, so the parent draws into it directly.
+const popupOpen = ref(false)
+let popup = null
+function togglePopup() {
+  if (popup && !popup.closed) {
+    popup.close()
+    popup = null
+    popupOpen.value = false
+    return
+  }
+  popup = window.open('', 'patch-output', 'width=960,height=540')
+  if (!popup) return // blocked
+  const d = popup.document
+  d.title = 'Patch Output'
+  d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;'
+  const c = d.createElement('canvas')
+  c.id = 'out'
+  c.style.cssText = 'display:block;width:100vw;height:100vh;cursor:none;'
+  d.body.appendChild(c)
+  const hint = d.createElement('div')
+  hint.textContent = 'drag me to the display · double-click for fullscreen'
+  hint.style.cssText =
+    'position:fixed;left:50%;bottom:14px;transform:translateX(-50%);color:rgba(255,255,255,0.5);font:13px system-ui;transition:opacity 1s;pointer-events:none;'
+  d.body.appendChild(hint)
+  setTimeout(() => (hint.style.opacity = 0), 6000)
+  c.addEventListener('dblclick', () => {
+    if (d.fullscreenElement) d.exitFullscreen()
+    else c.requestFullscreen?.()
+  })
+  popup.addEventListener('beforeunload', () => {
+    popup = null
+    popupOpen.value = false
+  })
+  popupOpen.value = true
+}
+function blitPopup() {
+  if (!popup || popup.closed) {
+    if (popupOpen.value) {
+      popupOpen.value = false
+      popup = null
+    }
+    return
+  }
+  const c = popup.document.getElementById('out')
+  if (!c) return
+  const dpr = Math.min(popup.devicePixelRatio || 1, 2)
+  const pw = Math.round(popup.innerWidth * dpr)
+  const ph = Math.round(popup.innerHeight * dpr)
+  if (c.width !== pw || c.height !== ph) {
+    c.width = pw
+    c.height = ph
+  }
+  const out = nodes.find((n) => n.type === 'output')
+  const s = out && rtState.get(out.id)
+  const cx = c.getContext('2d')
+  cx.fillStyle = '#000'
+  cx.fillRect(0, 0, pw, ph)
+  if (s) {
+    const scale = Math.max(pw / W, ph / H)
+    cx.drawImage(s.out, (pw - W * scale) / 2, (ph - H * scale) / 2, W * scale, H * scale)
+  }
 }
 
 // --- output-only view: hide the routing UI, show just the composite -------
@@ -1157,6 +1273,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('pointermove', trackMouse)
   beat.stop()
+  if (popup && !popup.closed) popup.close()
   for (const s of rtState.values()) s.video?.srcObject?.getTracks?.().forEach((t) => t.stop())
 })
 </script>
@@ -1179,32 +1296,34 @@ onBeforeUnmount(() => {
       </template>
     </div>
 
-    <!-- toolbar -->
+    <!-- toolbar: two layers — build the graph on top, run the show below -->
     <div v-show="!outputOnly" class="toolbar">
-      <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
-      <span class="text-subtitle-2 mr-2">Patch</span>
-      <!-- add-node buttons: icons tinted with each node type's colour -->
-      <v-btn icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
-      <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
-      <v-btn icon="mdi-camera" variant="tonal" size="small" title="Add Camera (webcam source)" :style="{ color: TYPES.camera.color }" @click="addNode('camera')" />
-      <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
-      <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
-      <v-menu>
-        <template #activator="{ props }">
-          <v-btn v-bind="props" icon="mdi-tune-variant" variant="tonal" size="small" title="Add a control node (Input · XY Pad · Tracker)" :style="{ color: TYPES.input.color }" />
-        </template>
-        <v-list density="compact">
-          <v-list-item prepend-icon="mdi-sine-wave" title="Input (audio · midi · …)" @click="addNode('input')" />
-          <v-list-item prepend-icon="mdi-gesture-tap" title="XY Pad (touch surface)" @click="addNode('xy')" />
-          <v-list-item prepend-icon="mdi-target" title="Tracker (video tracking)" @click="addNode('tracker')" />
-        </v-list>
-      </v-menu>
-      <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
-      <v-btn icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
-      <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
-      <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
-      <v-spacer />
-
+      <div class="toolbar-row">
+        <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
+        <span class="text-subtitle-2 mr-2">Patch</span>
+        <!-- add-node buttons: icons tinted with each node type's colour -->
+        <v-btn icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
+        <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
+        <v-btn icon="mdi-camera" variant="tonal" size="small" title="Add Camera (webcam source)" :style="{ color: TYPES.camera.color }" @click="addNode('camera')" />
+        <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
+        <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
+        <v-menu>
+          <template #activator="{ props }">
+            <v-btn v-bind="props" icon="mdi-tune-variant" variant="tonal" size="small" title="Add a control node (Input · XY Pad · Tracker)" :style="{ color: TYPES.input.color }" />
+          </template>
+          <v-list density="compact">
+            <v-list-item prepend-icon="mdi-sine-wave" title="Input (audio · midi · …)" @click="addNode('input')" />
+            <v-list-item prepend-icon="mdi-gesture-tap" title="XY Pad (touch surface)" @click="addNode('xy')" />
+            <v-list-item prepend-icon="mdi-target" title="Tracker (video tracking)" @click="addNode('tracker')" />
+          </v-list>
+        </v-menu>
+        <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
+        <v-spacer />
+        <v-btn icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
+        <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
+        <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
+      </div>
+      <div class="toolbar-row">
       <!-- save / load named routings -->
       <v-menu :close-on-content-click="false">
         <template #activator="{ props }">
@@ -1237,6 +1356,7 @@ onBeforeUnmount(() => {
         </v-card>
       </v-menu>
 
+      <v-spacer />
       <v-btn
         :icon="micOn ? 'mdi-microphone' : 'mdi-microphone-off'"
         variant="text"
@@ -1269,9 +1389,18 @@ onBeforeUnmount(() => {
         </v-list>
       </v-menu>
       <v-btn icon="mdi-content-paste" variant="text" size="small" title="Paste node (Ctrl/Cmd+V)" :disabled="!clipboard" @click="pasteClipboard" />
+      <v-btn
+        icon="mdi-monitor-shimmer"
+        variant="text"
+        size="small"
+        :color="popupOpen ? 'primary' : undefined"
+        title="Pop out the output — drag it to a second display and keep adjusting here"
+        @click="togglePopup"
+      />
       <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
       <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
+      </div>
     </div>
 
     <!-- output-only: floating controls to exit / go fullscreen -->
@@ -1371,6 +1500,8 @@ onBeforeUnmount(() => {
             left: '-7px',
             top: HEAD_H + (THUMB_H * i) / (TYPES[n.type].ins + 1) - 7 + 'px',
           }"
+          :data-in-node="n.id"
+          :data-in-port="i - 1"
           :title="n.type === 'mask' ? (i === 1 ? 'content' : 'mask (matte)') : 'input'"
           @pointerup="endWire(n, i - 1)"
         />
@@ -1380,6 +1511,8 @@ onBeforeUnmount(() => {
           v-for="d in nodeDots(n)"
           :key="'dot' + d.param"
           class="ldot"
+          :data-jack-node="n.id"
+          :data-jack-param="d.param"
           :style="{ left: '-5px', top: dotPos(n, d.param).y - n.y - 5 + 'px' }"
           :title="'control: ' + d.param"
           @pointerup="endLink(n, d.param)"
@@ -1434,7 +1567,7 @@ onBeforeUnmount(() => {
                   </select>
                 </label>
                 <label v-else>
-                  <span class="pjack" :ref="(el) => bindJack(n.id, name, el)" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, name)" />
+                  <span class="pjack" :ref="(el) => bindJack(n.id, name, el)" :data-jack-node="n.id" :data-jack-param="name" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, name)" />
                   {{ spec.label ?? name }}
                   <input type="range" :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :value="effectControls.get(n.id).values[name]" @input="setEffectParam(n.id, name, +$event.target.value)" />
                 </label>
@@ -1478,7 +1611,7 @@ onBeforeUnmount(() => {
             <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
               <option v-for="b in BLENDS" :key="b" :value="b">{{ b }}</option>
             </select>
-            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
+            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" :data-jack-node="n.id" data-jack-param="mix" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
           </template>
         </div>
       </div>
@@ -1505,10 +1638,27 @@ onBeforeUnmount(() => {
 .sources iframe, .sources video { width: 384px; height: 216px; border: 0; }
 .toolbar {
   position: absolute; top: 0; left: 0; right: 0; z-index: 30;
-  display: flex; align-items: center; gap: 6px; padding: 8px 12px;
-  background: linear-gradient(to bottom, rgba(0,0,0,0.75), rgba(0,0,0,0.1));
+  display: flex; flex-direction: column; gap: 2px; padding: 6px 12px 8px;
+  background: linear-gradient(to bottom, rgba(5,6,10,0.94), rgba(5,6,10,0.72));
+  backdrop-filter: blur(6px);
 }
-.board { position: absolute; inset: 0; z-index: 10; cursor: grab; }
+.toolbar-row {
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; row-gap: 2px; min-width: 0;
+}
+@media (max-width: 640px) {
+  .toolbar { padding: 3px 4px 5px; }
+  /* two fixed layers that scroll sideways — never a third wrapped line */
+  .toolbar-row {
+    gap: 2px; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .toolbar-row::-webkit-scrollbar { display: none; }
+  .toolbar-row > * { flex: 0 0 auto; }
+  .toolbar :deep(.v-btn--icon.v-btn--size-small) { width: 34px; height: 34px; }
+  .toolbar :deep(.v-btn--size-small:not(.v-btn--icon)) { padding: 0 8px; min-width: 0; }
+}
+.board { position: absolute; inset: 0; z-index: 10; cursor: grab; touch-action: none; }
 .board:active { cursor: grabbing; }
 .space { position: absolute; inset: 0; transform-origin: 0 0; }
 .zoom-ctrls {
@@ -1522,6 +1672,7 @@ onBeforeUnmount(() => {
 .wire:hover { stroke-width: 4; }
 .node {
   position: absolute; z-index: 12; border-radius: 8px; overflow: visible;
+  touch-action: none;
   background: rgba(20,22,30,0.96); border: 1px solid rgba(255,255,255,0.14);
   box-shadow: 0 6px 20px rgba(0,0,0,0.4); user-select: none;
 }
@@ -1594,6 +1745,12 @@ onBeforeUnmount(() => {
   display: flex; gap: 6px; opacity: 0.35; transition: opacity 0.2s;
 }
 .output-ctrls:hover { opacity: 1; }
+/* fingers need fatter targets than a mouse */
+@media (pointer: coarse) {
+  .port { width: 20px; height: 20px; }
+  .pjack, .ldot { width: 16px; height: 16px; }
+  .node-body input[type=range] { height: 26px; }
+}
 .fps-meter {
   position: absolute; bottom: 8px; right: 8px; z-index: 40;
   padding: 3px 8px; border-radius: 6px;

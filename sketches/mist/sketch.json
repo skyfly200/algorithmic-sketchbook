@@ -1,0 +1,14 @@
+{
+  "title": "Mist",
+  "description": "A fine bright haze over a live source: highlights diffuse into a soft pearly bloom, contrast lifts toward white, and slow translucent veils breathe across the frame like early morning light.",
+  "tags": [
+    "filter",
+    "atmosphere",
+    "camera",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-19"
+}

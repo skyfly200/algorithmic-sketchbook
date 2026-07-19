@@ -1,0 +1,14 @@
+{
+  "title": "Glow",
+  "description": "A bloom pass for any live source — bright regions are isolated, blurred at two radii, and added back so lights and skies flare like a dreamy lens. Beats kick the bloom brighter.",
+  "tags": [
+    "filter",
+    "light",
+    "camera",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-19"
+}

@@ -1,0 +1,9 @@
+{
+  "title": "Moss",
+  "description": "Moss colonies creep across a rock face as thousands of tiny lit shoots — noisy frontiers grow into lobes and satellite patches, dry to straw and regrow. Click to seed a colony; humidity and beats set the pace.",
+  "tags": ["generative", "organic", "growth", "audio-reactive", "interactive"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-19"
+}

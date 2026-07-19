@@ -1,0 +1,15 @@
+{
+  "title": "Kaleidoscope",
+  "description": "A live kaleidoscope: one wedge of the scene mirrored around the centre into a turning mandala, with segments alternating mirrored/unmirrored so edges always match — the optics of a real two-mirror tube. Works on a camera, a dropped photo/video, the demo, or (in the Mixer/Patch/Autopilot) the layers below. The sampled wedge is steerable with the mouse and orbits gently on its own, the whole mandala spins, and beats kick the rotation. Segments, spin, wedge orbit, sample zoom and position are live and mappable.",
+  "tags": [
+    "kaleidoscope",
+    "mirror",
+    "mandala",
+    "filter",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-18"
+}
