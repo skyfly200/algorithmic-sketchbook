@@ -25,7 +25,93 @@ rt.mapInput('audio.pulse', 'spin', 0.3)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
-const src = createSource()
+
+// Demo source: a "bead dish" — dense drifting clusters of glass beads,
+// petals, rings and sequins. A kaleidoscope lives on fine colourful detail,
+// which the default soft-blob demo doesn't have.
+const beads = []
+{
+  const clusters = []
+  for (let c = 0; c < 5; c++) {
+    clusters.push({
+      x: rt.random(0.2, 0.8),
+      y: rt.random(0.2, 0.8),
+      drift: rt.random(0.3, 1),
+      ph: rt.random(0, Math.PI * 2),
+    })
+  }
+  for (let i = 0; i < 130; i++) {
+    beads.push({
+      c: clusters[i % clusters.length],
+      kind: rt.pick(['bead', 'petal', 'tri', 'ring', 'sequin']),
+      r: rt.random(0.02, 0.11), // orbit radius around the cluster
+      orbitSpeed: rt.random(0.05, 0.35) * (rt.rng() < 0.5 ? 1 : -1),
+      ph: rt.random(0, Math.PI * 2),
+      size: rt.random(6, 26),
+      hue: Math.round(rt.random(0, 360)),
+      spin: rt.random(-1.5, 1.5),
+    })
+  }
+}
+function beadDish(c, t, w, h) {
+  const g = c.createLinearGradient(0, 0, w, h)
+  g.addColorStop(0, '#100a1e')
+  g.addColorStop(1, '#0a1420')
+  c.fillStyle = g
+  c.fillRect(0, 0, w, h)
+  for (const b of beads) {
+    const cl = b.c
+    const cx = (cl.x + 0.06 * Math.sin(t * 0.11 * cl.drift + cl.ph)) * w
+    const cy = (cl.y + 0.05 * Math.cos(t * 0.09 * cl.drift + cl.ph * 1.7)) * h
+    const a = t * b.orbitSpeed + b.ph
+    const x = cx + Math.cos(a) * b.r * w
+    const y = cy + Math.sin(a) * b.r * w
+    c.save()
+    c.translate(x, y)
+    c.rotate(t * b.spin + b.ph)
+    const s = b.size
+    if (b.kind === 'bead') {
+      const rg = c.createRadialGradient(-s * 0.3, -s * 0.3, s * 0.1, 0, 0, s)
+      rg.addColorStop(0, '#fff')
+      rg.addColorStop(0.3, `hsl(${b.hue}, 85%, 62%)`)
+      rg.addColorStop(1, `hsl(${b.hue}, 75%, 26%)`)
+      c.fillStyle = rg
+      c.beginPath()
+      c.arc(0, 0, s, 0, Math.PI * 2)
+      c.fill()
+    } else if (b.kind === 'petal') {
+      c.fillStyle = `hsl(${b.hue}, 75%, 58%)`
+      c.beginPath()
+      c.ellipse(s * 0.5, 0, s, s * 0.36, 0, 0, Math.PI * 2)
+      c.fill()
+      c.strokeStyle = `hsl(${b.hue}, 60%, 30%)`
+      c.lineWidth = 1.5
+      c.stroke()
+    } else if (b.kind === 'tri') {
+      c.fillStyle = `hsl(${b.hue}, 80%, 55%)`
+      c.beginPath()
+      c.moveTo(s, 0)
+      c.lineTo(-s * 0.5, s * 0.7)
+      c.lineTo(-s * 0.5, -s * 0.7)
+      c.closePath()
+      c.fill()
+    } else if (b.kind === 'ring') {
+      c.strokeStyle = `hsl(${b.hue}, 80%, 60%)`
+      c.lineWidth = s * 0.3
+      c.beginPath()
+      c.arc(0, 0, s * 0.7, 0, Math.PI * 2)
+      c.stroke()
+    } else {
+      c.fillStyle = `hsl(${b.hue}, 95%, 72%)`
+      c.fillRect(-s * 0.4, -s * 0.4, s * 0.8, s * 0.8)
+      c.fillStyle = 'rgba(255,255,255,0.55)'
+      c.fillRect(-s * 0.4, -s * 0.4, s * 0.8, s * 0.25)
+    }
+    c.restore()
+  }
+}
+
+const src = createSource({ demo: beadDish })
 
 // The source is drawn once per frame into a square buffer (a fixed-resolution
 // stand-in for a world square big enough that a full wedge never out-runs it);

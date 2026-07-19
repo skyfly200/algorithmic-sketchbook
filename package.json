@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "new": "node scripts/new-sketch.mjs",
-    "artnet-bridge": "node scripts/artnet-bridge.mjs"
+    "artnet-bridge": "node scripts/artnet-bridge.mjs",
+    "perf": "node scripts/perf-audit.mjs"
   },
   "dependencies": {
     "@mdi/font": "^7.4.47",

@@ -159,6 +159,14 @@ onBeforeUnmount(() => {
       >
         {{ sketch.type === 'local' ? 'embedded' : 'external repo' }}
       </v-chip>
+      <div
+        v-if="sketch.perf"
+        class="perf-bubble"
+        :class="`perf-${sketch.perf >= 70 ? 'green' : sketch.perf >= 40 ? 'yellow' : 'red'}`"
+        :title="`Performance ${sketch.perf}/100 — measured frame rate vs a 60fps target (npm run perf)`"
+      >
+        {{ sketch.perf }}
+      </div>
     </div>
 
     <v-card-title class="text-subtitle-1">{{ sketch.title }}</v-card-title>
@@ -222,6 +230,26 @@ onBeforeUnmount(() => {
   right: 8px;
   z-index: 2;
 }
+/* measured performance grade (1-100), bottom-left of the preview */
+.perf-bubble {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 2;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 11px system-ui, sans-serif;
+  color: #0b0d10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+.perf-green { background: #4ade80; }
+.perf-yellow { background: #facc15; }
+.perf-red { background: #f87171; }
 .description {
   display: -webkit-box;
   -webkit-line-clamp: 3;

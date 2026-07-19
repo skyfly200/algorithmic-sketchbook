@@ -68,20 +68,12 @@ truss.rotation.z = Math.PI / 2
 truss.position.y = TRUSS_Y
 scene.add(truss)
 
-// gradient texture for the beam cones: bright at the head, gone at the floor
-const beamCanvas = document.createElement('canvas')
-beamCanvas.width = 1
-beamCanvas.height = 128
-{
-  const c = beamCanvas.getContext('2d')
-  const g = c.createLinearGradient(0, 0, 0, 128)
-  g.addColorStop(0, 'rgba(255,255,255,0)')
-  g.addColorStop(0.15, 'rgba(255,255,255,0.25)')
-  g.addColorStop(1, 'rgba(255,255,255,0.85)')
-  c.fillStyle = g
-  c.fillRect(0, 0, 1, 128)
-}
-const beamTex = new THREE.CanvasTexture(beamCanvas)
+// beam-cone texture: u wraps the cone's circumference, v runs head→floor.
+// It's baked from the gobo itself — the gobo's angular light profile becomes
+// shafts in the beam, so the volumetric cone matches the projected pattern.
+const coneCanvas = document.createElement('canvas')
+coneCanvas.width = 256
+coneCanvas.height = 128
 
 // --- gobo wheel -------------------------------------------------------------
 // One shared 256px canvas; every fixture projects it through its SpotLight
@@ -166,7 +158,45 @@ function bakeGobo() {
   c.fillStyle = '#000' // the projected map must stay opaque black outside
   c.fillRect(0, 0, GOBO, GOBO)
   c.globalCompositeOperation = 'source-over'
+  bakeConeTex()
   return true
+}
+
+// sample the finished gobo's brightness around each polar angle and turn it
+// into the cone texture: shafts where the gobo passes light, dark in between
+function bakeConeTex() {
+  const src = goboCanvas.getContext('2d').getImageData(0, 0, GOBO, GOBO).data
+  const CW = coneCanvas.width
+  const CH = coneCanvas.height
+  const prof = new Float32Array(CW)
+  let max = 0.001
+  for (let x = 0; x < CW; x++) {
+    const ang = (x / CW) * Math.PI * 2
+    let sum = 0
+    let n = 0
+    for (let rr = 0.12; rr < 0.92; rr += 0.05) {
+      const px = Math.round(GOBO / 2 + Math.cos(ang) * rr * (GOBO / 2))
+      const py = Math.round(GOBO / 2 + Math.sin(ang) * rr * (GOBO / 2))
+      sum += src[(py * GOBO + px) * 4]
+      n++
+    }
+    prof[x] = sum / (n * 255)
+    max = Math.max(max, prof[x])
+  }
+  const c = coneCanvas.getContext('2d')
+  const img = c.createImageData(CW, CH)
+  for (let y = 0; y < CH; y++) {
+    // canvas top = texture v=1 = cone apex (head): fade in from the lens
+    const len = y / (CH - 1)
+    const grad = len < 0.15 ? (len / 0.15) * 0.25 : 0.25 + ((len - 0.15) / 0.85) * 0.6
+    for (let x = 0; x < CW; x++) {
+      const e = 0.25 + 0.75 * (prof[x] / max)
+      const i = (y * CW + x) * 4
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = 255
+      img.data[i + 3] = Math.round(grad * e * 255)
+    }
+  }
+  c.putImageData(img, 0, 0)
 }
 
 // drifting dust: faint points that make the haze feel inhabited
@@ -207,9 +237,12 @@ function makeFixture(i, n) {
   )
   tilt.add(body)
 
-  // two nested gradient cones: a wide soft shell and a hot core
+  // two nested gradient cones: a wide soft shell and a hot core. Their
+  // texture carries the gobo's shafts; per-fixture so rotations differ.
+  const coneTex = new THREE.CanvasTexture(coneCanvas)
+  coneTex.wrapS = THREE.RepeatWrapping
   const beamMatOuter = new THREE.MeshBasicMaterial({
-    map: beamTex, transparent: true, blending: THREE.AdditiveBlending,
+    map: coneTex, transparent: true, blending: THREE.AdditiveBlending,
     depthWrite: false, side: THREE.DoubleSide,
   })
   const beamMatInner = beamMatOuter.clone()
@@ -240,7 +273,7 @@ function makeFixture(i, n) {
 
   scene.add(root)
   return {
-    root, pan, tilt, outer, inner, lens, spot, goboTex,
+    root, pan, tilt, outer, inner, lens, spot, goboTex, coneTex,
     beamMatOuter, beamMatInner,
     phase: rt.random(0, Math.PI * 2),
     rate: rt.random(0.6, 1.4),
@@ -282,11 +315,19 @@ renderer.setAnimationLoop((now) => {
   const flash = 1 + pulse * params.flash * 1.6
   scene.fog.density = 0.03 + params.haze * 0.045
 
-  // re-bake the gobo when its knobs move; every fixture shares the canvas
-  if (bakeGobo()) for (const f of fixtures) f.goboTex.needsUpdate = true
+  // re-bake the gobo when its knobs move; every fixture shares the canvases
+  if (bakeGobo()) {
+    for (const f of fixtures) {
+      f.goboTex.needsUpdate = true
+      f.coneTex.needsUpdate = true
+    }
+  }
 
-  const iris = 0.35 + 0.65 * params.aperture
-  const wR = (0.2 + params.beamWidth * 0.85) * iris // beam radius at the floor
+  // one set of optics for light and cone, so they always align: the iris
+  // masks the projection to a fraction of the spot angle, and the cone
+  // flares to exactly tan(angle) x length x that same fraction
+  const spotAngle = 0.08 + params.beamWidth * 0.28
+  const wR = Math.tan(spotAngle) * BEAM_LEN * 0.96 * params.aperture
   for (const f of fixtures) {
     const ph = t * params.speed * f.rate + f.phase
     f.pan.rotation.y = Math.sin(ph * 0.9) * 1.4 * f.panAmp * params.spread
@@ -297,9 +338,7 @@ renderer.setAnimationLoop((now) => {
     const hue = (((params.hue + f.hueOff + t * 6) % 360) + 360) / 360
     f.color.setHSL(hue, 1 - params.white * 0.7, 0.5 + params.white * 0.25)
 
-    // a patterned gobo splits the beam, so the solid cone reads dimmer
-    const goboDim = params.gobo === 'open' ? 1 : 0.7
-    const alpha = (0.28 + params.haze * 0.45) * flash * goboDim
+    const alpha = (0.28 + params.haze * 0.45) * flash
     f.beamMatOuter.color.copy(f.color)
     f.beamMatOuter.opacity = alpha * 0.6
     f.beamMatInner.color.copy(f.color).lerp(new THREE.Color(1, 1, 1), 0.35)
@@ -314,10 +353,13 @@ renderer.setAnimationLoop((now) => {
 
     f.spot.color.copy(f.color)
     f.spot.intensity = 110 * flash * (0.6 + params.haze * 0.4)
-    f.spot.angle = (0.15 + params.beamWidth * 0.3) * iris
+    f.spot.angle = spotAngle
     // focus: knife-edge pool in focus, wide soft penumbra out of focus
     f.spot.penumbra = 0.15 + (1 - params.focus) * 0.7
-    f.goboTex.rotation = t * params.goboSpin * f.goboRate
+    const goboRot = t * params.goboSpin * f.goboRate
+    f.goboTex.rotation = goboRot
+    // spin the cone shafts with the projected pattern
+    f.coneTex.offset.x = -goboRot / (Math.PI * 2)
   }
 
   controls.update()
