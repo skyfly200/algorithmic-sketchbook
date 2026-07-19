@@ -1,0 +1,14 @@
+{
+  "title": "Fog",
+  "description": "Rolling banks of volumetric fog drift across a live source — layered seeded noise sliding at different speeds with a ground-hugging height bias, dimming the scene into the murk. Density, drift, tint and murk are all mappable.",
+  "tags": [
+    "filter",
+    "atmosphere",
+    "camera",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-19"
+}

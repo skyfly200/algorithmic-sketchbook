@@ -25,6 +25,7 @@ const store = useSketchStore()
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
   'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
+  'fog', 'mist', 'glow',
 ]
 // Only local, same-origin sketches can be captured for piping. Filters (and
 // Motion Extraction, which has a native node) are organized under the Filter
@@ -1295,32 +1296,34 @@ onBeforeUnmount(() => {
       </template>
     </div>
 
-    <!-- toolbar -->
+    <!-- toolbar: two layers — build the graph on top, run the show below -->
     <div v-show="!outputOnly" class="toolbar">
-      <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
-      <span class="text-subtitle-2 mr-2">Patch</span>
-      <!-- add-node buttons: icons tinted with each node type's colour -->
-      <v-btn icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
-      <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
-      <v-btn icon="mdi-camera" variant="tonal" size="small" title="Add Camera (webcam source)" :style="{ color: TYPES.camera.color }" @click="addNode('camera')" />
-      <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
-      <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
-      <v-menu>
-        <template #activator="{ props }">
-          <v-btn v-bind="props" icon="mdi-tune-variant" variant="tonal" size="small" title="Add a control node (Input · XY Pad · Tracker)" :style="{ color: TYPES.input.color }" />
-        </template>
-        <v-list density="compact">
-          <v-list-item prepend-icon="mdi-sine-wave" title="Input (audio · midi · …)" @click="addNode('input')" />
-          <v-list-item prepend-icon="mdi-gesture-tap" title="XY Pad (touch surface)" @click="addNode('xy')" />
-          <v-list-item prepend-icon="mdi-target" title="Tracker (video tracking)" @click="addNode('tracker')" />
-        </v-list>
-      </v-menu>
-      <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
-      <v-btn icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
-      <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
-      <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
-      <v-spacer />
-
+      <div class="toolbar-row">
+        <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
+        <span class="text-subtitle-2 mr-2">Patch</span>
+        <!-- add-node buttons: icons tinted with each node type's colour -->
+        <v-btn icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
+        <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
+        <v-btn icon="mdi-camera" variant="tonal" size="small" title="Add Camera (webcam source)" :style="{ color: TYPES.camera.color }" @click="addNode('camera')" />
+        <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
+        <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
+        <v-menu>
+          <template #activator="{ props }">
+            <v-btn v-bind="props" icon="mdi-tune-variant" variant="tonal" size="small" title="Add a control node (Input · XY Pad · Tracker)" :style="{ color: TYPES.input.color }" />
+          </template>
+          <v-list density="compact">
+            <v-list-item prepend-icon="mdi-sine-wave" title="Input (audio · midi · …)" @click="addNode('input')" />
+            <v-list-item prepend-icon="mdi-gesture-tap" title="XY Pad (touch surface)" @click="addNode('xy')" />
+            <v-list-item prepend-icon="mdi-target" title="Tracker (video tracking)" @click="addNode('tracker')" />
+          </v-list>
+        </v-menu>
+        <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
+        <v-spacer />
+        <v-btn icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
+        <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
+        <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
+      </div>
+      <div class="toolbar-row">
       <!-- save / load named routings -->
       <v-menu :close-on-content-click="false">
         <template #activator="{ props }">
@@ -1353,6 +1356,7 @@ onBeforeUnmount(() => {
         </v-card>
       </v-menu>
 
+      <v-spacer />
       <v-btn
         :icon="micOn ? 'mdi-microphone' : 'mdi-microphone-off'"
         variant="text"
@@ -1396,6 +1400,7 @@ onBeforeUnmount(() => {
       <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
       <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
+      </div>
     </div>
 
     <!-- output-only: floating controls to exit / go fullscreen -->
@@ -1633,9 +1638,25 @@ onBeforeUnmount(() => {
 .sources iframe, .sources video { width: 384px; height: 216px; border: 0; }
 .toolbar {
   position: absolute; top: 0; left: 0; right: 0; z-index: 30;
-  display: flex; align-items: center; gap: 6px; padding: 8px 12px;
-  flex-wrap: wrap; row-gap: 2px;
-  background: linear-gradient(to bottom, rgba(0,0,0,0.75), rgba(0,0,0,0.1));
+  display: flex; flex-direction: column; gap: 2px; padding: 6px 12px 8px;
+  background: linear-gradient(to bottom, rgba(5,6,10,0.94), rgba(5,6,10,0.72));
+  backdrop-filter: blur(6px);
+}
+.toolbar-row {
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; row-gap: 2px; min-width: 0;
+}
+@media (max-width: 640px) {
+  .toolbar { padding: 3px 4px 5px; }
+  /* two fixed layers that scroll sideways — never a third wrapped line */
+  .toolbar-row {
+    gap: 2px; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .toolbar-row::-webkit-scrollbar { display: none; }
+  .toolbar-row > * { flex: 0 0 auto; }
+  .toolbar :deep(.v-btn--icon.v-btn--size-small) { width: 34px; height: 34px; }
+  .toolbar :deep(.v-btn--size-small:not(.v-btn--icon)) { padding: 0 8px; min-width: 0; }
 }
 .board { position: absolute; inset: 0; z-index: 10; cursor: grab; touch-action: none; }
 .board:active { cursor: grabbing; }

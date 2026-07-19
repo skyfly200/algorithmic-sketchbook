@@ -1,0 +1,15 @@
+{
+  "title": "LED Pixels",
+  "description": "An addressable LED rig simulated pixel by pixel — strip, ring, matrix or spiral wired in serpentine order, running rainbow / chase / sparkle / VU / fire / plasma patterns with diffusion bloom. Dimmer, hue, speed and spread ship pre-mapped to Art-Net channels 1–4 (npm run artnet-bridge), with mic level driving the VU meter.",
+  "tags": [
+    "led",
+    "light",
+    "artnet",
+    "dmx",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-19"
+}
