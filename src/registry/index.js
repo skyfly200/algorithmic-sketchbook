@@ -19,6 +19,9 @@
  *   }
  */
 import externalProjects from './external.json'
+// Measured performance scores (1-100 vs a 60fps target), written by
+// `npm run perf` (scripts/perf-audit.mjs). Relative to the auditing machine.
+import perfScores from './perf.json'
 
 const manifests = import.meta.glob('/sketches/*/sketch.json', { eager: true })
 const thumbnails = import.meta.glob('/sketches/*/thumbnail.{png,jpg,webp,gif}', {
@@ -47,6 +50,7 @@ const localSketches = Object.entries(manifests).map(([path, mod]) => {
     repo: null,
     embed: true,
     thumbnail: thumbnailFor(slug),
+    perf: perfScores[slug] ?? null,
   }
 })
 
@@ -62,6 +66,7 @@ const externals = externalProjects.map((p) => ({
   repo: p.repo ?? null,
   embed: p.embed ?? Boolean(p.url),
   thumbnail: p.thumbnail ?? null,
+  perf: null, // external pages aren't audited
 }))
 
 export const allSketches = [...localSketches, ...externals].sort((a, b) =>
