@@ -17,8 +17,13 @@ function sketchTitle(slug) {
   <v-container fluid class="pa-6" style="max-width: 1400px">
     <section class="hero mb-8">
       <BrandLogo :size="112" uid="hero" class="hero-logo" />
-      <div>
-        <h1 class="hero-title">Bright Waves</h1>
+      <div class="hero-copy">
+        <div class="hero-heading">
+          <h1 class="hero-title">Bright Waves</h1>
+          <v-chip color="primary" variant="flat" size="small" class="hero-count">
+            {{ store.sketches.length }} effects
+          </v-chip>
+        </div>
         <p class="hero-tagline">
           An algorithmic sketchbook — a curated gallery of interactive computer-graphics
           experiments. Explore each one live, remix its parameters, and save scenes.
@@ -78,6 +83,17 @@ function sketchTitle(slug) {
   gap: 24px;
   flex-wrap: wrap;
 }
+.hero-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hero-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .hero-logo {
   flex-shrink: 0;
   box-shadow: 0 8px 40px rgba(215, 137, 215, 0.25);
@@ -92,10 +108,14 @@ function sketchTitle(slug) {
   background-clip: text;
   color: transparent;
 }
+.hero-count {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
 .hero-tagline {
   max-width: 560px;
-  margin-top: 8px;
   color: rgba(255, 255, 255, 0.68);
   font-size: 0.98rem;
+  margin: 0;
 }
 </style>
