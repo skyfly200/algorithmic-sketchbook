@@ -150,6 +150,7 @@ function loadGraph() {
 // motion-extraction sketch behind a Filter node, so legacy graphs convert.
 function normalizeNodes(list) {
   for (const n of list ?? []) {
+    if (!n.params) n.params = {} // guard malformed/legacy saves
     if (n.type === 'motion') {
       n.type = 'filter'
       n.params = { slug: 'motion-extraction' }
@@ -1477,6 +1478,23 @@ function deleteRouting(r) {
 }
 
 onMounted(async () => {
+  // Deep link from the Library: ?load=<id> opens a saved routing.
+  const loadId = new URLSearchParams(location.hash.split('?')[1] || '').get('load')
+  if (loadId) {
+    const r = savedRoutings.value.find((x) => x.id === loadId)
+    if (r) {
+      loadRouting(r)
+      await nextTick()
+      layoutTick.value++
+      resizeStage()
+      window.addEventListener('resize', resizeStage)
+      window.addEventListener('message', onEffectMessage)
+      window.addEventListener('keydown', onKey)
+      window.addEventListener('pointermove', trackMouse)
+      raf = requestAnimationFrame(loop)
+      return
+    }
+  }
   // Seed a starter graph the first time: effect → filter → output.
   if (!nodes.length) {
     addNode('effect')
