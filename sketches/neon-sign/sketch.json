@@ -1,0 +1,14 @@
+{
+  "title": "Neon Sign",
+  "description": "Glowing glass tubing bent into shapes on a dark brick wall — multi-pass bloom halos, segments that flicker and buzz like a failing transformer, and a sign that hums brighter on the beat.",
+  "tags": [
+    "generative",
+    "neon",
+    "light",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}
