@@ -268,6 +268,9 @@ function addNode(type) {
                           ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0, invert: false }
                           : {},
   })
+  // Polygon Mask nodes lock by default so a mapped mask isn't nudged or
+  // randomized by accident — its corners are still editable via "Edit masks".
+  if (type === 'shape') n.locked = true
   nodes.push(n)
   st(n.id) // create runtime state
   persist()
@@ -275,7 +278,9 @@ function addNode(type) {
 }
 function removeNode(id) {
   const i = nodes.findIndex((n) => n.id === id)
-  if (i >= 0) nodes.splice(i, 1)
+  if (i < 0 || nodes[i].locked) return // locked nodes are protected from removal
+  nodes.splice(i, 1)
+  selectedSet.delete(id)
   pruneOrphans()
   rtState.delete(id)
   persist()
@@ -317,10 +322,16 @@ function randomPatch() {
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
   const chance = (p) => Math.random() < p
 
-  nodes.splice(0)
-  edges.splice(0)
-  links.splice(0)
-  rtState.clear()
+  // Keep locked nodes (and any wiring purely among them); randomize the rest.
+  const keptIds = new Set(nodes.filter((n) => n.locked).map((n) => n.id))
+  const keptNodes = nodes.filter((n) => keptIds.has(n.id))
+  const keptEdges = edges.filter((e) => keptIds.has(e.from) && keptIds.has(e.to))
+  const keptLinks = links.filter((l) => keptIds.has(l.from) && keptIds.has(l.to))
+  nodes.splice(0, nodes.length, ...keptNodes)
+  edges.splice(0, edges.length, ...keptEdges)
+  links.splice(0, links.length, ...keptLinks)
+  for (const id of [...rtState.keys()]) if (!keptIds.has(id)) rtState.delete(id)
+  if (keptIds.size) nextId = Math.max(nextId, ...keptIds) + 1
 
   const col = (c) => 60 + c * 240
   const mk = (type, params, c, y) => {
@@ -634,9 +645,28 @@ function applyLinks(now) {
   }
 }
 
-const drag = reactive({ node: null, dx: 0, dy: 0 })
+const drag = reactive({ node: null, dx: 0, dy: 0, ids: [], starts: null, px: 0, py: 0 })
 const wire = reactive({ active: false, from: null, fromPort: 0, x: 0, y: 0, kind: 'video' })
 const selected = ref(null) // node id last clicked — target for copy/delete
+// Multi-selection (shift-click to add/remove). Moving any selected node moves
+// the whole set; locking applies to all of them.
+const selectedSet = reactive(new Set())
+function selectSingle(id) { selectedSet.clear(); selectedSet.add(id); selected.value = id }
+function toggleSel(id) {
+  if (selectedSet.has(id)) selectedSet.delete(id); else selectedSet.add(id)
+  selected.value = selectedSet.has(id) ? id : (selectedSet.size ? [...selectedSet].pop() : null)
+}
+function clearSelection() { selectedSet.clear(); selected.value = null }
+function nodeById(id) { return nodes.find((x) => x.id === id) }
+// Lock / unlock every selected node (locked nodes resist move, delete, edits
+// and randomize).
+function toggleLockSelection() {
+  const ids = selectedSet.size ? [...selectedSet] : (selected.value != null ? [selected.value] : [])
+  if (!ids.length) return
+  const anyUnlocked = ids.some((id) => !nodeById(id)?.locked)
+  for (const id of ids) { const n = nodeById(id); if (n) n.locked = anyUnlocked }
+  persist()
+}
 
 // --- pan & zoom: the graph lives in a transformed "space" so it can be
 // scrolled and scaled without moving any node's stored coordinates.
@@ -679,6 +709,7 @@ function resetView() {
 const pinch = new Map()
 function onBoardDown(e) {
   if (e.target.closest('.node')) return // let node/port handlers run
+  if (!e.shiftKey) clearSelection() // click empty space to deselect
   try { e.target.releasePointerCapture?.(e.pointerId) } catch { /* not held */ }
   pinch.set(e.pointerId, { x: e.clientX, y: e.clientY })
   if (pinch.size >= 2) {
@@ -692,11 +723,20 @@ function onBoardDown(e) {
   pan.oy = view.panY
 }
 function startDrag(n, e) {
+  // Shift-click toggles the node in the multi-selection (no move).
+  if (e.shiftKey) { toggleSel(n.id); return }
+  // Plain click on a node outside the current selection selects just it.
+  if (!selectedSet.has(n.id)) selectSingle(n.id)
+  else selected.value = n.id
+  if (n.locked) return // locked nodes don't move
   const p = boardXY(e)
   drag.node = n.id
-  selected.value = n.id
-  drag.dx = p.x - n.x
-  drag.dy = p.y - n.y
+  drag.px = p.x
+  drag.py = p.y
+  // Move every selected, unlocked node together.
+  drag.ids = [...selectedSet].filter((id) => !nodeById(id)?.locked)
+  if (!drag.ids.includes(n.id)) drag.ids.push(n.id)
+  drag.starts = new Map(drag.ids.map((id) => { const nd = nodeById(id); return [id, { x: nd.x, y: nd.y }] }))
 }
 
 // XY Pad: dragging on the pad's thumbnail sets the node's x/y (y up = 1).
@@ -764,10 +804,10 @@ function onMove(e) {
   }
   const p = boardXY(e)
   if (drag.node != null) {
-    const n = nodes.find((x) => x.id === drag.node)
-    if (n) {
-      n.x = p.x - drag.dx
-      n.y = p.y - drag.dy
+    const ddx = p.x - drag.px, ddy = p.y - drag.py
+    for (const id of drag.ids) {
+      const nd = nodeById(id), s = drag.starts?.get(id)
+      if (nd && s) { nd.x = s.x + ddx; nd.y = s.y + ddy }
     }
   }
   if (wire.active) {
@@ -778,6 +818,8 @@ function onMove(e) {
 function onUp(e) {
   if (drag.node != null) persist()
   drag.node = null
+  drag.ids = []
+  drag.starts = null
   // Belt and braces for touch: if a wire is in flight, resolve the drop
   // target by hit-testing the release point (data attributes on ports/jacks),
   // since touch event routing doesn't always land pointerup on the target.
@@ -2405,14 +2447,14 @@ onBeforeUnmount(() => {
         v-for="n in nodes"
         :key="n.id"
         class="node"
-        :class="{ 'node--selected': selected === n.id }"
+        :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked }"
         :style="{ left: n.x + 'px', top: n.y + 'px', width: NODE_W + 'px' }"
       >
         <div
           class="node-head"
           :style="{ background: TYPES[n.type].color }"
           @pointerdown="startDrag(n, $event)"
-          @dblclick="startRename(n)"
+          @dblclick="!n.locked && startRename(n)"
         >
           <input
             v-if="editingName === n.id"
@@ -2426,7 +2468,8 @@ onBeforeUnmount(() => {
           />
           <span v-else class="node-name" title="Double-click to rename">{{ nodeTitle(n) }}</span>
           <v-icon v-if="nodeSlow(n)" icon="mdi-alert" size="13" class="node-warn" :title="nodeSlowReason(n)" @pointerdown.stop />
-          <v-icon icon="mdi-close" size="14" class="node-close" @pointerdown.stop @click="removeNode(n.id)" />
+          <v-icon :icon="n.locked ? 'mdi-lock' : 'mdi-lock-open-variant-outline'" size="13" class="node-lock" :title="n.locked ? 'Locked — click to unlock' : 'Lock this node'" @pointerdown.stop @click="n.locked = !n.locked; persist()" />
+          <v-icon v-if="!n.locked" icon="mdi-close" size="14" class="node-close" @pointerdown.stop @click="removeNode(n.id)" />
         </div>
 
         <div
@@ -2715,6 +2758,12 @@ onBeforeUnmount(() => {
 }
 .node-close { cursor: pointer; color: rgba(0,0,0,0.6); }
 .node-warn { color: #7a3a00; margin-right: 2px; filter: drop-shadow(0 0 3px rgba(255,180,60,0.9)); cursor: help; }
+.node-lock { cursor: pointer; color: rgba(0,0,0,0.55); margin-right: 2px; }
+.node-lock:hover { color: rgba(0,0,0,0.85); }
+/* A locked node resists moving/removal and its params can't be edited. */
+.node--locked { outline: 1px dashed rgba(124,140,255,0.5); }
+.node--locked .node-head { cursor: default; }
+.node--locked .node-body, .node--locked .node-thumb { pointer-events: none; opacity: 0.75; }
 .load-btn {
   display: inline-block; cursor: pointer; font: 11px system-ui, sans-serif;
   color: #cdd3e0; background: #12141c; border: 1px solid #333; border-radius: 4px;
