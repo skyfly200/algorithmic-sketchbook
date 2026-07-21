@@ -400,8 +400,22 @@ async function toggleMic() {
 }
 
 // --- filter feed: composite the layers below into a filter's source --------
+// The feed is sized to the *viewport's* aspect ratio, not a fixed 16:9. If it
+// were fixed, cover-fitting the scene into it (here) and then cover-fitting it
+// back to full screen (in the filter's source.js) would crop twice — visibly
+// zooming the output, badly so on non-16:9 / portrait screens. Matching the
+// aspect makes both fits identity, so a filtered mix lines up with the scene.
 const feed = new OffscreenCanvas(640, 360)
 const feedCtx = feed.getContext('2d')
+function sizeFeed() {
+  const w = window.innerWidth || 640
+  const h = window.innerHeight || 360
+  const MAXD = 640 // bound the longest side so the per-frame composite stays cheap
+  const fw = w >= h ? MAXD : Math.max(1, Math.round(MAXD * (w / h)))
+  const fh = w >= h ? Math.max(1, Math.round(MAXD * (h / w))) : MAXD
+  if (feed.width !== fw) feed.width = fw
+  if (feed.height !== fh) feed.height = fh
+}
 function canvasBlend(b) {
   if (b === 'add') return 'lighter'
   if (b === 'normal') return 'source-over'
@@ -414,6 +428,7 @@ function coverDraw(ctx, cv, sw, sh, tw, th) {
   ctx.drawImage(cv, (tw - w) / 2, (th - h) / 2, w, h)
 }
 function feedFilters() {
+  sizeFeed()
   for (let i = 0; i < stack.length; i++) {
     const L = stack[i]
     if (L.kind !== 'filter' || L.state === 'warming' && performance.now() - L.bornAt < 300) continue
