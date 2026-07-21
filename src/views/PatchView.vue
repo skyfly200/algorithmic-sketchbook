@@ -16,6 +16,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'v
 import { useSketchStore } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
 import TourOverlay from '../components/TourOverlay.vue'
+import perfScores from '../registry/perf.json'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
@@ -1352,10 +1353,35 @@ function toggleFps() {
 }
 const fps = ref(0)
 let passCount = 0
+
+// Freeze the visuals (skip compositing AND pause every effect iframe's rAF) so
+// a heavy/janky mix never blocks the editor — you can keep wiring and tweaking
+// while it's held on the last frame, then unfreeze.
+const renderPaused = ref(false)
+function toggleRenderPaused() {
+  renderPaused.value = !renderPaused.value
+  for (const s of rtState.values()) s.iframe?.contentWindow?.postMessage({ type: 'sketch:pause', paused: renderPaused.value }, '*')
+}
+// Per-node composite cost (ms, smoothed) surfaced reactively for the slow badge.
+const nodeCost = reactive({})
+const SLOW_SCORE = 40 // perf score below this = a heavy effect
+const SLOW_MS = 7 // composite time above this = a slow node
+function nodeScore(n) {
+  return (n.type === 'effect' || n.type === 'filter') && n.params.slug ? (perfScores[n.params.slug] ?? 100) : 100
+}
+function nodeSlow(n) {
+  return nodeScore(n) < SLOW_SCORE || (nodeCost[n.id] ?? 0) > SLOW_MS
+}
+function nodeSlowReason(n) {
+  return nodeScore(n) < SLOW_SCORE
+    ? 'Heavy effect — likely to lower the frame rate'
+    : 'Slow to composite — may lower the frame rate'
+}
 let fpsWindow = 0
 
 function loop(ts) {
   const now = ts ?? performance.now()
+  if (renderPaused.value) { raf = requestAnimationFrame(loop); return } // held — keep the editor snappy
   broadcastBeat(now)
   if (showMode.value === 'timeline' && showPlaying.value) tickShow(now)
   applyLinks(now) // drive params from Input nodes first
@@ -1363,7 +1389,12 @@ function loop(ts) {
     skipLeft--
   } else {
     const t0 = performance.now()
-    for (const n of evalOrder()) evalNode(n)
+    for (const n of evalOrder()) {
+      const te = performance.now()
+      evalNode(n)
+      const s = rtState.get(n.id)
+      if (s) s.cost = (s.cost ?? 0) * 0.9 + (performance.now() - te) * 0.1
+    }
     // Blit the (last) Output node to the fullscreen stage.
     const out = nodes.find((n) => n.type === 'output')
     const cnv = stage.value
@@ -1396,6 +1427,8 @@ function loop(ts) {
       fps.value = Math.round((passCount * 1000) / (now - fpsWindow || 1))
       passCount = 0
       fpsWindow = now
+      // publish per-node composite cost for the slow-node badge (reactive)
+      for (const n of nodes) { const c = rtState.get(n.id)?.cost; if (c != null) nodeCost[n.id] = +c.toFixed(2) }
     }
   }
   raf = requestAnimationFrame(loop)
@@ -2179,6 +2212,13 @@ onBeforeUnmount(() => {
         title="Show — plan cues and run them manually or on a timeline"
         @click="showOpen = !showOpen"
       />
+      <v-btn
+        :icon="renderPaused ? 'mdi-motion-play-outline' : 'mdi-motion-pause-outline'"
+        variant="text" size="small"
+        :color="renderPaused ? 'warning' : undefined"
+        :title="renderPaused ? 'Resume the visuals' : 'Freeze the visuals (keeps the editor snappy while you tweak)'"
+        @click="toggleRenderPaused"
+      />
       <v-btn data-tour="patch-output" icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
       <v-btn icon="mdi-help-circle-outline" variant="text" size="small" title="Replay the walkthrough" @click="startTour" />
@@ -2359,6 +2399,7 @@ onBeforeUnmount(() => {
             @blur="commitRename(n, $event.target.value)"
           />
           <span v-else class="node-name" title="Double-click to rename">{{ nodeTitle(n) }}</span>
+          <v-icon v-if="nodeSlow(n)" icon="mdi-alert" size="13" class="node-warn" :title="nodeSlowReason(n)" @pointerdown.stop />
           <v-icon icon="mdi-close" size="14" class="node-close" @pointerdown.stop @click="removeNode(n.id)" />
         </div>
 
@@ -2646,6 +2687,7 @@ onBeforeUnmount(() => {
   border: 0; border-radius: 3px; padding: 1px 4px; font: 600 12px system-ui; color: #06070a;
 }
 .node-close { cursor: pointer; color: rgba(0,0,0,0.6); }
+.node-warn { color: #7a3a00; margin-right: 2px; filter: drop-shadow(0 0 3px rgba(255,180,60,0.9)); cursor: help; }
 .load-btn {
   display: inline-block; cursor: pointer; font: 11px system-ui, sans-serif;
   color: #cdd3e0; background: #12141c; border: 1px solid #333; border-radius: 4px;
