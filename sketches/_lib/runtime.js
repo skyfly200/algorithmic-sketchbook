@@ -54,6 +54,14 @@ export const INPUT_SOURCES = [
   'tilt.y', // device tilt front–back
   'shake', // device shake intensity (accelerometer), decays
   'time.sin', // slow 10 s oscillation
+  // Free-running low-frequency oscillators (4 s period, 0..1) — pick a
+  // waveform to drive a param cyclically. Shape with an Input node's
+  // scale/offset in Patch, or a mapping's amount elsewhere.
+  'osc.sine',
+  'osc.triangle',
+  'osc.saw',
+  'osc.square',
+  'osc.random', // stepped sample-and-hold — a new random level each cycle
   'midi.cc1', // MIDI control change (any midi.ccN resolves)
   'midi.cc2',
   'midi.cc3',
@@ -337,6 +345,25 @@ export function createRuntime() {
     }
   }
 
+  // Low-frequency oscillators for the osc.* input sources (0..1, 4 s period).
+  const OSC_PERIOD = 4000
+  let oscHoldIdx = -1
+  let oscHoldVal = Math.random()
+  function oscVal(kind, now) {
+    const ph = (now % OSC_PERIOD) / OSC_PERIOD // 0..1
+    switch (kind) {
+      case 'sine': return 0.5 + 0.5 * Math.sin(ph * Math.PI * 2)
+      case 'triangle': return 1 - Math.abs(2 * ph - 1)
+      case 'saw': return ph
+      case 'square': return ph < 0.5 ? 1 : 0
+      case 'random': {
+        const idx = Math.floor(now / OSC_PERIOD)
+        if (idx !== oscHoldIdx) { oscHoldIdx = idx; oscHoldVal = Math.random() }
+        return oscHoldVal
+      }
+    }
+    return 0
+  }
   function sourceValue(source, now) {
     // Legacy alias: 'beat.*' was renamed to 'audio.*'; old saved scenes and
     // mappings keep working.
@@ -363,6 +390,11 @@ export function createRuntime() {
       case 'tilt.y': return motionFallback ? mouse.y : motion.y
       case 'shake': return motion.shake
       case 'time.sin': return 0.5 + 0.5 * Math.sin(now * 0.001 * Math.PI * 0.2) // 10 s period
+      case 'osc.sine':
+      case 'osc.triangle':
+      case 'osc.saw':
+      case 'osc.square':
+      case 'osc.random': return oscVal(s.slice(4), now)
       case 'midi.note': return midi.state.note
       case 'midi.velocity': return midi.state.velocity
       case 'leap.x': return leap.state.x
@@ -380,7 +412,7 @@ export function createRuntime() {
   // the reaction glides instead of chattering. Already-smooth sources (an LFO)
   // need none.
   function defaultSmooth(source) {
-    if (source === 'time.sin') return 0
+    if (source === 'time.sin' || source.startsWith('osc.')) return 0 // keep the waveform crisp
     if (/^(audio\.pulse|audio\.flux|shake|touch\.down|midi\.note)$/.test(source)) return 0.3
     if (source.startsWith('audio.')) return 0.75 // level/low/mid/high/volume/centroid
     if (source.startsWith('midi.')) return 0.4
