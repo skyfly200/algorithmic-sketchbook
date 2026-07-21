@@ -17,6 +17,7 @@ import { useSketchStore } from '../stores/sketches'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
+import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn } from '../stores/media.js'
 
 const store = useSketchStore()
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
@@ -87,7 +88,7 @@ const THUMB_H = 107
 const TYPES = {
   effect: { title: 'Effect', ins: 0, color: '#7c8cff' },
   filter: { title: 'Filter', ins: 1, color: '#c98cff' },
-  camera: { title: 'Camera', ins: 0, color: '#4dd0c4' },
+  media: { title: 'Media', ins: 0, color: '#4dd0c4' }, // camera / files / clips
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
   output: { title: 'Output', ins: 1, color: '#ffffff' },
@@ -143,6 +144,10 @@ function normalizeNodes(list) {
     if (n.type === 'motion') {
       n.type = 'filter'
       n.params = { slug: 'motion-extraction' }
+    }
+    if (n.type === 'camera') {
+      n.type = 'media'
+      n.params = { mode: 'camera', mediaId: null }
     }
   }
   return list
@@ -234,7 +239,9 @@ function addNode(type) {
                 ? { x: 0.5, y: 0.5 }
                 : type === 'tracker'
                   ? { thresh: 0.5, smooth: 0.7 }
-                  : {},
+                  : type === 'media'
+                    ? { mode: 'camera', mediaId: null }
+                    : {},
   })
   nodes.push(n)
   st(n.id) // create runtime state
@@ -788,17 +795,125 @@ function autoMap(n) {
 function bindFrame(id, el) {
   if (el) st(id).iframe = el
 }
-async function bindVideo(id, el) {
-  const s = st(id)
-  if (!el || s.video === el) return
-  s.video = el
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 360 } })
-    el.srcObject = stream
-    await el.play()
-  } catch {
-    /* no camera */
+// --- media node: shared camera + library playback -------------------------
+const cameraOn = ref(sharedCameraOn())
+async function toggleCamera() {
+  if (cameraOn.value) {
+    stopSharedCamera()
+    cameraOn.value = false
+    // detach the stream from every media element so the light goes off
+    for (const s of rtState.values()) {
+      if (s.mediaEl?.srcObject) { s.mediaEl.srcObject = null }
+    }
+  } else {
+    try {
+      await startSharedCamera()
+      cameraOn.value = true
+    } catch {
+      cameraOn.value = false
+    }
   }
+}
+
+// The live element (video/img/canvas) a media node should draw this frame. A
+// per-node video/img is created lazily and reattached when the mode or the
+// chosen library item changes — the camera path shares one global stream.
+function mediaEl(node) {
+  const s = st(node.id)
+  const p = node.params
+  const want = p.mode === 'camera' ? 'camera' : `media:${p.mediaId}`
+  if (s.mediaWant !== want) {
+    s.mediaWant = want
+    if (s.mediaEl) { try { s.mediaEl.pause?.() } catch {}; s.mediaEl.srcObject = null; s.mediaEl.removeAttribute('src'); s.mediaEl = null }
+    if (p.mode === 'camera') {
+      const v = document.createElement('video')
+      v.muted = true; v.playsInline = true; v.autoplay = true
+      s.mediaEl = v
+      if (cameraOn.value) startSharedCamera().then((stream) => { v.srcObject = stream; v.play().catch(() => {}) }).catch(() => {})
+    } else {
+      const item = mediaById(p.mediaId)
+      if (item) {
+        if (item.kind === 'video') {
+          const v = document.createElement('video')
+          v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = true
+          v.src = item.url; v.play().catch(() => {})
+          s.mediaEl = v
+        } else {
+          const img = new Image()
+          img.src = item.url
+          s.mediaEl = img
+        }
+      }
+    }
+  }
+  // camera turned on after the element was made in a prior frame
+  if (p.mode === 'camera' && s.mediaEl && cameraOn.value && !s.mediaEl.srcObject) {
+    startSharedCamera().then((stream) => { s.mediaEl.srcObject = stream; s.mediaEl.play().catch(() => {}) }).catch(() => {})
+  }
+  return s.mediaEl
+}
+
+function loadMediaFiles(node, e) {
+  const files = [...(e.target.files ?? [])]
+  let first = null
+  for (const f of files) { const item = addMediaFile(f); if (!first) first = item }
+  if (first) { node.params.mode = 'library'; node.params.mediaId = first.id; persist() }
+  e.target.value = ''
+}
+function pickMedia(node, id) {
+  node.params.mediaId = id
+  node.params.mode = 'library'
+  persist()
+}
+
+// --- recording / snapshot / prebake ----------------------------------------
+// Record the fullscreen stage (the composited output) to a WebM the user can
+// download AND add to the library as a clip — which is also how a slow,
+// non-realtime effect is "prebaked": record its output once, then a Media
+// node plays the clip back at full speed.
+let recorder = null
+const recording = ref(false)
+const recElapsed = ref(0)
+let recTimer = 0
+function toggleRecord() {
+  if (recording.value) { recorder?.stop(); return }
+  const cnv = stage.value
+  if (!cnv?.captureStream) return
+  const stream = cnv.captureStream(30)
+  const chunks = []
+  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm'
+  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 })
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data) }
+  recorder.onstop = () => {
+    recording.value = false
+    clearInterval(recTimer)
+    const blob = new Blob(chunks, { type: 'video/webm' })
+    addRecordedClip(blob, `recording ${new Date().toLocaleTimeString()}`)
+    // also offer a download
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `patch-${Date.now()}.webm`
+    a.click()
+    recorder = null
+  }
+  recorder.start()
+  recording.value = true
+  recElapsed.value = 0
+  recTimer = setInterval(() => (recElapsed.value += 1), 1000)
+}
+// Snapshot the current stage to a PNG (downloaded + added to the library).
+function snapshotPng() {
+  const cnv = stage.value
+  if (!cnv) return
+  cnv.toBlob((blob) => {
+    if (!blob) return
+    const file = new File([blob], `snapshot-${Date.now()}.png`, { type: 'image/png' })
+    addMediaFile(file)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = file.name
+    a.click()
+  }, 'image/png')
 }
 
 // --- effect-node parameters + input mappings ------------------------------
@@ -949,8 +1064,13 @@ function evalNode(node) {
     } catch {
       /* not ready */
     }
-  } else if (node.type === 'camera') {
-    if (s.video && s.video.videoWidth) cover(octx, s.video, s.video.videoWidth, s.video.videoHeight)
+  } else if (node.type === 'media') {
+    const el = mediaEl(node)
+    if (el) {
+      if (el.tagName === 'VIDEO' && el.videoWidth) cover(octx, el, el.videoWidth, el.videoHeight)
+      else if (el.tagName === 'IMG' && el.naturalWidth) cover(octx, el, el.naturalWidth, el.naturalHeight)
+      else if (el.tagName === 'CANVAS') cover(octx, el, el.width, el.height)
+    }
   } else if (node.type === 'mask') {
     const content = inputCanvas(node, 0)
     const mask = inputCanvas(node, 1)
@@ -1323,7 +1443,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', trackMouse)
   beat.stop()
   if (popup && !popup.closed) popup.close()
-  for (const s of rtState.values()) s.video?.srcObject?.getTracks?.().forEach((t) => t.stop())
+  stopSharedCamera()
+  if (recorder && recorder.state === 'recording') recorder.stop()
 })
 </script>
 
@@ -1341,7 +1462,6 @@ onBeforeUnmount(() => {
           :style="{ width: frameSize.w + 'px', height: frameSize.h + 'px' }"
           allow="microphone; camera; midi; accelerometer; gyroscope"
         />
-        <video v-else-if="n.type === 'camera'" :ref="(el) => bindVideo(n.id, el)" muted playsinline />
       </template>
     </div>
 
@@ -1353,7 +1473,7 @@ onBeforeUnmount(() => {
         <!-- add-node buttons: icons tinted with each node type's colour -->
         <v-btn icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
         <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
-        <v-btn icon="mdi-camera" variant="tonal" size="small" title="Add Camera (webcam source)" :style="{ color: TYPES.camera.color }" @click="addNode('camera')" />
+        <v-btn icon="mdi-image-multiple" variant="tonal" size="small" title="Add Media (camera · files · clips)" :style="{ color: TYPES.media.color }" @click="addNode('media')" />
         <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
         <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
         <v-menu>
@@ -1413,6 +1533,29 @@ onBeforeUnmount(() => {
         :color="micOn ? 'primary' : undefined"
         title="Mic — effect nodes' audio mappings react to sound"
         @click="toggleMic"
+      />
+      <v-btn
+        :icon="cameraOn ? 'mdi-webcam' : 'mdi-webcam-off'"
+        variant="text"
+        size="small"
+        :color="cameraOn ? 'primary' : undefined"
+        title="Camera — request the webcam once; all Media nodes in camera mode share it"
+        @click="toggleCamera"
+      />
+      <v-btn
+        :icon="recording ? 'mdi-stop-circle' : 'mdi-record-circle-outline'"
+        variant="text"
+        size="small"
+        :color="recording ? 'error' : undefined"
+        :title="recording ? `Stop recording (${recElapsed}s) — saves to the library + downloads` : 'Record the output to a clip (prebake slow effects)'"
+        @click="toggleRecord"
+      />
+      <v-btn
+        icon="mdi-camera-iris"
+        variant="text"
+        size="small"
+        title="Snapshot the output to a PNG (also added to the media library)"
+        @click="snapshotPng"
       />
       <v-btn
         icon="mdi-speedometer"
@@ -1671,6 +1814,25 @@ onBeforeUnmount(() => {
             </select>
             <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" :data-jack-node="n.id" data-jack-param="mix" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
           </template>
+          <template v-if="n.type === 'media'">
+            <label>source
+              <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
+                <option value="camera">📷 Camera{{ cameraOn ? '' : ' (off)' }}</option>
+                <option value="library">🎞 Library</option>
+              </select>
+            </label>
+            <label v-if="n.params.mode === 'library'">clip
+              <select :value="n.params.mediaId" @change="pickMedia(n, +$event.target.value)" @pointerdown.stop>
+                <option v-if="!mediaLibrary.length" :value="null" disabled>— load files below —</option>
+                <option v-for="m in mediaLibrary" :key="m.id" :value="m.id">{{ m.kind === 'video' ? '▶' : '🖼' }} {{ m.name }}</option>
+              </select>
+            </label>
+            <label class="load-btn" title="Load images or videos into the library" @pointerdown.stop>
+              ＋ Load files
+              <input type="file" accept="image/*,video/*" multiple hidden @change="loadMediaFiles(n, $event)" />
+            </label>
+            <div v-if="n.params.mode === 'camera' && !cameraOn" class="media-hint">Camera is off — enable it with the webcam button in the toolbar.</div>
+          </template>
         </div>
       </div>
       </div>
@@ -1746,6 +1908,13 @@ onBeforeUnmount(() => {
   border: 0; border-radius: 3px; padding: 1px 4px; font: 600 12px system-ui; color: #06070a;
 }
 .node-close { cursor: pointer; color: rgba(0,0,0,0.6); }
+.load-btn {
+  display: inline-block; cursor: pointer; font: 11px system-ui, sans-serif;
+  color: #cdd3e0; background: #12141c; border: 1px solid #333; border-radius: 4px;
+  padding: 3px 8px; text-align: center;
+}
+.load-btn:hover { background: #1a1d28; }
+.media-hint { font: 10px system-ui, sans-serif; color: #9aa4c0; opacity: 0.8; }
 .node-thumb { width: 100%; background: #000; }
 .node-thumb :deep(canvas) { width: 100%; height: 100%; display: block; }
 .node-body { padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; }
