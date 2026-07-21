@@ -1855,6 +1855,7 @@ function saveRouting() {
     nodes: JSON.parse(JSON.stringify(nodes)),
     edges: JSON.parse(JSON.stringify(edges)),
     links: JSON.parse(JSON.stringify(links)),
+    effects: currentEffects(), // each effect sketch's own param values + mappings
   })
   persistSaved()
   newName.value = ''
@@ -1875,6 +1876,9 @@ function loadRouting(r) {
   const ids = new Set(nodes.map((n) => n.id))
   for (const id of [...rtState.keys()]) if (!ids.has(id)) rtState.delete(id)
   for (const n of nodes) st(n.id)
+  // Restore each effect sketch's own params once its iframe is live.
+  pendingEffects = { ...(data.effects || {}) }
+  nextTick(applyPendingEffects)
   persist()
   nextTick(() => layoutTick.value++)
 }
@@ -1917,11 +1921,11 @@ function exportPatch() {
   const name = newName.value.trim() || 'patch'
   downloadJson({
     type: 'sketchbook-patch', version: 1, name, resolution: resLabel.value,
-    patch: { nodes: JSON.parse(JSON.stringify(nodes)), edges: JSON.parse(JSON.stringify(edges)), links: JSON.parse(JSON.stringify(links)) },
+    patch: { nodes: JSON.parse(JSON.stringify(nodes)), edges: JSON.parse(JSON.stringify(edges)), links: JSON.parse(JSON.stringify(links)), effects: currentEffects() },
   }, `${fileSlug(name)}.patch.json`)
 }
 function exportRouting(r) {
-  downloadJson({ type: 'sketchbook-patch', version: 1, name: r.name, patch: { nodes: r.nodes, edges: r.edges, links: r.links || [] } }, `${fileSlug(r.name)}.patch.json`)
+  downloadJson({ type: 'sketchbook-patch', version: 1, name: r.name, patch: { nodes: r.nodes, edges: r.edges, links: r.links || [], effects: r.effects || {} } }, `${fileSlug(r.name)}.patch.json`)
 }
 async function importPatch() {
   const data = await pickJsonFile()
