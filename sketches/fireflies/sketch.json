@@ -1,0 +1,9 @@
+{
+  "title": "Fireflies",
+  "description": "A warm dusk swarm of glowing motes drifting on a slow swirling current, each blinking on its own rhythm. Raise Sync and they entrain into unison flashes; beats flash the whole swarm, and the pointer stirs the nearby air.",
+  "tags": ["particles", "glow", "organic", "audio-reactive", "generative"],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

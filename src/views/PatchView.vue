@@ -17,7 +17,7 @@ import { useSketchStore } from '../stores/sketches'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
-import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn } from '../stores/media.js'
+import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, flipSharedCamera } from '../stores/media.js'
 
 const store = useSketchStore()
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
@@ -827,6 +827,17 @@ async function toggleCamera() {
       cameraOn.value = false
     }
   }
+}
+// Flip front↔back; the shared stream is replaced, so re-point every camera
+// media element at the new one.
+async function flipCamera() {
+  if (!cameraOn.value) return
+  try {
+    const stream = await flipSharedCamera()
+    for (const s of rtState.values()) {
+      if (s.mediaWant === 'camera' && s.mediaEl) { s.mediaEl.srcObject = stream; s.mediaEl.play().catch(() => {}) }
+    }
+  } catch { /* ignore */ }
 }
 
 // The live element (video/img/canvas) a media node should draw this frame. A
@@ -1643,6 +1654,14 @@ onBeforeUnmount(() => {
         :color="cameraOn ? 'primary' : undefined"
         title="Camera — request the webcam once; all Media nodes in camera mode share it"
         @click="toggleCamera"
+      />
+      <v-btn
+        v-if="cameraOn"
+        icon="mdi-camera-flip"
+        variant="text"
+        size="small"
+        title="Flip between the front and back camera"
+        @click="flipCamera"
       />
       <v-btn
         :icon="recording ? 'mdi-stop-circle' : 'mdi-record-circle-outline'"

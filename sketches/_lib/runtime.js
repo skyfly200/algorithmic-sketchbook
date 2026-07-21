@@ -374,6 +374,19 @@ export function createRuntime() {
     }
   }
 
+  // A sensible smoothing default for an auto-declared mapping, by source type.
+  // Impulse-y sources (a beat pulse, an onset, a shake) should stay punchy;
+  // continuous but noisy ones (raw audio bands, loudness) want real inertia so
+  // the reaction glides instead of chattering. Already-smooth sources (an LFO)
+  // need none.
+  function defaultSmooth(source) {
+    if (source === 'time.sin') return 0
+    if (/^(audio\.pulse|audio\.flux|shake|touch\.down|midi\.note)$/.test(source)) return 0.3
+    if (source.startsWith('audio.')) return 0.75 // level/low/mid/high/volume/centroid
+    if (source.startsWith('midi.')) return 0.4
+    return 0.5 // mouse/touch position, tilt, leap, artnet
+  }
+
   // Per-mapping smoothed source values (keyed by source→param) so a mapping's
   // `smooth` (0..1, inertia) makes live input glide instead of jumping.
   const smoothed = new Map()
@@ -485,9 +498,13 @@ export function createRuntime() {
       return view
     },
 
-    mapInput(source, param, amount = 0.5) {
-      defaultMappings.push({ source, param, amount })
-      if (!noDefaultMap) setMappings([...mappings, { source, param, amount }])
+    mapInput(source, param, amount = 0.5, smooth = defaultSmooth(source)) {
+      // Default mappings used to run with no inertia (smooth 0), so the param
+      // snapped to the raw input every frame — visibly jumpy, especially in
+      // Autopilot where every layer reacts to the shared mic at once. Give
+      // each a source-appropriate smoothing unless the caller overrides it.
+      defaultMappings.push({ source, param, amount, smooth })
+      if (!noDefaultMap) setMappings([...mappings, { source, param, amount, smooth }])
     },
 
     tick(now = performance.now()) {

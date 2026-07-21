@@ -12,7 +12,7 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  cell: { value: 2, min: 1, max: 8, step: 1, label: 'Grain size' },
+  cell: { value: 1, min: 1, max: 8, step: 1, label: 'Grain size' },
   pour: { value: 1.4, min: 0, max: 3, step: 0.05, label: 'Pour rate' },
   looseness: { value: 0.5, min: 0.1, max: 1, step: 0.02, label: 'Looseness (slope)' },
   hueRate: { value: 0.7, min: 0, max: 3, step: 0.05, label: 'Colour cycling' },
@@ -34,7 +34,10 @@ let spoutDir = 1
 
 // 0 = empty; else 1..255 encodes the grain's hue byte (never 0).
 function rebuild() {
-  const cs = Math.max(1, Math.round(params.cell) * rt.pixelRatio)
+  // Floor the cell at 2 device px so the finest grain setting stays affordable
+  // even when the pixel ratio is 1 (otherwise the CA grid can balloon to one
+  // cell per pixel and tank the frame rate).
+  const cs = Math.max(2, Math.round(params.cell) * rt.pixelRatio)
   cols = Math.max(16, Math.floor(W / cs))
   rows = Math.max(16, Math.floor(H / cs))
   sand = new Uint8Array(cols * rows)

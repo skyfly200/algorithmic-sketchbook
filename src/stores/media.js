@@ -81,14 +81,22 @@ function drawThumb(el, w, h) {
 // --- shared camera: one getUserMedia, reused by every Media node -----------
 let camStream = null
 let camPromise = null
+let camFacing = 'user' // 'user' (front) | 'environment' (back)
 export function sharedCameraOn() {
   return !!camStream
 }
-export async function startSharedCamera() {
-  if (camStream) return camStream
+export function sharedCameraFacing() {
+  return camFacing
+}
+export async function startSharedCamera(facingMode = camFacing) {
+  if (camStream && facingMode === camFacing) return camStream
+  // Switching facing means dropping the current stream first — a device only
+  // streams one camera at a time.
+  if (camStream && facingMode !== camFacing) stopSharedCamera()
+  camFacing = facingMode
   if (!camPromise) {
     camPromise = navigator.mediaDevices
-      .getUserMedia({ video: { width: 1280, height: 720 } })
+      .getUserMedia({ video: { width: 1280, height: 720, facingMode } })
       .then((s) => (camStream = s))
       .catch((e) => {
         camPromise = null
@@ -96,6 +104,10 @@ export async function startSharedCamera() {
       })
   }
   return camPromise
+}
+// Flip the shared camera front↔back; returns the new stream.
+export function flipSharedCamera() {
+  return startSharedCamera(camFacing === 'user' ? 'environment' : 'user')
 }
 export function stopSharedCamera() {
   if (camStream) {
