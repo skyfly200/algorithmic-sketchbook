@@ -30,10 +30,17 @@ const BLENDS = [
   'screen', 'lighten', 'overlay', 'soft-light', 'hard-light',
   'color-dodge', 'difference', 'exclusion', 'hue', 'color', 'luminosity',
 ]
-const effectPool = computed(() =>
+// The full set of eligible effects; the picker below narrows to those the
+// user has ticked on (an empty enabled-set means "all").
+const allEffects = computed(() =>
   store.sketches.filter(
     (s) => s.type === 'local' && s.embed && !FILTER_SLUGS.includes(s.slug) && s.slug !== 'bright-waves-logo',
   ),
+)
+const effectPool = computed(() =>
+  enabledEffects.value.size
+    ? allEffects.value.filter((s) => enabledEffects.value.has(s.slug))
+    : allEffects.value,
 )
 const filterPool = computed(() =>
   store.sketches.filter((s) => s.type === 'local' && s.embed && FILTER_SLUGS.includes(s.slug)),
@@ -52,11 +59,23 @@ const dwell = ref(savedSet.dwell ?? 25) // seconds between routing moves
 const lowSkip = ref(savedSet.lowSkip ?? true)
 const fpsFloor = ref(savedSet.fpsFloor ?? 24)
 const perfBudget = ref(savedSet.perfBudget ?? 12)
+const resolution = ref(savedSet.resolution ?? 'high') // low | medium | high | native
+const enabledEffects = ref(new Set(savedSet.enabledEffects ?? []))
 const playing = ref(true)
 function persistSettings() {
   localStorage.setItem(SET_KEY, JSON.stringify({
     dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value, perfBudget: perfBudget.value,
+    resolution: resolution.value, enabledEffects: [...enabledEffects.value],
   }))
+}
+function toggleEffect(slug) {
+  // Empty set means "all on"; the first uncheck materialises the full set so
+  // the toggle removes exactly that one and keeps the rest.
+  const set = enabledEffects.value.size ? new Set(enabledEffects.value) : new Set(allEffects.value.map((s) => s.slug))
+  set.has(slug) ? set.delete(slug) : set.add(slug)
+  // if everything ended up ticked again, collapse back to the "all" sentinel
+  enabledEffects.value = set.size === allEffects.value.length ? new Set() : set
+  persistSettings()
 }
 
 // --- perf-aware routing ------------------------------------------------------
@@ -103,10 +122,52 @@ function filterOf() {
 
 function srcFor(layer) {
   const s = store.bySlug(layer.slug)
-  return s ? `${s.url}?preview=1&capture=1&quality=high&seed=${layer.seed}` : ''
+  return s ? `${s.url}?preview=1&capture=1&quality=${resolution.value}&seed=${layer.seed}` : ''
 }
 function titleOf(slug) {
   return store.bySlug(slug)?.title ?? slug
+}
+
+// --- save the current mix as a Patch routing -------------------------------
+// Turn the live stack into a node graph in the same format Patch loads:
+// effect sources chained through Blend nodes, an optional Filter fed the
+// composite, then Output. It lands in the shared saved-routings store so it
+// shows up in Patch and the Library.
+function saveAsPatch() {
+  const layers = liveLayers()
+  const effs = layers.filter((l) => l.kind === 'effect')
+  const filt = layers.find((l) => l.kind === 'filter')
+  if (!effs.length) return
+  const nodes = []
+  const edges = []
+  let id = 1
+  const mk = (type, params, x, y) => { const n = { id: id++, type, x, y, params }; nodes.push(n); return n }
+  // effect source nodes down the left
+  const effNodes = effs.map((l, i) => mk('effect', { slug: l.slug }, 40, 60 + i * 150))
+  // fold them together with blends: base, then blend each next on top
+  let composite = effNodes[0]
+  for (let i = 1; i < effNodes.length; i++) {
+    const b = mk('blend', { mode: effs[i].blend === 'normal' ? 'screen' : effs[i].blend, mix: effs[i].opacity ?? 1 }, 250 + i * 40, 60 + i * 150)
+    edges.push({ from: composite.id, to: b.id, port: 0 })
+    edges.push({ from: effNodes[i].id, to: b.id, port: 1 })
+    composite = b
+  }
+  let tail = composite
+  if (filt) {
+    const f = mk('filter', { slug: filt.slug }, 480, 120)
+    edges.push({ from: composite.id, to: f.id, port: 0 })
+    tail = f
+  }
+  const out = mk('output', {}, 700, 160)
+  edges.push({ from: tail.id, to: out.id, port: 0 })
+
+  const SAVED_KEY = 'sketchbook-patch-saved'
+  let saved = []
+  try { saved = JSON.parse(localStorage.getItem(SAVED_KEY)) || [] } catch {}
+  const names = effs.map((l) => titleOf(l.slug)).join(' + ')
+  saved.push({ id: Date.now().toString(36), name: `Autopilot: ${names}`.slice(0, 60), nodes, edges, links: [] })
+  localStorage.setItem(SAVED_KEY, JSON.stringify(saved))
+  say('saved as a patch')
 }
 
 function pickSketch(pool, budgetLeft) {
@@ -549,18 +610,36 @@ onBeforeUnmount(() => {
       <v-btn icon="mdi-skip-previous" variant="text" size="small" title="Back to the previous routing" :disabled="history.length < 2" @click="back" />
       <v-btn :icon="playing ? 'mdi-pause' : 'mdi-play'" variant="text" size="small" :title="playing ? 'Pause the tour' : 'Resume'" @click="playing = !playing" />
       <v-btn icon="mdi-skip-next" variant="text" size="small" title="Next routing move now" @click="mutate()" />
+      <v-btn icon="mdi-content-save-outline" variant="text" size="small" title="Save the current mix as a Patch routing" @click="saveAsPatch" />
       <v-menu :close-on-content-click="false">
         <template #activator="{ props }">
           <v-btn v-bind="props" icon="mdi-cog-outline" variant="text" size="small" title="Autopilot settings" />
         </template>
-        <v-card class="pa-3" min-width="260">
+        <v-card class="pa-3" min-width="280" max-height="560" style="overflow-y:auto">
           <div class="set-row">Seconds between changes: {{ dwell }}s</div>
           <v-slider v-model="dwell" density="compact" hide-details :min="6" :max="120" :step="1" @end="persistSettings" />
           <div class="set-row">Perf budget: {{ perfBudget }} (bigger = richer mixes)</div>
           <v-slider v-model="perfBudget" density="compact" hide-details :min="4" :max="24" :step="1" @end="persistSettings" />
+          <div class="set-row">Resolution</div>
+          <v-btn-toggle v-model="resolution" density="compact" mandatory divided class="mb-2" @update:model-value="persistSettings">
+            <v-btn value="low" size="x-small">Low</v-btn>
+            <v-btn value="medium" size="x-small">Med</v-btn>
+            <v-btn value="high" size="x-small">High</v-btn>
+            <v-btn value="native" size="x-small">Native</v-btn>
+          </v-btn-toggle>
           <v-checkbox v-model="lowSkip" density="compact" hide-details label="Auto-thin the mix on low FPS" @change="persistSettings" />
           <div v-if="lowSkip" class="set-row">FPS floor: {{ fpsFloor }}</div>
           <v-slider v-if="lowSkip" v-model="fpsFloor" density="compact" hide-details :min="10" :max="50" :step="1" @end="persistSettings" />
+          <div class="set-row d-flex justify-space-between align-center">
+            <span>Effects in rotation</span>
+            <button class="mini-clear" @click="enabledEffects = new Set(); persistSettings()">all</button>
+          </div>
+          <div class="eff-list">
+            <label v-for="s in allEffects" :key="s.slug" class="eff-item">
+              <input type="checkbox" :checked="!enabledEffects.size || enabledEffects.has(s.slug)" @change="toggleEffect(s.slug)" />
+              {{ s.title }}
+            </label>
+          </div>
         </v-card>
       </v-menu>
       <v-btn
@@ -654,6 +733,9 @@ onBeforeUnmount(() => {
 .fps.low { color: #f88; }
 .countdown { font: 12px ui-monospace, monospace; color: #9aa4c0; min-width: 48px; text-align: right; }
 .set-row { font: 12px system-ui, sans-serif; color: #cdd3e0; margin-top: 4px; }
+.eff-list { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow-y: auto; margin-top: 4px; }
+.eff-item { display: flex; align-items: center; gap: 6px; font: 11px system-ui, sans-serif; color: #cdd3e0; }
+.mini-clear { font: 10px system-ui; color: #9aa4c0; background: transparent; border: 1px solid #444; border-radius: 4px; padding: 1px 6px; cursor: pointer; }
 .drawer {
   position: absolute; top: 52px; right: 10px; bottom: 60px; width: 290px; z-index: 20;
   overflow-y: auto; padding: 10px; border-radius: 10px;
