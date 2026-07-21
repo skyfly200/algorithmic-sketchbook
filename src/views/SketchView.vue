@@ -121,8 +121,18 @@ function fullscreen() {
   frame.value?.requestFullscreen?.()
 }
 
+// Space toggles rendering — the runtime freezes its rAF loop on pause.
+const paused = ref(false)
+function onKey(e) {
+  if (e.code !== 'Space' || e.target.matches('input, textarea, select, [contenteditable]')) return
+  e.preventDefault()
+  paused.value = !paused.value
+  post({ type: 'sketch:pause', paused: paused.value })
+}
+
 onMounted(() => {
   window.addEventListener('message', onMessage)
+  window.addEventListener('keydown', onKey)
   const fromQuery = route.query.scene && scenes.byId(route.query.scene)
   if (fromQuery) {
     pendingScene = fromQuery
@@ -130,7 +140,10 @@ onMounted(() => {
     showControls.value = true
   }
 })
-onUnmounted(() => window.removeEventListener('message', onMessage))
+onUnmounted(() => {
+  window.removeEventListener('message', onMessage)
+  window.removeEventListener('keydown', onKey)
+})
 </script>
 
 <template>
@@ -248,14 +261,18 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
     </p>
 
     <div class="d-flex ga-3 flex-grow-1" style="min-height: 0">
-      <iframe
-        v-if="sketch.embed && sketch.url"
-        ref="frame"
-        :key="reloadKey"
-        :src="frameSrc"
-        class="sketch-frame"
-        allow="fullscreen; microphone; camera; midi; accelerometer; gyroscope; xr-spatial-tracking"
-      />
+      <div v-if="sketch.embed && sketch.url" class="frame-wrap">
+        <iframe
+          ref="frame"
+          :key="reloadKey"
+          :src="frameSrc"
+          class="sketch-frame"
+          allow="fullscreen; microphone; camera; midi; accelerometer; gyroscope; xr-spatial-tracking"
+        />
+        <div v-if="paused" class="paused-badge" title="Press Space to resume">
+          <v-icon icon="mdi-pause" size="16" /> paused · Space to resume
+        </div>
+      </div>
       <v-empty-state
         v-else
         icon="mdi-open-in-new"
@@ -459,6 +476,12 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
   flex-direction: column;
   height: calc(100vh - 64px);
 }
+.frame-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
 .sketch-frame {
   flex: 1;
   width: 100%;
@@ -466,6 +489,21 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   background: #000;
+}
+.paused-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font: 12px system-ui, sans-serif;
+  color: #ffd9a0;
+  background: rgba(20, 16, 10, 0.82);
+  border: 1px solid rgba(255, 200, 130, 0.4);
+  pointer-events: none;
 }
 .controls-panel {
   width: 320px;

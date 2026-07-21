@@ -1,0 +1,15 @@
+{
+  "title": "Light Through Leaves",
+  "description": "Dappled sunlight filtered through a leafy canopy swaying in the wind — drifting leaf-gap noise masks a warm light field so soft shadows and bright pools sway across a live image, with angled god-ray shafts through the gaps.",
+  "tags": [
+    "filter",
+    "light",
+    "atmosphere",
+    "camera",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

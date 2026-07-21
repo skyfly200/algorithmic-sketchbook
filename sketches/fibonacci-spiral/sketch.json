@@ -1,0 +1,14 @@
+{
+  "title": "Fibonacci Spiral",
+  "description": "A sunflower phyllotaxis — seeds placed at the golden angle spiral out from the centre, revealing the opposing parastichy families. Seeds bloom and pulse with the beat, with an optional golden logarithmic-spiral overlay.",
+  "tags": [
+    "generative",
+    "math",
+    "geometric",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

@@ -1,36 +1,46 @@
 <script setup>
 /**
- * Autopilot — a hands-free tour that deals random *mixes*, not single
- * sketches: each scene is a small random composite in the spirit of the Patch
- * dice roll — 1–3 effect layers stacked with random blend modes and
- * opacities, often topped by a filter (pointillism, VHS, lens flare, …) that
- * receives the live composite of the layers below it as its source. Scenes
- * crossfade on a dwell timer, and if the frame rate stays under the floor for
- * five straight seconds the watchdog skips ahead early.
+ * Autopilot — a hands-free tour that *evolves* a mix instead of dealing whole
+ * new scenes: a persistent stack of 1–3 blend-composited effect layers
+ * (often capped by a filter fed the live composite below) is mutated one
+ * move at a time — replace a layer, add one, drop one, swap the filter,
+ * restyle a blend. Every incoming sketch warms up invisibly until it has
+ * announced itself and rendered frames, then crossfades in while only its
+ * counterpart fades out — the rest of the network never stops.
  *
- * Input mappings work like the solo viewer, per layer: every sketch in the
- * current scene announces its params/mappings into the side drawer, and one
- * shared mic feeds beat state into every running frame.
+ * Routing is perf-aware: each sketch's measured performance score
+ * (src/registry/perf.json, `npm run perf`) becomes a cost, the stack keeps
+ * its total under a budget, and the FPS watchdog degrades gracefully —
+ * first thinning the most expensive layer, then swapping in cheap sketches —
+ * rather than cutting to a new scene.
  */
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useSketchStore } from '../stores/sketches'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
+import perfScores from '../registry/perf.json'
 
 const store = useSketchStore()
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
   'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
-  'fog', 'mist', 'glow',
+  'fog', 'mist', 'glow', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves',
 ]
 const BLENDS = [
   'screen', 'lighten', 'overlay', 'soft-light', 'hard-light',
   'color-dodge', 'difference', 'exclusion', 'hue', 'color', 'luminosity',
 ]
-const effectPool = computed(() =>
+// The full set of eligible effects; the picker below narrows to those the
+// user has ticked on (an empty enabled-set means "all").
+const allEffects = computed(() =>
   store.sketches.filter(
     (s) => s.type === 'local' && s.embed && !FILTER_SLUGS.includes(s.slug) && s.slug !== 'bright-waves-logo',
   ),
+)
+const effectPool = computed(() =>
+  enabledEffects.value.size
+    ? allEffects.value.filter((s) => enabledEffects.value.has(s.slug))
+    : allEffects.value,
 )
 const filterPool = computed(() =>
   store.sketches.filter((s) => s.type === 'local' && s.embed && FILTER_SLUGS.includes(s.slug)),
@@ -45,105 +55,330 @@ const savedSet = (() => {
     return {}
   }
 })()
-const dwell = ref(savedSet.dwell ?? 40)
+const dwell = ref(savedSet.dwell ?? 25) // seconds between routing moves
 const lowSkip = ref(savedSet.lowSkip ?? true)
 const fpsFloor = ref(savedSet.fpsFloor ?? 24)
+const perfBudget = ref(savedSet.perfBudget ?? 12)
+const resolution = ref(savedSet.resolution ?? 'high') // low | medium | high | native
+const enabledEffects = ref(new Set(savedSet.enabledEffects ?? []))
 const playing = ref(true)
 function persistSettings() {
-  localStorage.setItem(SET_KEY, JSON.stringify({ dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value }))
+  localStorage.setItem(SET_KEY, JSON.stringify({
+    dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value, perfBudget: perfBudget.value,
+    resolution: resolution.value, enabledEffects: [...enabledEffects.value],
+  }))
+}
+function toggleEffect(slug) {
+  // Empty set means "all on"; the first uncheck materialises the full set so
+  // the toggle removes exactly that one and keeps the rest.
+  const set = enabledEffects.value.size ? new Set(enabledEffects.value) : new Set(allEffects.value.map((s) => s.slug))
+  set.has(slug) ? set.delete(slug) : set.add(slug)
+  // if everything ended up ticked again, collapse back to the "all" sentinel
+  enabledEffects.value = set.size === allEffects.value.length ? new Set() : set
+  persistSettings()
 }
 
-// --- scenes: random layer stacks, dealt like the Patch dice ----------------
+// --- perf-aware routing ------------------------------------------------------
+// A sketch's cost is roughly "what fraction of a frame it eats": a perf
+// score of 100 costs 1 unit, 50 costs 2, 12 costs 8… The stack's total cost
+// stays under the budget, so one heavy sketch runs alone while cheap ones
+// stack three deep.
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
 const chance = (p) => Math.random() < p
+function cost(slug) {
+  const s = perfScores[slug]
+  if (!s) return 4
+  return Math.min(12, Math.max(1, Math.round(100 / Math.max(s, 8))))
+}
 
-function dealScene() {
-  const layers = []
-  const nEff = 1 + Math.floor(Math.random() * 3) // 1–3 effect layers
-  const used = new Set()
-  for (let i = 0; i < nEff; i++) {
-    let s = pick(effectPool.value)
-    for (let tries = 0; tries < 4 && used.has(s.slug); tries++) s = pick(effectPool.value)
-    used.add(s.slug)
-    layers.push({
-      slug: s.slug,
-      kind: 'effect',
-      blend: i === 0 ? 'normal' : pick(BLENDS),
-      opacity: i === 0 ? 1 : +(0.55 + Math.random() * 0.45).toFixed(2),
-      seed: ((Math.random() * 4294967296) >>> 0).toString(36),
-    })
-  }
-  // Often cap the stack with a filter fed by the composite below.
-  if (chance(0.6)) {
-    layers.push({
-      slug: pick(filterPool.value)?.slug,
-      kind: 'filter',
-      blend: 'normal',
-      opacity: 1,
-      seed: ((Math.random() * 4294967296) >>> 0).toString(36),
-    })
-  }
-  return { id: Date.now() + Math.random(), layers }
+// --- the living stack --------------------------------------------------------
+// Layer: { id, slug, kind, blend, opacity, seed, state, replaces }
+//   state: 'warming' (mounted, invisible, booting) → 'live' → 'dying'
+const stack = reactive([])
+let nextId = 1
+const recent = [] // recently retired slugs — avoid immediate repeats
+const readyWins = new WeakSet()
+const frames = new Map() // layer id -> iframe element
+const note = ref('')
+let noteTimer = 0
+function say(text) {
+  note.value = text
+  clearTimeout(noteTimer)
+  noteTimer = setTimeout(() => (note.value = ''), 2600)
+}
+
+function liveLayers() {
+  return stack.filter((l) => l.state !== 'dying')
+}
+function stackCost() {
+  return liveLayers().reduce((a, l) => a + cost(l.slug), 0)
+}
+function effectsOf(list = liveLayers()) {
+  return list.filter((l) => l.kind === 'effect')
+}
+function filterOf() {
+  return liveLayers().find((l) => l.kind === 'filter')
 }
 
 function srcFor(layer) {
   const s = store.bySlug(layer.slug)
-  return s ? `${s.url}?preview=1&capture=1&quality=high&seed=${layer.seed}` : ''
+  return s ? `${s.url}?preview=1&capture=1&quality=${resolution.value}&seed=${layer.seed}` : ''
+}
+function titleOf(slug) {
+  return store.bySlug(slug)?.title ?? slug
 }
 
-// Two scene slots for crossfading.
-const sceneA = ref(null)
-const sceneB = ref(null)
-const showA = ref(true)
-const fading = ref(false)
-const history = []
-const current = ref(null)
+// --- save the current mix as a Patch routing -------------------------------
+// Turn the live stack into a node graph in the same format Patch loads:
+// effect sources chained through Blend nodes, an optional Filter fed the
+// composite, then Output. It lands in the shared saved-routings store so it
+// shows up in Patch and the Library.
+function saveAsPatch() {
+  const layers = liveLayers()
+  const effs = layers.filter((l) => l.kind === 'effect')
+  const filt = layers.find((l) => l.kind === 'filter')
+  if (!effs.length) return
+  const nodes = []
+  const edges = []
+  let id = 1
+  const mk = (type, params, x, y) => { const n = { id: id++, type, x, y, params }; nodes.push(n); return n }
+  // effect source nodes down the left
+  const effNodes = effs.map((l, i) => mk('effect', { slug: l.slug }, 40, 60 + i * 150))
+  // fold them together with blends: base, then blend each next on top
+  let composite = effNodes[0]
+  for (let i = 1; i < effNodes.length; i++) {
+    const b = mk('blend', { mode: effs[i].blend === 'normal' ? 'screen' : effs[i].blend, mix: effs[i].opacity ?? 1 }, 250 + i * 40, 60 + i * 150)
+    edges.push({ from: composite.id, to: b.id, port: 0 })
+    edges.push({ from: effNodes[i].id, to: b.id, port: 1 })
+    composite = b
+  }
+  let tail = composite
+  if (filt) {
+    const f = mk('filter', { slug: filt.slug }, 480, 120)
+    edges.push({ from: composite.id, to: f.id, port: 0 })
+    tail = f
+  }
+  const out = mk('output', {}, 700, 160)
+  edges.push({ from: tail.id, to: out.id, port: 0 })
 
-// iframe elements per scene slot (index-aligned with the scene's layers).
-const framesA = new Map()
-const framesB = new Map()
-function bindLayer(slot, idx, el) {
-  const m = slot === 'a' ? framesA : framesB
-  if (el) m.set(idx, el)
-  else m.delete(idx)
-}
-function framesOf(scene) {
-  return scene === sceneA.value ? framesA : scene === sceneB.value ? framesB : null
+  const SAVED_KEY = 'sketchbook-patch-saved'
+  let saved = []
+  try { saved = JSON.parse(localStorage.getItem(SAVED_KEY)) || [] } catch {}
+  const names = effs.map((l) => titleOf(l.slug)).join(' + ')
+  saved.push({ id: Date.now().toString(36), name: `Autopilot: ${names}`.slice(0, 60), nodes, edges, links: [] })
+  localStorage.setItem(SAVED_KEY, JSON.stringify(saved))
+  say('saved as a patch')
 }
 
-let dwellLeft = 0
-function advance(entry) {
-  const scene = entry ?? dealScene()
-  if (!scene.layers?.length) return
-  if (current.value) history.push(current.value)
-  if (history.length > 30) history.shift()
-  current.value = scene
-  layerControls.splice(0) // the new scene's sketches will announce themselves
-  dwellLeft = dwell.value
-  lowStreak = 0
-  const hidden = showA.value ? sceneB : sceneA
-  hidden.value = scene
-  fading.value = true
+function pickSketch(pool, budgetLeft) {
+  const inStack = new Set(stack.map((l) => l.slug))
+  const fresh = pool.filter((s) => !inStack.has(s.slug) && !recent.includes(s.slug))
+  let cands = fresh.filter((s) => cost(s.slug) <= budgetLeft)
+  if (!cands.length) {
+    // nothing fresh fits — fall back to the cheapest few available
+    cands = pool
+      .filter((s) => !inStack.has(s.slug))
+      .sort((a, b) => cost(a.slug) - cost(b.slug))
+      .slice(0, 5)
+  }
+  return pick(cands)
+}
+
+function makeLayer(slug, kind, blend, opacity) {
+  return {
+    id: nextId++,
+    slug,
+    kind,
+    blend,
+    opacity,
+    seed: ((Math.random() * 4294967296) >>> 0).toString(36),
+    state: 'warming',
+    replaces: null,
+    bornAt: performance.now(),
+  }
+}
+
+// Insertion is position-aware and never reorders mounted layers (moving an
+// iframe in the DOM reloads it): a base replacement slides UNDER the stack
+// (hidden until the old base fades out), a mid replacement mounts directly
+// above its target, adds go just below the filter, filters go on top.
+function insertLayer(l, at) {
+  if (at != null) stack.splice(at, 0, l)
+  else {
+    const fi = stack.findIndex((x) => x.kind === 'filter')
+    if (l.kind === 'filter' || fi < 0) stack.push(l)
+    else stack.splice(fi, 0, l)
+  }
+  return l
+}
+
+function retire(layer, after = 1600) {
+  if (!layer || layer.state === 'dying') return
+  layer.state = 'dying'
+  if (!recent.includes(layer.slug)) recent.push(layer.slug)
+  while (recent.length > 8) recent.shift()
   setTimeout(() => {
-    showA.value = !showA.value
-    setTimeout(() => {
-      const nowHidden = showA.value ? sceneB : sceneA
-      nowHidden.value = null
-      fading.value = false
-    }, 1400)
-  }, 500) // head start so the incoming stack has frames up
+    const i = stack.findIndex((x) => x.id === layer.id)
+    if (i >= 0) stack.splice(i, 1)
+    pruneControls()
+  }, after)
+}
+
+// --- routing moves -----------------------------------------------------------
+function opReplace(target) {
+  const freed = cost(target.slug)
+  const s = pickSketch(target.kind === 'filter' ? filterPool.value : effectPool.value,
+    perfBudget.value - stackCost() + freed)
+  if (!s) return false
+  const ti = stack.findIndex((x) => x.id === target.id)
+  const isBase = target.kind === 'effect' && ti === stack.findIndex((x) => x.kind === 'effect')
+  const l = makeLayer(s.slug, target.kind, isBase ? 'normal' : target.blend, target.opacity)
+  l.replaces = target.id
+  insertLayer(l, isBase ? ti : ti + 1) // base slides underneath, others mount on top
+  say(`${titleOf(target.slug)} → ${titleOf(s.slug)}`)
+  return true
+}
+function opAdd() {
+  const s = pickSketch(effectPool.value, perfBudget.value - stackCost())
+  if (!s) return false
+  insertLayer(makeLayer(s.slug, 'effect', pick(BLENDS), +(0.55 + Math.random() * 0.45).toFixed(2)))
+  say(`+ ${titleOf(s.slug)}`)
+  return true
+}
+function opRemove() {
+  const eff = effectsOf()
+  if (eff.length < 2) return false
+  retire(eff[eff.length - 1])
+  say(`− ${titleOf(eff[eff.length - 1].slug)}`)
+  return true
+}
+function opAddFilter() {
+  const s = pickSketch(filterPool.value, perfBudget.value - stackCost())
+  if (!s) return false
+  insertLayer(makeLayer(s.slug, 'filter', 'normal', 1))
+  say(`filter: ${titleOf(s.slug)}`)
+  return true
+}
+function opDropFilter() {
+  const f = filterOf()
+  if (!f) return false
+  retire(f)
+  say(`− filter ${titleOf(f.slug)}`)
+  return true
+}
+function opRestyle() {
+  const eff = effectsOf()
+  const nonBase = eff.slice(1)
+  if (!nonBase.length) return false
+  const l = pick(nonBase)
+  l.blend = pick(BLENDS.filter((b) => b !== l.blend))
+  l.opacity = +(0.55 + Math.random() * 0.45).toFixed(2)
+  say(`restyle: ${titleOf(l.slug)} · ${l.blend}`)
+  return true
+}
+
+function warmingCount() {
+  return stack.filter((l) => l.state === 'warming').length
+}
+
+// One routing move: weighted pick among whatever is currently possible.
+function mutate() {
+  if (warmingCount()) return // let the network settle first
+  const eff = effectsOf()
+  const filter = filterOf()
+  const budgetLeft = perfBudget.value - stackCost()
+  const moves = []
+  if (eff.length) moves.push([() => opReplace(pick(eff)), 5])
+  if (eff.length < 3 && budgetLeft >= 2) moves.push([opAdd, 2.2])
+  if (eff.length > 1) moves.push([opRemove, 1.4])
+  if (filter) {
+    moves.push([() => opReplace(filter), 2])
+    moves.push([opDropFilter, 0.8])
+  } else if (budgetLeft >= 1) {
+    moves.push([opAddFilter, 2])
+  }
+  if (eff.length > 1) moves.push([opRestyle, 1.6])
+  let total = moves.reduce((a, [, w]) => a + w, 0)
+  let r = Math.random() * total
+  for (const [fn, w] of moves) {
+    r -= w
+    if (r <= 0) {
+      if (!fn()) continue
+      break
+    }
+  }
+  snapshot()
+  dwellLeft = dwell.value
+}
+
+// --- history (for the back button: a hard rebuild, user-initiated) ----------
+const history = []
+function snapshot() {
+  history.push(liveLayers().map((l) => ({ slug: l.slug, kind: l.kind, blend: l.blend, opacity: l.opacity })))
+  if (history.length > 30) history.shift()
 }
 function back() {
-  const prev = history.pop()
-  if (prev) advance(prev)
+  if (history.length < 2) return
+  history.pop() // current
+  const prev = history[history.length - 1]
+  for (const l of [...stack]) retire(l, 1700)
+  for (const d of prev) insertLayer(makeLayer(d.slug, d.kind, d.blend, d.opacity))
+  dwellLeft = dwell.value
+  say('back')
 }
 
-// --- FPS watchdog -----------------------------------------------------------
+// --- warm-up lifecycle -------------------------------------------------------
+// A warming layer goes live once its sketch has announced itself and had a
+// moment to render (or after a hard timeout); only then does its counterpart
+// begin to fade, so the crossfade never shows a booting black frame.
+function settleWarming(now) {
+  for (const l of stack) {
+    if (l.state !== 'warming') continue
+    const el = frames.get(l.id)
+    const ready = el?.contentWindow && readyWins.has(el.contentWindow)
+    const age = now - l.bornAt
+    if ((ready && age > 1400) || age > 6000) {
+      l.state = 'live'
+      if (l.replaces != null) {
+        retire(stack.find((x) => x.id === l.replaces))
+        l.replaces = null
+      }
+    }
+  }
+}
+
+// --- FPS watchdog: degrade gracefully, don't cut ----------------------------
 const fps = ref(60)
 let lowStreak = 0
-let frames = 0
+let frameCount = 0
 let winStart = 0
-const skipped = ref(false)
+function watchdog() {
+  if (fps.value < fpsFloor.value) lowStreak++
+  else lowStreak = 0
+  if (!lowSkip.value || warmingCount()) return
+  const eff = effectsOf()
+  const filter = filterOf()
+  if (lowStreak >= 3 && (eff.length > 1 || filter)) {
+    // thin the mix: drop whichever non-base layer costs the most
+    const cands = [...eff.slice(1), ...(filter ? [filter] : [])]
+    const worst = cands.sort((a, b) => cost(b.slug) - cost(a.slug))[0]
+    retire(worst)
+    say(`low fps — thinning ${titleOf(worst.slug)}`)
+    lowStreak = 0
+  } else if (lowStreak >= 5 && eff.length === 1) {
+    // one layer and still struggling: route to something cheap
+    const cheap = effectPool.value
+      .filter((s) => s.slug !== eff[0].slug && cost(s.slug) <= 2)
+    const s = cheap.length ? pick(cheap) : null
+    if (s) {
+      const l = makeLayer(s.slug, 'effect', 'normal', 1)
+      l.replaces = eff[0].id
+      insertLayer(l, stack.findIndex((x) => x.id === eff[0].id))
+      say(`low fps — routing to ${titleOf(s.slug)}`)
+    }
+    lowStreak = 0
+  }
+}
 
 // --- shared mic + beat broadcast -------------------------------------------
 const beat = createBeatDetector()
@@ -178,13 +413,11 @@ function coverDraw(ctx, cv, sw, sh, tw, th) {
   const h = sh * scale
   ctx.drawImage(cv, (tw - w) / 2, (th - h) / 2, w, h)
 }
-function feedFilters(scene) {
-  const m = framesOf(scene)
-  if (!scene || !m) return
-  const L = scene.layers
-  for (let i = 0; i < L.length; i++) {
-    if (L[i].kind !== 'filter') continue
-    const el = m.get(i)
+function feedFilters() {
+  for (let i = 0; i < stack.length; i++) {
+    const L = stack[i]
+    if (L.kind !== 'filter' || L.state === 'warming' && performance.now() - L.bornAt < 300) continue
+    const el = frames.get(L.id)
     if (!el?.contentWindow) continue
     feedCtx.globalCompositeOperation = 'source-over'
     feedCtx.globalAlpha = 1
@@ -193,15 +426,17 @@ function feedFilters(scene) {
     let drew = false
     let first = true
     for (let j = 0; j < i; j++) {
+      const under = stack[j]
+      if (under.kind !== 'effect' || under.state === 'warming') continue
       let cv = null
       try {
-        cv = m.get(j)?.contentDocument?.querySelector('canvas')
+        cv = frames.get(under.id)?.contentDocument?.querySelector('canvas')
       } catch {
         cv = null
       }
       if (!cv || !cv.width) continue
-      feedCtx.globalAlpha = L[j].opacity ?? 1
-      feedCtx.globalCompositeOperation = first ? 'source-over' : canvasBlend(L[j].blend)
+      feedCtx.globalAlpha = under.opacity ?? 1
+      feedCtx.globalCompositeOperation = first ? 'source-over' : canvasBlend(under.blend)
       coverDraw(feedCtx, cv, cv.width, cv.height, feed.width, feed.height)
       first = false
       drew = true
@@ -227,20 +462,25 @@ const INPUT_GROUPS = computed(() => {
   }
   return Object.entries(groups).filter(([, list]) => list.length)
 })
-function allFrames() {
-  return [...framesA.values(), ...framesB.values()]
+function bindFrame(id, el) {
+  if (el) frames.set(id, el)
+  else frames.delete(id)
 }
 function titleForWindow(win) {
-  for (const [m, scene] of [[framesA, sceneA.value], [framesB, sceneB.value]]) {
-    if (!scene) continue
-    for (const [idx, el] of m) {
-      if (el.contentWindow === win) return store.bySlug(scene.layers[idx]?.slug)?.title ?? scene.layers[idx]?.slug
-    }
+  for (const l of stack) {
+    if (frames.get(l.id)?.contentWindow === win) return titleOf(l.slug)
   }
   return null
 }
+function pruneControls() {
+  const wins = new Set([...frames.values()].map((el) => el.contentWindow))
+  for (let i = layerControls.length - 1; i >= 0; i--) {
+    if (!wins.has(layerControls[i].win)) layerControls.splice(i, 1)
+  }
+}
 function onMessage(e) {
   if (e.data?.type !== 'sketch:ready') return
+  readyWins.add(e.source)
   const title = titleForWindow(e.source)
   if (!title) return
   const entry = {
@@ -279,6 +519,8 @@ function numericParams(c) {
 // --- main loop --------------------------------------------------------------
 let raf = 0
 let lastSecond = 0
+let dwellLeft = 0
+const dwellShown = ref(0)
 function loop(now) {
   beat.update(now)
   const bs = beat.state
@@ -292,33 +534,26 @@ function loop(now) {
     energy: 1,
   }
   pendingBeat = false
-  for (const el of allFrames()) el.contentWindow?.postMessage(msg, '*')
+  for (const el of frames.values()) el.contentWindow?.postMessage(msg, '*')
 
-  // Keep filters fed in both scenes (the incoming one needs frames mid-fade).
-  feedFilters(sceneA.value)
-  feedFilters(sceneB.value)
+  settleWarming(performance.now())
+  feedFilters()
 
-  frames++
+  frameCount++
   if (!winStart) winStart = now
   if (now - winStart >= 500) {
-    fps.value = Math.round((frames * 1000) / (now - winStart))
-    frames = 0
+    fps.value = Math.round((frameCount * 1000) / (now - winStart))
+    frameCount = 0
     winStart = now
   }
 
   if (now - lastSecond >= 1000) {
     lastSecond = now
-    if (playing.value && !fading.value) {
+    if (playing.value) {
       dwellLeft--
-      if (fps.value < fpsFloor.value) lowStreak++
-      else lowStreak = 0
-      if (lowSkip.value && lowStreak >= 5) {
-        skipped.value = true
-        setTimeout(() => (skipped.value = false), 3000)
-        advance()
-      } else if (dwellLeft <= 0) {
-        advance()
-      }
+      dwellShown.value = Math.max(0, dwellLeft)
+      watchdog()
+      if (dwellLeft <= 0) mutate()
     }
   }
   raf = requestAnimationFrame(loop)
@@ -329,7 +564,14 @@ function fullscreen() {
 }
 
 onMounted(() => {
-  advance()
+  // opening mix: a base layer, usually a partner, maybe a filter — each
+  // fades in as it becomes ready
+  const base = pickSketch(effectPool.value, perfBudget.value)
+  if (base) insertLayer(makeLayer(base.slug, 'effect', 'normal', 1))
+  if (chance(0.8)) opAdd()
+  if (chance(0.5)) opAddFilter()
+  snapshot()
+  dwellLeft = dwell.value
   window.addEventListener('message', onMessage)
   raf = requestAnimationFrame(loop)
 })
@@ -342,49 +584,62 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="autopilot">
-    <!-- two scene slots, crossfaded; each is a blend-stacked layer pile -->
-    <div class="scene" :class="{ top: showA, visible: !!sceneA }">
+    <!-- one persistent stack; layers crossfade individually as it evolves -->
+    <div class="scene">
       <iframe
-        v-for="(l, i) in sceneA?.layers ?? []"
-        :key="sceneA.id + '-' + i"
-        :ref="(el) => bindLayer('a', i, el)"
+        v-for="l in stack"
+        :key="l.id"
+        :ref="(el) => bindFrame(l.id, el)"
         class="layer"
-        :style="{ mixBlendMode: l.blend === 'add' ? 'plus-lighter' : l.blend, opacity: l.opacity }"
-        :src="srcFor(l)"
-        allow="microphone; camera; midi; accelerometer; gyroscope"
-      />
-    </div>
-    <div class="scene" :class="{ top: !showA, visible: !!sceneB }">
-      <iframe
-        v-for="(l, i) in sceneB?.layers ?? []"
-        :key="sceneB.id + '-' + i"
-        :ref="(el) => bindLayer('b', i, el)"
-        class="layer"
-        :style="{ mixBlendMode: l.blend === 'add' ? 'plus-lighter' : l.blend, opacity: l.opacity }"
+        :class="{ hidden: l.state === 'warming' || l.state === 'dying' }"
+        :style="{
+          mixBlendMode: l.blend === 'add' ? 'plus-lighter' : l.blend,
+          opacity: l.state === 'live' ? l.opacity : 0,
+        }"
         :src="srcFor(l)"
         allow="microphone; camera; midi; accelerometer; gyroscope"
       />
     </div>
 
-    <div v-if="skipped" class="skip-note">low fps — skipping ahead</div>
+    <div v-if="note" class="skip-note">{{ note }}</div>
 
     <!-- transport -->
     <div class="bar">
       <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
       <span class="text-subtitle-2 mr-1">Autopilot</span>
-      <v-btn icon="mdi-skip-previous" variant="text" size="small" title="Back" :disabled="!history.length" @click="back" />
+      <v-btn icon="mdi-skip-previous" variant="text" size="small" title="Back to the previous routing" :disabled="history.length < 2" @click="back" />
       <v-btn :icon="playing ? 'mdi-pause' : 'mdi-play'" variant="text" size="small" :title="playing ? 'Pause the tour' : 'Resume'" @click="playing = !playing" />
-      <v-btn icon="mdi-skip-next" variant="text" size="small" title="Next mix now" @click="advance()" />
+      <v-btn icon="mdi-skip-next" variant="text" size="small" title="Next routing move now" @click="mutate()" />
+      <v-btn icon="mdi-content-save-outline" variant="text" size="small" title="Save the current mix as a Patch routing" @click="saveAsPatch" />
       <v-menu :close-on-content-click="false">
         <template #activator="{ props }">
           <v-btn v-bind="props" icon="mdi-cog-outline" variant="text" size="small" title="Autopilot settings" />
         </template>
-        <v-card class="pa-3" min-width="260">
-          <div class="set-row">Dwell: {{ dwell }}s</div>
-          <v-slider v-model="dwell" density="compact" hide-details :min="8" :max="180" :step="1" @end="persistSettings" />
-          <v-checkbox v-model="lowSkip" density="compact" hide-details label="Skip early after 5 s of low FPS" @change="persistSettings" />
+        <v-card class="pa-3" min-width="280" max-height="560" style="overflow-y:auto">
+          <div class="set-row">Seconds between changes: {{ dwell }}s</div>
+          <v-slider v-model="dwell" density="compact" hide-details :min="6" :max="120" :step="1" @end="persistSettings" />
+          <div class="set-row">Perf budget: {{ perfBudget }} (bigger = richer mixes)</div>
+          <v-slider v-model="perfBudget" density="compact" hide-details :min="4" :max="24" :step="1" @end="persistSettings" />
+          <div class="set-row">Resolution</div>
+          <v-btn-toggle v-model="resolution" density="compact" mandatory divided class="mb-2" @update:model-value="persistSettings">
+            <v-btn value="low" size="x-small">Low</v-btn>
+            <v-btn value="medium" size="x-small">Med</v-btn>
+            <v-btn value="high" size="x-small">High</v-btn>
+            <v-btn value="native" size="x-small">Native</v-btn>
+          </v-btn-toggle>
+          <v-checkbox v-model="lowSkip" density="compact" hide-details label="Auto-thin the mix on low FPS" @change="persistSettings" />
           <div v-if="lowSkip" class="set-row">FPS floor: {{ fpsFloor }}</div>
           <v-slider v-if="lowSkip" v-model="fpsFloor" density="compact" hide-details :min="10" :max="50" :step="1" @end="persistSettings" />
+          <div class="set-row d-flex justify-space-between align-center">
+            <span>Effects in rotation</span>
+            <button class="mini-clear" @click="enabledEffects = new Set(); persistSettings()">all</button>
+          </div>
+          <div class="eff-list">
+            <label v-for="s in allEffects" :key="s.slug" class="eff-item">
+              <input type="checkbox" :checked="!enabledEffects.size || enabledEffects.has(s.slug)" @change="toggleEffect(s.slug)" />
+              {{ s.title }}
+            </label>
+          </div>
         </v-card>
       </v-menu>
       <v-btn
@@ -401,7 +656,7 @@ onBeforeUnmount(() => {
         @click="drawer = !drawer"
       />
       <span class="fps" :class="{ low: fps < fpsFloor }">{{ fps }} fps</span>
-      <span class="countdown">{{ playing ? Math.max(0, dwellLeft) + 's' : 'paused' }}</span>
+      <span class="countdown">{{ playing ? dwellShown + 's' : 'paused' }}</span>
       <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
     </div>
 
@@ -456,12 +711,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .autopilot { position: fixed; inset: 0; background: #05060a; z-index: 2000; overflow: hidden; }
-.scene {
-  position: absolute; inset: 0; opacity: 0; transition: opacity 1.2s ease;
-  pointer-events: none; isolation: isolate; background: #05060a;
+.scene { position: absolute; inset: 0; isolation: isolate; background: #05060a; }
+.layer {
+  position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+  transition: opacity 1.5s ease;
 }
-.scene.top.visible { opacity: 1; pointer-events: auto; z-index: 1; }
-.layer { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .skip-note {
   position: absolute; left: 50%; top: 64px; transform: translateX(-50%); z-index: 10;
   padding: 6px 14px; border-radius: 999px; pointer-events: none;
@@ -479,6 +733,9 @@ onBeforeUnmount(() => {
 .fps.low { color: #f88; }
 .countdown { font: 12px ui-monospace, monospace; color: #9aa4c0; min-width: 48px; text-align: right; }
 .set-row { font: 12px system-ui, sans-serif; color: #cdd3e0; margin-top: 4px; }
+.eff-list { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow-y: auto; margin-top: 4px; }
+.eff-item { display: flex; align-items: center; gap: 6px; font: 11px system-ui, sans-serif; color: #cdd3e0; }
+.mini-clear { font: 10px system-ui; color: #9aa4c0; background: transparent; border: 1px solid #444; border-radius: 4px; padding: 1px 6px; cursor: pointer; }
 .drawer {
   position: absolute; top: 52px; right: 10px; bottom: 60px; width: 290px; z-index: 20;
   overflow-y: auto; padding: 10px; border-radius: 10px;

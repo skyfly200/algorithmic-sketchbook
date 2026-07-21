@@ -1,0 +1,15 @@
+{
+  "title": "Polarization",
+  "description": "A live source seen through crossed polarizers over a birefringent film — luminance becomes optical retardation mapped through Michel-Lévy interference colours, dissolving the image into shimmering spectral bands as a rotating analyzer sweeps the palette.",
+  "tags": [
+    "filter",
+    "optics",
+    "color",
+    "camera",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

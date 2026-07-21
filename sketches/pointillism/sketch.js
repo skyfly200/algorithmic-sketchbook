@@ -30,6 +30,17 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 const src = createSource()
 
+// Effective pixel ratio, capped so the stipple grid never has to place tens
+// of thousands of stamped brush dots on a native-res canvas (the single
+// biggest cost). The browser upscales the softer painting for free — a big
+// speed win with no visible loss for an impressionist look.
+const RENDER_CAP = 1100
+function effPR() {
+  const long = Math.max(window.innerWidth, window.innerHeight)
+  return Math.min(rt.pixelRatio, RENDER_CAP / long)
+}
+let PR = effPR()
+
 // Offscreen buffer that holds the cover-fit source, sampled per frame.
 const buf = document.createElement('canvas')
 const bctx = buf.getContext('2d', { willReadFrequently: true })
@@ -115,8 +126,9 @@ function tinted(si, r, g, b) {
 }
 
 function resize() {
-  canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
+  PR = effPR()
+  canvas.width = Math.floor(window.innerWidth * PR)
+  canvas.height = Math.floor(window.innerHeight * PR)
   // Sampling buffer: same aspect as the canvas, capped so getImageData is cheap.
   const cap = 520
   const s = Math.min(1, cap / Math.max(canvas.width, canvas.height))
@@ -128,7 +140,7 @@ function resize() {
 }
 
 function buildPoints() {
-  const gap = 9 * rt.pixelRatio * params.spacing
+  const gap = 9 * PR * params.spacing
   pts = []
   const off = gap * 0.5
   for (let y = off; y < canvas.height + gap; y += gap) {
@@ -179,7 +191,7 @@ function frame(now) {
   ctx.fillStyle = params.paper ? '#efe7d6' : '#07070b'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-  const gap = 9 * rt.pixelRatio * params.spacing
+  const gap = 9 * PR * params.spacing
   const baseR = gap * 0.62 * params.size
   const sat = params.saturation
   const sxb = bufW / canvas.width
@@ -189,6 +201,7 @@ function frame(now) {
   const alpha = params.opacity
 
   ctx.globalAlpha = alpha
+  let xf = false // is the canvas transform currently rotated (needs a reset)?
   for (let i = 0; i < pts.length; i++) {
     const p = pts[i]
     const px = p.x + p.jx * jitAmt
@@ -233,29 +246,33 @@ function frame(now) {
 
     if (params.texture) {
       // Stamp a tinted brush sprite: rotated per-dot, stretched along the
-      // contour when the stroke elongates.
+      // contour when the stroke elongates. setTransform is cheaper than
+      // save/translate/rotate/restore across tens of thousands of dots.
       const spr = tinted(p.si, r | 0, g | 0, b | 0)
       const rx = rad * (1 + e * 1.7)
-      ctx.save()
-      ctx.translate(px, py)
-      ctx.rotate(e > 0.02 ? ang : p.rot)
+      const rot = e > 0.02 ? ang : p.rot
+      const cs = Math.cos(rot)
+      const sn = Math.sin(rot)
+      ctx.setTransform(cs, sn, -sn, cs, px, py)
       ctx.drawImage(spr, -rx, -rad, rx * 2, rad * 2)
-      ctx.restore()
+      xf = true
     } else if (e > 0.02) {
       const rx = rad * (1 + e * 1.7)
-      ctx.save()
-      ctx.translate(px, py)
-      ctx.rotate(ang)
+      const cs = Math.cos(ang)
+      const sn = Math.sin(ang)
+      ctx.setTransform(cs, sn, -sn, cs, px, py)
       ctx.beginPath()
       ctx.ellipse(0, 0, rx, rad, 0, 0, Math.PI * 2)
       ctx.fill()
-      ctx.restore()
+      xf = true
     } else {
+      if (xf) { ctx.setTransform(1, 0, 0, 1, 0, 0); xf = false }
       ctx.beginPath()
       ctx.arc(px, py, rad, 0, Math.PI * 2)
       ctx.fill()
     }
   }
+  if (xf) ctx.setTransform(1, 0, 0, 1, 0, 0) // reset for next frame's fillRect
   ctx.globalAlpha = 1
 
   requestAnimationFrame(frame)

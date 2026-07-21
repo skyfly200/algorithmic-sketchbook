@@ -52,6 +52,16 @@ import BrandLogo from './components/BrandLogo.vue'
         Display mode
       </v-btn>
       <v-btn
+        prepend-icon="mdi-bookmark-multiple-outline"
+        variant="text"
+        size="small"
+        class="mr-2"
+        title="Library — your saved patches, mixes and scenes"
+        :to="{ name: 'library' }"
+      >
+        Library
+      </v-btn>
+      <v-btn
         icon="mdi-book-open-variant"
         variant="text"
         title="Docs — how the sketchbook works"

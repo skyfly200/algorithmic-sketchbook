@@ -1,0 +1,16 @@
+{
+  "title": "Wormhole",
+  "description": "A headlong flight down a rippling tube of light — screen pixels map to tube coordinates and scrolling bands and stars streak past a glowing throat that twists and lurches on the beat. Mouse warps the mouth.",
+  "tags": [
+    "shader",
+    "space",
+    "tunnel",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "webgl",
+    "glsl"
+  ],
+  "created": "2026-07-21"
+}

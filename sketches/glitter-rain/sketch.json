@@ -1,0 +1,14 @@
+{
+  "title": "Glitter Rain",
+  "description": "A downpour of sparkling confetti sequins that tumble and twinkle as they catch a moving light, leaving faint trails. Beats burst a fresh shower; the pointer scatters flakes.",
+  "tags": [
+    "generative",
+    "sparkle",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

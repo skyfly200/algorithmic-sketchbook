@@ -1,0 +1,15 @@
+{
+  "title": "Fire",
+  "description": "A classic bottom-up flame — a heat field seeded along the base cools and rises each frame through a black-body palette, with drifting embers and smoke. Click adds a hot spot; beats flare the blaze.",
+  "tags": [
+    "generative",
+    "fire",
+    "simulation",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

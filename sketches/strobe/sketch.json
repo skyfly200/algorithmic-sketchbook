@@ -1,0 +1,14 @@
+{
+  "title": "Strobe",
+  "description": "A strobe light over a live source — hard flashes locked to a rate or the beat, holding a frozen frame between flashes so motion breaks into stop-motion. White, black, invert and freeze modes.",
+  "tags": [
+    "filter",
+    "light",
+    "camera",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

@@ -17,7 +17,7 @@ const params = rt.params({
   glow: { value: 1, min: 0.2, max: 2, step: 0.02, label: 'Glow' },
   wobble: { value: 0.25, min: 0, max: 1, step: 0.01, label: 'Precession' },
   hue: { value: Math.round(rt.random(180, 280)), min: 0, max: 360, step: 1, label: 'Hue' },
-  trace: { value: true, type: 'bool', label: 'Pulse trace' },
+  trace: { value: false, type: 'bool', label: 'Pulse trace' },
 })
 rt.mapInput('audio.pulse', 'glow', 0.5)
 rt.mapInput('audio.low', 'beam', 0.2)

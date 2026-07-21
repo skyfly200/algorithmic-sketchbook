@@ -1,0 +1,14 @@
+{
+  "title": "CRT",
+  "description": "An old cathode-ray TV look over a live source — barrel curvature, RGB shadow-mask phosphors, rolling scanlines and hum bar, bloom, chroma bleed and vignette.",
+  "tags": [
+    "filter",
+    "retro",
+    "camera",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

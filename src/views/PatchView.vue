@@ -17,6 +17,7 @@ import { useSketchStore } from '../stores/sketches'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
+import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn } from '../stores/media.js'
 
 const store = useSketchStore()
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
@@ -25,7 +26,7 @@ const store = useSketchStore()
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
   'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
-  'fog', 'mist', 'glow',
+  'fog', 'mist', 'glow', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves',
 ]
 // Only local, same-origin sketches can be captured for piping. Filters (and
 // Motion Extraction, which has a native node) are organized under the Filter
@@ -87,7 +88,9 @@ const THUMB_H = 107
 const TYPES = {
   effect: { title: 'Effect', ins: 0, color: '#7c8cff' },
   filter: { title: 'Filter', ins: 1, color: '#c98cff' },
-  camera: { title: 'Camera', ins: 0, color: '#4dd0c4' },
+  media: { title: 'Media', ins: 0, color: '#4dd0c4' }, // camera / files / clips
+  text: { title: 'Text', ins: 0, color: '#ff9ec4' },
+  portal: { title: 'Portal', ins: 1, color: '#8ad0ff' }, // remap a region elsewhere
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
   output: { title: 'Output', ins: 1, color: '#ffffff' },
@@ -109,7 +112,14 @@ const OUT_LABELS = { xy: ['x', 'y'], tracker: ['x', 'y', 'size'] }
 // (effect params come from the sketch's own schema over postMessage).
 const PARAM_RANGES = {
   blend: { mix: [0, 1] },
+  // Text's numeric font/layout controls are all control-mappable (drag an
+  // Input/XY/Tracker output onto their ▣ jacks to animate the type).
+  text: { size: [0.03, 0.6], weight: [100, 900], tracking: [-0.1, 0.5], x: [0, 1], y: [0, 1], hue: [0, 360], rotate: [-180, 180] },
+  // Portal: a source region is remapped (copied/scaled) into a destination
+  // region — all eight edges control-mappable so the portal can roam.
+  portal: { srcX: [0, 1], srcY: [0, 1], srcW: [0.05, 1], srcH: [0.05, 1], dstX: [0, 1], dstY: [0, 1], dstW: [0.05, 1], dstH: [0.05, 1] },
 }
+const TEXT_FONTS = ['sans-serif', 'serif', 'monospace', 'system-ui', 'cursive']
 const BLENDS = [
   'screen', 'add', 'lighten', 'darken', 'multiply', 'overlay', 'soft-light',
   'hard-light', 'color-dodge', 'color-burn', 'difference', 'exclusion',
@@ -140,9 +150,14 @@ function loadGraph() {
 // motion-extraction sketch behind a Filter node, so legacy graphs convert.
 function normalizeNodes(list) {
   for (const n of list ?? []) {
+    if (!n.params) n.params = {} // guard malformed/legacy saves
     if (n.type === 'motion') {
       n.type = 'filter'
       n.params = { slug: 'motion-extraction' }
+    }
+    if (n.type === 'camera') {
+      n.type = 'media'
+      n.params = { mode: 'camera', mediaId: null }
     }
   }
   return list
@@ -180,6 +195,7 @@ function applySnap(s) {
   nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
   edges.splice(0, edges.length, ...data.edges)
   links.splice(0, links.length, ...(data.links ?? []))
+  pruneOrphans()
   nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
   const ids = new Set(nodes.map((n) => n.id))
   for (const id of [...rtState.keys()]) if (!ids.has(id)) rtState.delete(id)
@@ -228,12 +244,18 @@ function addNode(type) {
           : type === 'filter'
             ? { slug: filterOptions.value[0]?.slug ?? '' }
             : type === 'input'
-              ? { source: 'audio.volume', scale: 1, offset: 0 }
+              ? { source: 'audio.volume', scale: 1, offset: 0, invert: false, curve: 'linear' }
               : type === 'xy'
                 ? { x: 0.5, y: 0.5 }
                 : type === 'tracker'
                   ? { thresh: 0.5, smooth: 0.7 }
-                  : {},
+                  : type === 'media'
+                    ? { mode: 'camera', mediaId: null }
+                    : type === 'text'
+                      ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, rotate: 0, italic: false, glow: 0.4, bg: false }
+                      : type === 'portal'
+                        ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true }
+                        : {},
   })
   nodes.push(n)
   st(n.id) // create runtime state
@@ -243,12 +265,36 @@ function addNode(type) {
 function removeNode(id) {
   const i = nodes.findIndex((n) => n.id === id)
   if (i >= 0) nodes.splice(i, 1)
-  for (let k = edges.length - 1; k >= 0; k--)
-    if (edges[k].from === id || edges[k].to === id) edges.splice(k, 1)
-  for (let k = links.length - 1; k >= 0; k--)
-    if (links[k].from === id || links[k].node === id) links.splice(k, 1)
+  pruneOrphans()
   rtState.delete(id)
   persist()
+}
+
+// Drop any edge/link whose endpoints (or ports) no longer exist — a routing
+// loaded after a node was deleted, or a control link whose source port
+// disappeared when the node's type changed, would otherwise leave a wire
+// pointing at nothing. Returns true if anything was removed.
+function pruneOrphans() {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  let changed = false
+  for (let k = edges.length - 1; k >= 0; k--) {
+    const e = edges[k]
+    const to = byId.get(e.to)
+    if (!byId.has(e.from) || !to || e.port >= (TYPES[to.type]?.ins ?? 0)) {
+      edges.splice(k, 1)
+      changed = true
+    }
+  }
+  for (let k = links.length - 1; k >= 0; k--) {
+    const l = links[k]
+    const from = byId.get(l.from)
+    const tgt = byId.get(l.node)
+    if (!from || !tgt || (l.srcPort ?? 0) >= outCount(from)) {
+      links.splice(k, 1)
+      changed = true
+    }
+  }
+  return changed
 }
 
 // --- randomize: deal out a whole new patch -------------------------------
@@ -456,10 +502,27 @@ function sourceValue(src, now) {
     default: return 0
   }
 }
-function inputValue(node, now) {
-  ensureInput(node.params.source)
-  return clamp(sourceValue(node.params.source, now) * node.params.scale + node.params.offset, 0, 1)
+// Response curves reshape the 0..1 signal after scale/offset: exp favours the
+// top, log/sqrt favours the bottom, s-curve steepens the middle, and step
+// hard-gates at the halfway point.
+function applyCurve(v, curve) {
+  switch (curve) {
+    case 'exp': return v * v
+    case 'log': return Math.sqrt(v)
+    case 's-curve': return v * v * (3 - 2 * v)
+    case 'step': return v >= 0.5 ? 1 : 0
+    default: return v
+  }
 }
+function inputValue(node, now) {
+  const p = node.params
+  ensureInput(p.source)
+  let v = sourceValue(p.source, now)
+  if (p.invert) v = 1 - v
+  v = clamp(v * (p.scale ?? 1) + (p.offset ?? 0), 0, 1)
+  return applyCurve(v, p.curve ?? 'linear')
+}
+const INPUT_CURVES = ['linear', 'exp', 'log', 's-curve', 'step']
 // Control value emitted by any control node's given output port.
 function controlValue(node, port, now) {
   if (node.type === 'input') return inputValue(node, now)
@@ -735,22 +798,136 @@ function removeEdge(idx) {
 const frameSize = ref({ w: W, h: H })
 function effectSrc(n) {
   const s = store.bySlug(n.params.slug)
-  return s ? `${s.url}?capture=1&preview=1&quality=high` : ''
+  // nomap=1: sketches start with their default audio/input mappings OFF in
+  // Patch, so nodes react only to the wires you draw. The ⚡ button on the
+  // node applies the sketch's own defaults on demand.
+  return s ? `${s.url}?capture=1&preview=1&quality=high&nomap=1` : ''
+}
+function autoMap(n) {
+  rtState.get(n.id)?.iframe?.contentWindow?.postMessage({ type: 'sketch:auto-map' }, '*')
 }
 function bindFrame(id, el) {
   if (el) st(id).iframe = el
 }
-async function bindVideo(id, el) {
-  const s = st(id)
-  if (!el || s.video === el) return
-  s.video = el
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 360 } })
-    el.srcObject = stream
-    await el.play()
-  } catch {
-    /* no camera */
+// --- media node: shared camera + library playback -------------------------
+const cameraOn = ref(sharedCameraOn())
+async function toggleCamera() {
+  if (cameraOn.value) {
+    stopSharedCamera()
+    cameraOn.value = false
+    // detach the stream from every media element so the light goes off
+    for (const s of rtState.values()) {
+      if (s.mediaEl?.srcObject) { s.mediaEl.srcObject = null }
+    }
+  } else {
+    try {
+      await startSharedCamera()
+      cameraOn.value = true
+    } catch {
+      cameraOn.value = false
+    }
   }
+}
+
+// The live element (video/img/canvas) a media node should draw this frame. A
+// per-node video/img is created lazily and reattached when the mode or the
+// chosen library item changes — the camera path shares one global stream.
+function mediaEl(node) {
+  const s = st(node.id)
+  const p = node.params
+  const want = p.mode === 'camera' ? 'camera' : `media:${p.mediaId}`
+  if (s.mediaWant !== want) {
+    s.mediaWant = want
+    if (s.mediaEl) { try { s.mediaEl.pause?.() } catch {}; s.mediaEl.srcObject = null; s.mediaEl.removeAttribute('src'); s.mediaEl = null }
+    if (p.mode === 'camera') {
+      const v = document.createElement('video')
+      v.muted = true; v.playsInline = true; v.autoplay = true
+      s.mediaEl = v
+      if (cameraOn.value) startSharedCamera().then((stream) => { v.srcObject = stream; v.play().catch(() => {}) }).catch(() => {})
+    } else {
+      const item = mediaById(p.mediaId)
+      if (item) {
+        if (item.kind === 'video') {
+          const v = document.createElement('video')
+          v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = true
+          v.src = item.url; v.play().catch(() => {})
+          s.mediaEl = v
+        } else {
+          const img = new Image()
+          img.src = item.url
+          s.mediaEl = img
+        }
+      }
+    }
+  }
+  // camera turned on after the element was made in a prior frame
+  if (p.mode === 'camera' && s.mediaEl && cameraOn.value && !s.mediaEl.srcObject) {
+    startSharedCamera().then((stream) => { s.mediaEl.srcObject = stream; s.mediaEl.play().catch(() => {}) }).catch(() => {})
+  }
+  return s.mediaEl
+}
+
+function loadMediaFiles(node, e) {
+  const files = [...(e.target.files ?? [])]
+  let first = null
+  for (const f of files) { const item = addMediaFile(f); if (!first) first = item }
+  if (first) { node.params.mode = 'library'; node.params.mediaId = first.id; persist() }
+  e.target.value = ''
+}
+function pickMedia(node, id) {
+  node.params.mediaId = id
+  node.params.mode = 'library'
+  persist()
+}
+
+// --- recording / snapshot / prebake ----------------------------------------
+// Record the fullscreen stage (the composited output) to a WebM the user can
+// download AND add to the library as a clip — which is also how a slow,
+// non-realtime effect is "prebaked": record its output once, then a Media
+// node plays the clip back at full speed.
+let recorder = null
+const recording = ref(false)
+const recElapsed = ref(0)
+let recTimer = 0
+function toggleRecord() {
+  if (recording.value) { recorder?.stop(); return }
+  const cnv = stage.value
+  if (!cnv?.captureStream) return
+  const stream = cnv.captureStream(30)
+  const chunks = []
+  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm'
+  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 })
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data) }
+  recorder.onstop = () => {
+    recording.value = false
+    clearInterval(recTimer)
+    const blob = new Blob(chunks, { type: 'video/webm' })
+    addRecordedClip(blob, `recording ${new Date().toLocaleTimeString()}`)
+    // also offer a download
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `patch-${Date.now()}.webm`
+    a.click()
+    recorder = null
+  }
+  recorder.start()
+  recording.value = true
+  recElapsed.value = 0
+  recTimer = setInterval(() => (recElapsed.value += 1), 1000)
+}
+// Snapshot the current stage to a PNG (downloaded + added to the library).
+function snapshotPng() {
+  const cnv = stage.value
+  if (!cnv) return
+  cnv.toBlob((blob) => {
+    if (!blob) return
+    const file = new File([blob], `snapshot-${Date.now()}.png`, { type: 'image/png' })
+    addMediaFile(file)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = file.name
+    a.click()
+  }, 'image/png')
 }
 
 // --- effect-node parameters + input mappings ------------------------------
@@ -901,8 +1078,57 @@ function evalNode(node) {
     } catch {
       /* not ready */
     }
-  } else if (node.type === 'camera') {
-    if (s.video && s.video.videoWidth) cover(octx, s.video, s.video.videoWidth, s.video.videoHeight)
+  } else if (node.type === 'media') {
+    const el = mediaEl(node)
+    if (el) {
+      if (el.tagName === 'VIDEO' && el.videoWidth) cover(octx, el, el.videoWidth, el.videoHeight)
+      else if (el.tagName === 'IMG' && el.naturalWidth) cover(octx, el, el.naturalWidth, el.naturalHeight)
+      else if (el.tagName === 'CANVAS') cover(octx, el, el.width, el.height)
+    }
+  } else if (node.type === 'text') {
+    const p = node.params
+    if (p.bg) { octx.fillStyle = '#000'; octx.fillRect(0, 0, W, H) }
+    else octx.clearRect(0, 0, W, H)
+    const px = Math.max(4, p.size * H)
+    octx.save()
+    octx.translate(p.x * W, p.y * H)
+    octx.rotate(((p.rotate ?? 0) * Math.PI) / 180)
+    octx.font = `${p.italic ? 'italic ' : ''}${Math.round(p.weight)} ${px}px ${p.font || 'sans-serif'}`
+    octx.textAlign = 'center'
+    octx.textBaseline = 'middle'
+    octx.fillStyle = `hsl(${p.hue}, 90%, 62%)`
+    // letter-spacing (tracking) — draw glyph by glyph
+    const track = (p.tracking ?? 0) * px
+    const str = String(p.text ?? '')
+    let total = 0
+    for (const ch of str) total += octx.measureText(ch).width + track
+    total -= track
+    let cx = -total / 2
+    if (p.glow > 0.01) { octx.shadowColor = `hsl(${p.hue}, 100%, 60%)`; octx.shadowBlur = px * 0.4 * p.glow }
+    for (const ch of str) {
+      const w = octx.measureText(ch).width
+      octx.fillText(ch, cx + w / 2, 0)
+      cx += w + track
+    }
+    octx.restore()
+    octx.shadowBlur = 0
+  } else if (node.type === 'portal') {
+    const input = inputCanvas(node, 0)
+    if (input) octx.drawImage(input, 0, 0, W, H)
+    const p = node.params
+    const sx = p.srcX * W, sy = p.srcY * H, sw = p.srcW * W, sh = p.srcH * H
+    // remap the source region into the destination region, optionally
+    // recursively so the portal shows a portal showing a portal…
+    const times = Math.max(1, Math.round(p.recurse ?? 1))
+    for (let k = 0; k < times; k++) {
+      const dx = p.dstX * W, dy = p.dstY * H, dw = p.dstW * W, dh = p.dstH * H
+      octx.drawImage(s.out, sx, sy, sw, sh, dx, dy, dw, dh)
+    }
+    if (p.border) {
+      octx.strokeStyle = 'rgba(138,208,255,0.8)'
+      octx.lineWidth = Math.max(1, W * 0.003)
+      octx.strokeRect(p.dstX * W, p.dstY * H, p.dstW * W, p.dstH * H)
+    }
   } else if (node.type === 'mask') {
     const content = inputCanvas(node, 0)
     const mask = inputCanvas(node, 1)
@@ -1155,6 +1381,13 @@ function togglePopup() {
   })
   popupOpen.value = true
 }
+// Preview / program: with hold on, the pop-out keeps showing the last APPLIED
+// composite (the live show on the projector) while you redesign the graph on
+// the board (your preview). "Apply" pushes the current board look to the
+// output — design and verify the next look, then cut to it cleanly.
+const previewHold = ref(false)
+let applyOne = false
+function applyToOutput() { applyOne = true }
 function blitPopup() {
   if (!popup || popup.closed) {
     if (popupOpen.value) {
@@ -1163,6 +1396,9 @@ function blitPopup() {
     }
     return
   }
+  // held: don't update the show unless an Apply was requested
+  if (previewHold.value && !applyOne) return
+  applyOne = false
   const c = popup.document.getElementById('out')
   if (!c) return
   const dpr = Math.min(popup.devicePixelRatio || 1, 2)
@@ -1222,6 +1458,7 @@ function loadRouting(r) {
   nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
   edges.splice(0, edges.length, ...data.edges)
   links.splice(0, links.length, ...(data.links ?? []))
+  pruneOrphans()
   nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
   // Keep runtime state (canvases, bound iframes/video) for node ids that
   // survive the swap — Vue won't re-mount same-keyed iframes, so clearing
@@ -1241,6 +1478,23 @@ function deleteRouting(r) {
 }
 
 onMounted(async () => {
+  // Deep link from the Library: ?load=<id> opens a saved routing.
+  const loadId = new URLSearchParams(location.hash.split('?')[1] || '').get('load')
+  if (loadId) {
+    const r = savedRoutings.value.find((x) => x.id === loadId)
+    if (r) {
+      loadRouting(r)
+      await nextTick()
+      layoutTick.value++
+      resizeStage()
+      window.addEventListener('resize', resizeStage)
+      window.addEventListener('message', onEffectMessage)
+      window.addEventListener('keydown', onKey)
+      window.addEventListener('pointermove', trackMouse)
+      raf = requestAnimationFrame(loop)
+      return
+    }
+  }
   // Seed a starter graph the first time: effect → filter → output.
   if (!nodes.length) {
     addNode('effect')
@@ -1274,7 +1528,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', trackMouse)
   beat.stop()
   if (popup && !popup.closed) popup.close()
-  for (const s of rtState.values()) s.video?.srcObject?.getTracks?.().forEach((t) => t.stop())
+  stopSharedCamera()
+  if (recorder && recorder.state === 'recording') recorder.stop()
 })
 </script>
 
@@ -1292,7 +1547,6 @@ onBeforeUnmount(() => {
           :style="{ width: frameSize.w + 'px', height: frameSize.h + 'px' }"
           allow="microphone; camera; midi; accelerometer; gyroscope"
         />
-        <video v-else-if="n.type === 'camera'" :ref="(el) => bindVideo(n.id, el)" muted playsinline />
       </template>
     </div>
 
@@ -1304,8 +1558,9 @@ onBeforeUnmount(() => {
         <!-- add-node buttons: icons tinted with each node type's colour -->
         <v-btn icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
         <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
-        <v-btn icon="mdi-camera" variant="tonal" size="small" title="Add Camera (webcam source)" :style="{ color: TYPES.camera.color }" @click="addNode('camera')" />
+        <v-btn icon="mdi-image-multiple" variant="tonal" size="small" title="Add Media (camera · files · clips)" :style="{ color: TYPES.media.color }" @click="addNode('media')" />
         <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
+        <v-btn icon="mdi-shape-outline" variant="tonal" size="small" title="Add Portal (remap a region elsewhere)" :style="{ color: TYPES.portal.color }" @click="addNode('portal')" />
         <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
         <v-menu>
           <template #activator="{ props }">
@@ -1317,6 +1572,7 @@ onBeforeUnmount(() => {
             <v-list-item prepend-icon="mdi-target" title="Tracker (video tracking)" @click="addNode('tracker')" />
           </v-list>
         </v-menu>
+        <v-btn icon="mdi-format-text" variant="tonal" size="small" title="Add Text (mappable font)" :style="{ color: TYPES.text.color }" @click="addNode('text')" />
         <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
         <v-spacer />
         <v-btn icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
@@ -1366,6 +1622,29 @@ onBeforeUnmount(() => {
         @click="toggleMic"
       />
       <v-btn
+        :icon="cameraOn ? 'mdi-webcam' : 'mdi-webcam-off'"
+        variant="text"
+        size="small"
+        :color="cameraOn ? 'primary' : undefined"
+        title="Camera — request the webcam once; all Media nodes in camera mode share it"
+        @click="toggleCamera"
+      />
+      <v-btn
+        :icon="recording ? 'mdi-stop-circle' : 'mdi-record-circle-outline'"
+        variant="text"
+        size="small"
+        :color="recording ? 'error' : undefined"
+        :title="recording ? `Stop recording (${recElapsed}s) — saves to the library + downloads` : 'Record the output to a clip (prebake slow effects)'"
+        @click="toggleRecord"
+      />
+      <v-btn
+        icon="mdi-camera-iris"
+        variant="text"
+        size="small"
+        title="Snapshot the output to a PNG (also added to the media library)"
+        @click="snapshotPng"
+      />
+      <v-btn
         icon="mdi-speedometer"
         variant="text"
         size="small"
@@ -1396,6 +1675,24 @@ onBeforeUnmount(() => {
         :color="popupOpen ? 'primary' : undefined"
         title="Pop out the output — drag it to a second display and keep adjusting here"
         @click="togglePopup"
+      />
+      <v-btn
+        v-if="popupOpen"
+        :icon="previewHold ? 'mdi-lock' : 'mdi-lock-open-variant-outline'"
+        variant="text"
+        size="small"
+        :color="previewHold ? 'primary' : undefined"
+        title="Preview hold — freeze the pop-out on the applied look while you redesign; use Apply to cut to the new one"
+        @click="previewHold = !previewHold"
+      />
+      <v-btn
+        v-if="popupOpen && previewHold"
+        icon="mdi-check-bold"
+        variant="tonal"
+        size="small"
+        color="primary"
+        title="Apply — push the current board look to the held output"
+        @click="applyToOutput"
       />
       <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
@@ -1446,7 +1743,7 @@ onBeforeUnmount(() => {
         />
         <path
           v-if="wire.active"
-          :d="wirePath(outPort(nodes.find((n) => n.id === wire.from)), { x: wire.x, y: wire.y })"
+          :d="wirePath(outPortAt(nodes.find((n) => n.id === wire.from), wire.fromPort), { x: wire.x, y: wire.y })"
           :stroke="wire.kind === 'control' ? '#e0a060' : '#fff'"
           fill="none"
           stroke-width="2"
@@ -1575,7 +1872,10 @@ onBeforeUnmount(() => {
 
               <div class="map-head">
                 <span>Mappings</span>
-                <button class="mini" title="Add mapping" @click="addEffectMapping(n.id)">+</button>
+                <span class="d-flex ga-1">
+                  <button class="mini" title="Auto-map — apply this sketch's default input mappings" @click="autoMap(n)">⚡</button>
+                  <button class="mini" title="Add mapping" @click="addEffectMapping(n.id)">+</button>
+                </span>
               </div>
               <div v-for="(m, mi) in effectControls.get(n.id).mappings" :key="mi" class="map-row">
                 <select v-model="m.source" @change="syncEffectMappings(n.id)">
@@ -1602,6 +1902,12 @@ onBeforeUnmount(() => {
             </select>
             <label>scale <input type="range" min="-2" max="2" step="0.05" v-model.number="n.params.scale" @change="persist" @pointerdown.stop /></label>
             <label>offset <input type="range" min="-1" max="1" step="0.02" v-model.number="n.params.offset" @change="persist" @pointerdown.stop /></label>
+            <label>curve
+              <select v-model="n.params.curve" @change="persist" @pointerdown.stop>
+                <option v-for="c in INPUT_CURVES" :key="c" :value="c">{{ c }}</option>
+              </select>
+            </label>
+            <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert</label>
           </template>
           <template v-if="n.type === 'tracker'">
             <label>threshold <input type="range" min="0.05" max="0.95" step="0.01" v-model.number="n.params.thresh" @change="persist" @pointerdown.stop /></label>
@@ -1612,6 +1918,59 @@ onBeforeUnmount(() => {
               <option v-for="b in BLENDS" :key="b" :value="b">{{ b }}</option>
             </select>
             <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" :data-jack-node="n.id" data-jack-param="mix" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
+          </template>
+          <template v-if="n.type === 'media'">
+            <label>source
+              <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
+                <option value="camera">📷 Camera{{ cameraOn ? '' : ' (off)' }}</option>
+                <option value="library">🎞 Library</option>
+              </select>
+            </label>
+            <label v-if="n.params.mode === 'library'">clip
+              <select :value="n.params.mediaId" @change="pickMedia(n, +$event.target.value)" @pointerdown.stop>
+                <option v-if="!mediaLibrary.length" :value="null" disabled>— load files below —</option>
+                <option v-for="m in mediaLibrary" :key="m.id" :value="m.id">{{ m.kind === 'video' ? '▶' : '🖼' }} {{ m.name }}</option>
+              </select>
+            </label>
+            <label class="load-btn" title="Load images or videos into the library" @pointerdown.stop>
+              ＋ Load files
+              <input type="file" accept="image/*,video/*" multiple hidden @change="loadMediaFiles(n, $event)" />
+            </label>
+            <div v-if="n.params.mode === 'camera' && !cameraOn" class="media-hint">Camera is off — enable it with the webcam button in the toolbar.</div>
+          </template>
+          <template v-if="n.type === 'text'">
+            <input class="text-in" type="text" :value="n.params.text" placeholder="type…" @input="n.params.text = $event.target.value; persist()" @pointerdown.stop />
+            <label>font
+              <select v-model="n.params.font" @change="persist" @pointerdown.stop>
+                <option v-for="f in TEXT_FONTS" :key="f" :value="f">{{ f }}</option>
+              </select>
+            </label>
+            <label v-for="pk in ['size', 'weight', 'tracking', 'x', 'y', 'hue', 'rotate']" :key="pk">
+              <span class="pjack" :ref="(el) => bindJack(n.id, pk, el)" :data-jack-node="n.id" :data-jack-param="pk" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, pk)" />
+              {{ pk }}
+              <input type="range" :min="PARAM_RANGES.text[pk][0]" :max="PARAM_RANGES.text[pk][1]" :step="(PARAM_RANGES.text[pk][1] - PARAM_RANGES.text[pk][0]) / 100" :value="n.params[pk]" @input="n.params[pk] = +$event.target.value; persist()" @pointerdown.stop />
+            </label>
+            <label class="chk"><input type="checkbox" v-model="n.params.italic" @change="persist" @pointerdown.stop /> italic</label>
+            <label class="chk"><input type="checkbox" v-model="n.params.bg" @change="persist" @pointerdown.stop /> black background</label>
+            <label>glow <input type="range" min="0" max="1.5" step="0.05" v-model.number="n.params.glow" @change="persist" @pointerdown.stop /></label>
+          </template>
+          <template v-if="n.type === 'portal'">
+            <div class="portal-grid">
+              <span class="portal-lbl">from</span>
+              <label v-for="pk in ['srcX', 'srcY', 'srcW', 'srcH']" :key="pk" class="portal-cell">
+                <span class="pjack" :ref="(el) => bindJack(n.id, pk, el)" :data-jack-node="n.id" :data-jack-param="pk" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, pk)" />
+                {{ pk.slice(3).toLowerCase() }}
+                <input type="range" min="0" max="1" step="0.01" :value="n.params[pk]" @input="n.params[pk] = +$event.target.value; persist()" @pointerdown.stop />
+              </label>
+              <span class="portal-lbl">to</span>
+              <label v-for="pk in ['dstX', 'dstY', 'dstW', 'dstH']" :key="pk" class="portal-cell">
+                <span class="pjack" :ref="(el) => bindJack(n.id, pk, el)" :data-jack-node="n.id" :data-jack-param="pk" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, pk)" />
+                {{ pk.slice(3).toLowerCase() }}
+                <input type="range" min="0" max="1" step="0.01" :value="n.params[pk]" @input="n.params[pk] = +$event.target.value; persist()" @pointerdown.stop />
+              </label>
+            </div>
+            <label>recurse <input type="range" min="1" max="8" step="1" v-model.number="n.params.recurse" @change="persist" @pointerdown.stop /></label>
+            <label class="chk"><input type="checkbox" v-model="n.params.border" @change="persist" @pointerdown.stop /> outline</label>
           </template>
         </div>
       </div>
@@ -1688,6 +2047,20 @@ onBeforeUnmount(() => {
   border: 0; border-radius: 3px; padding: 1px 4px; font: 600 12px system-ui; color: #06070a;
 }
 .node-close { cursor: pointer; color: rgba(0,0,0,0.6); }
+.load-btn {
+  display: inline-block; cursor: pointer; font: 11px system-ui, sans-serif;
+  color: #cdd3e0; background: #12141c; border: 1px solid #333; border-radius: 4px;
+  padding: 3px 8px; text-align: center;
+}
+.load-btn:hover { background: #1a1d28; }
+.media-hint { font: 10px system-ui, sans-serif; color: #9aa4c0; opacity: 0.8; }
+.text-in {
+  width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #333;
+  border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif;
+}
+.portal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 6px; align-items: center; }
+.portal-lbl { grid-column: 1 / -1; font: 600 10px system-ui; color: #9aa4c0; text-transform: uppercase; margin-top: 2px; }
+.portal-cell { font-size: 10px; }
 .node-thumb { width: 100%; background: #000; }
 .node-thumb :deep(canvas) { width: 100%; height: 100%; display: block; }
 .node-body { padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; }

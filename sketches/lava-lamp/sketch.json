@@ -1,0 +1,15 @@
+{
+  "title": "Lava Lamp",
+  "description": "Buoyant wax blobs rise and sink in a warm glass column — a metaball field threshold-rendered so blobs merge and split with gooey necks, heated at the base and cooled at the top. Click nudges a blob; beats warm the lamp.",
+  "tags": [
+    "generative",
+    "metaballs",
+    "retro",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

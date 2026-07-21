@@ -1,0 +1,95 @@
+// Grass Field — a meadow of thousands of blades bending in the wind: each
+// blade is a tapered Bézier sway rooted at a ground point, driven by a
+// travelling wind field (gusts roll across as visible waves), with depth
+// haze, wildflowers, and a warm sky. Pointer parts the grass like a hand.
+import { createRuntime } from '../_lib/runtime.js'
+
+const rt = createRuntime()
+const canvas = document.getElementById('canvas')
+const ctx = canvas.getContext('2d')
+
+const params = rt.params({
+  density: { value: 1, min: 0.3, max: 2, step: 0.05, label: 'Density' },
+  wind: { value: 1, min: 0, max: 3, step: 0.05, label: 'Wind strength' },
+  gust: { value: 0.6, min: 0, max: 1.5, step: 0.05, label: 'Gustiness' },
+  height: { value: 1, min: 0.5, max: 1.8, step: 0.05, label: 'Blade height' },
+  hue: { value: 95, min: 40, max: 140, step: 1, label: 'Grass hue' },
+  flowers: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Wildflowers' },
+})
+rt.mapInput('audio.level', 'wind', 0.6)
+rt.mapInput('audio.pulse', 'gust', 0.4)
+
+let W = 0, H = 0
+let blades = []
+let px_ = 2, py_ = 2, tpx = 2
+function resize() {
+  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
+  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
+  build()
+}
+function build() {
+  blades = []
+  const n = Math.round(2600 * params.density * rt.detail)
+  for (let i = 0; i < n; i++) {
+    const depth = rt.rng() // 0 far … 1 near
+    const y = H * (0.4 + depth * 0.62)
+    blades.push({
+      x: rt.random(-20, W + 20), y, depth,
+      len: (40 + depth * 130) * rt.pixelRatio * params.height * rt.random(0.7, 1.2),
+      w: (1.5 + depth * 4) * rt.pixelRatio,
+      lean: rt.random(-0.2, 0.2), phase: rt.random(0, Math.PI * 2),
+      hue: params.hue + rt.random(-15, 20), light: 25 + depth * 30 + rt.random(-6, 8),
+      flower: rt.rng() < 0.04 ? { h: rt.random(0, 360), s: rt.random(3, 6) * rt.pixelRatio } : null,
+    })
+  }
+  blades.sort((a, b) => a.depth - b.depth) // far first
+}
+window.addEventListener('pointermove', (e) => { tpx = e.clientX * rt.pixelRatio; py_ = e.clientY * rt.pixelRatio })
+let last = 0
+function frame(now) {
+  rt.tick(now)
+  const t = now * 0.001
+  const dt = Math.min(0.05, t - last || 0.016)
+  last = t
+  px_ += (tpx - px_) * 0.1
+  if (Math.round(2600 * params.density * rt.detail) !== blades.length) build()
+
+  // sky + ground gradient
+  const g = ctx.createLinearGradient(0, 0, 0, H)
+  g.addColorStop(0, `hsl(${params.hue + 90}, 60%, 72%)`)
+  g.addColorStop(0.4, `hsl(${params.hue + 60}, 55%, 60%)`)
+  g.addColorStop(0.42, `hsl(${params.hue}, 45%, 30%)`)
+  g.addColorStop(1, `hsl(${params.hue + 10}, 55%, 12%)`)
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+
+  ctx.lineCap = 'round'
+  for (const b of blades) {
+    // travelling wind wave across x + per-blade gust noise
+    const wave = Math.sin(b.x * 0.006 - t * 2 * params.wind) * params.wind
+    const gust = Math.sin(t * 1.3 * params.gust + b.phase) * params.gust * 0.6
+    let bend = (wave + gust + b.lean) * (0.4 + b.depth) * 0.5
+    // pointer parts nearby blades
+    const dx = b.x - px_
+    const near = Math.max(0, 1 - Math.abs(dx) / (120 * rt.pixelRatio)) * Math.max(0, 1 - Math.abs(b.y - py_) / (200 * rt.pixelRatio))
+    bend += Math.sign(dx || 1) * near * 0.9
+
+    const tipX = b.x + bend * b.len
+    const tipY = b.y - b.len
+    const ctrlX = b.x + bend * b.len * 0.5
+    const ctrlY = b.y - b.len * 0.55
+    ctx.strokeStyle = `hsl(${b.hue}, 55%, ${b.light}%)`
+    ctx.lineWidth = b.w
+    ctx.beginPath()
+    ctx.moveTo(b.x, b.y)
+    ctx.quadraticCurveTo(ctrlX, ctrlY, tipX, tipY)
+    ctx.stroke()
+    if (b.flower) {
+      ctx.fillStyle = `hsl(${b.flower.h}, 80%, 70%)`
+      ctx.beginPath(); ctx.arc(tipX, tipY, b.flower.s * (params.flowers > 0.05 ? 1 : 0), 0, Math.PI * 2); ctx.fill()
+    }
+  }
+  requestAnimationFrame(frame)
+}
+window.addEventListener('resize', resize)
+resize()
+requestAnimationFrame(frame)

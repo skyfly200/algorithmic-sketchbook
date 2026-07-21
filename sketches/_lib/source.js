@@ -200,10 +200,28 @@ export function createSource(opts = {}) {
     }
   })
 
-  // Never sit blank: start the demo immediately. The chooser stays up (unless
-  // in a preview iframe) so camera/upload are one click away.
+  // Never sit blank: start the demo immediately. Rather than block the view
+  // with a full-screen chooser, default straight to the demo and tuck
+  // camera/upload behind a small unobtrusive "source" button (bottom-left).
+  // Inside a preview iframe (Patch/Mixer/Autopilot) there's no chooser at all
+  // — the compositor feeds the source.
   useDemo()
-  if (preview) hideChooser()
+  hideChooser()
+  if (!preview && chooser) {
+    const btn = document.createElement('button')
+    btn.textContent = '📷 source'
+    btn.title = 'Choose a source — camera, a file, or the demo'
+    btn.style.cssText =
+      'position:fixed;left:12px;bottom:12px;z-index:9;font:13px system-ui,sans-serif;' +
+      'color:#fff;cursor:pointer;padding:7px 14px;border-radius:999px;' +
+      'background:rgba(20,22,30,0.7);border:1px solid rgba(255,255,255,0.25);backdrop-filter:blur(4px);'
+    btn.addEventListener('click', () => {
+      chooser.style.display = chooser.style.display === 'none' ? 'flex' : 'none'
+    })
+    // clicking a chooser button also dismisses the overlay
+    for (const b of chooser.querySelectorAll('button')) b.addEventListener('click', () => hideChooser())
+    document.body.appendChild(btn)
+  }
 
   return {
     get el() {

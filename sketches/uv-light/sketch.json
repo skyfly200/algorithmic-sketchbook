@@ -1,0 +1,14 @@
+{
+  "title": "UV Light",
+  "description": "A blacklight over a live source — the scene sinks into violet murk while bright, saturated regions fluoresce in electric colours and bloom, with a slow lamp sweep, the way pigments glow under UV.",
+  "tags": [
+    "filter",
+    "light",
+    "camera",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

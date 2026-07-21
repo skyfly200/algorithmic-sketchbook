@@ -220,6 +220,28 @@ export function createRuntime() {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 
+  // Universal pause: freeze the sketch by holding its requestAnimationFrame
+  // callbacks until resumed (works for any sketch without per-sketch code —
+  // the viewer's Space key and compositors post `sketch:pause`).
+  let paused = false
+  const heldRaf = []
+  const nativeRaf = window.requestAnimationFrame.bind(window)
+  window.requestAnimationFrame = (cb) => {
+    if (paused) {
+      heldRaf.push(cb)
+      return heldRaf.length
+    }
+    return nativeRaf(cb)
+  }
+  function setPaused(p) {
+    if (p === paused) return
+    paused = p
+    if (!paused) {
+      const held = heldRaf.splice(0)
+      for (const cb of held) nativeRaf(cb)
+    }
+  }
+
   const beat = createBeatDetector()
   // External inputs, started lazily the first time a mapping uses them.
   const midi = createMidiInput()
@@ -231,6 +253,10 @@ export function createRuntime() {
   const base = {} // values as set by the sketch / viewer / scene
   const effective = {} // base + input modulation, what sketches read
   let mappings = []
+  const defaultMappings = [] // the sketch's own rt.mapInput() calls, for auto-map
+  // Patch loads effect iframes with ?nomap=1 so they start with no reactivity
+  // until the user opts in (Auto-map button); the defaults are still remembered.
+  const noDefaultMap = urlParams.get('nomap') === '1'
   let announced = false
 
   const mouse = { x: 0.5, y: 0.5 }
@@ -389,7 +415,7 @@ export function createRuntime() {
     announced = true
     queueMicrotask(() => {
       window.parent?.postMessage(
-        { type: 'sketch:ready', schema, values: { ...base }, mappings: [...mappings] },
+        { type: 'sketch:ready', schema, values: { ...base }, mappings: [...mappings], defaultMappings: [...defaultMappings] },
         '*',
       )
     })
@@ -413,6 +439,15 @@ export function createRuntime() {
       // own mic button. Pulse stays locally-driven via trigger()+decay.
       Object.assign(beat.state, msg.state)
       if (msg.beat) beat.trigger(msg.energy ?? 1)
+    } else if (msg.type === 'sketch:pause') {
+      setPaused(!!msg.paused)
+    } else if (msg.type === 'sketch:auto-map') {
+      // apply the sketch's own default input mappings on demand
+      setMappings([...defaultMappings])
+      window.parent?.postMessage(
+        { type: 'sketch:ready', schema, values: { ...base }, mappings: [...mappings], defaultMappings: [...defaultMappings] },
+        '*',
+      )
     }
   })
 
@@ -451,7 +486,8 @@ export function createRuntime() {
     },
 
     mapInput(source, param, amount = 0.5) {
-      setMappings([...mappings, { source, param, amount }])
+      defaultMappings.push({ source, param, amount })
+      if (!noDefaultMap) setMappings([...mappings, { source, param, amount }])
     },
 
     tick(now = performance.now()) {

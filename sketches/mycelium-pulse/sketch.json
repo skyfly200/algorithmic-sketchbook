@@ -1,0 +1,15 @@
+{
+  "title": "Mycelium Pulse",
+  "description": "A living fungal network — hyphae creep out from spores, branching into a dense web, while bright pulses of nutrient race along the strands from roots to tips like a neural net. Click plants a spore.",
+  "tags": [
+    "generative",
+    "organic",
+    "network",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}
