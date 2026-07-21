@@ -24,7 +24,7 @@ const params = rt.params({
   speed: { value: 1, min: 0, max: 3, step: 0.05, label: 'Sweep speed' },
   spread: { value: 0.7, min: 0.1, max: 1, step: 0.01, label: 'Sweep spread' },
   beamWidth: { value: 0.5, min: 0.15, max: 1, step: 0.01, label: 'Beam width' },
-  gobo: { value: rt.pick(['open', 'dots', 'bars', 'star', 'breakup']), type: 'select', options: ['open', 'dots', 'bars', 'star', 'breakup'], label: 'Gobo' },
+  gobo: { value: rt.pick(['open', 'dots', 'bars', 'star', 'breakup', 'gears', 'spiral', 'triangles', 'rings', 'leaves', 'windows']), type: 'select', options: ['open', 'dots', 'bars', 'star', 'breakup', 'gears', 'spiral', 'triangles', 'rings', 'leaves', 'windows'], label: 'Gobo' },
   aperture: { value: 1, min: 0.15, max: 1, step: 0.01, label: 'Aperture (iris)' },
   focus: { value: 0.85, min: 0, max: 1, step: 0.01, label: 'Focus' },
   goboSpin: { value: 0.3, min: 0, max: 2, step: 0.02, label: 'Gobo rotation' },
@@ -118,8 +118,66 @@ function paintPattern(kind) {
     }
     c.closePath()
     c.fill()
+  } else if (kind === 'gears') {
+    // radial gear teeth around an open hub
+    const teeth = 16
+    c.beginPath()
+    for (let k = 0; k < teeth * 2; k++) {
+      const a = (k / (teeth * 2)) * Math.PI * 2
+      const rr = k % 2 === 0 ? m * 0.9 : m * 0.62
+      c[k === 0 ? 'moveTo' : 'lineTo'](m + Math.cos(a) * rr, m + Math.sin(a) * rr)
+    }
+    c.closePath()
+    c.fill()
+    c.globalCompositeOperation = 'destination-out'
+    c.beginPath(); c.arc(m, m, m * 0.32, 0, Math.PI * 2); c.fill()
+    c.globalCompositeOperation = 'source-over'
+  } else if (kind === 'spiral') {
+    c.lineCap = 'round'
+    c.strokeStyle = '#fff'
+    for (let arm = 0; arm < 3; arm++) {
+      c.lineWidth = m * 0.1
+      c.beginPath()
+      for (let t = 0; t < Math.PI * 4; t += 0.1) {
+        const rr = m * 0.06 + (t / (Math.PI * 4)) * m * 0.82
+        const a = t + (arm / 3) * Math.PI * 2
+        const x = m + Math.cos(a) * rr, y = m + Math.sin(a) * rr
+        t === 0 ? c.moveTo(x, y) : c.lineTo(x, y)
+      }
+      c.stroke()
+    }
+  } else if (kind === 'triangles') {
+    const n = 6
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2
+      const cx = m + Math.cos(a) * m * 0.5, cy = m + Math.sin(a) * m * 0.5
+      c.save(); c.translate(cx, cy); c.rotate(a)
+      c.beginPath()
+      c.moveTo(m * 0.28, 0); c.lineTo(-m * 0.14, m * 0.24); c.lineTo(-m * 0.14, -m * 0.24)
+      c.closePath(); c.fill()
+      c.restore()
+    }
+  } else if (kind === 'rings') {
+    c.strokeStyle = '#fff'
+    for (let ring = 1; ring <= 4; ring++) {
+      c.lineWidth = m * 0.07
+      c.beginPath(); c.arc(m, m, ring * m * 0.22, 0, Math.PI * 2); c.stroke()
+    }
+  } else if (kind === 'windows') {
+    // a cathedral-window grid of rounded panes
+    const g = 4, pad = m * 0.06, cell = (GOBO - pad * 2) / g
+    for (let iy = 0; iy < g; iy++) for (let ix = 0; ix < g; ix++) {
+      const x = pad + ix * cell + cell * 0.12, y = pad + iy * cell + cell * 0.12
+      const w = cell * 0.76
+      c.beginPath()
+      c.moveTo(x, y + w * 0.4)
+      c.quadraticCurveTo(x, y, x + w / 2, y)
+      c.quadraticCurveTo(x + w, y, x + w, y + w * 0.4)
+      c.lineTo(x + w, y + w); c.lineTo(x, y + w); c.closePath()
+      c.fill()
+    }
   } else {
-    // breakup: a seeded scatter of foliage-like blobs
+    // breakup / leaves: a seeded scatter of foliage-like blobs
     for (const [x, y, r] of breakupSeed) {
       c.beginPath()
       c.ellipse(x * GOBO, y * GOBO, r * GOBO, r * GOBO * 0.6, x * 9, 0, Math.PI * 2)
@@ -246,9 +304,11 @@ function makeFixture(i, n) {
     depthWrite: false, side: THREE.DoubleSide,
   })
   const beamMatInner = beamMatOuter.clone()
-  // open-ended cones, apex up at the head; x/z scale sets the floor flare
-  const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 1, 1, 20, 1, true), beamMatOuter)
-  const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 1, 1, 14, 1, true), beamMatInner)
+  // open-ended cones, apex up at the head; x/z scale sets the floor flare.
+  // Both share the head apex radius so the hot core and soft shell are the
+  // SAME beam (a bright centre fading to a soft edge), not two columns.
+  const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 1, 1, 24, 1, true), beamMatOuter)
+  const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 1, 1, 18, 1, true), beamMatInner)
   tilt.add(outer, inner)
 
   // the lens: a glowing dot you can see from the audience
@@ -348,7 +408,10 @@ renderer.setAnimationLoop((now) => {
     // cones: apex at the head, flaring to the floor
     f.outer.scale.set(wR, BEAM_LEN, wR)
     f.outer.position.y = -BEAM_LEN / 2 - 0.25
-    f.inner.scale.set(wR * 0.4, BEAM_LEN, wR * 0.4)
+    // the core shares the outer cone's flare (concentric, same apex) but a
+    // bit narrower and brighter — the hot centre of one beam, focus-tightened
+    const coreW = wR * (0.55 + params.focus * 0.15)
+    f.inner.scale.set(coreW, BEAM_LEN, coreW)
     f.inner.position.y = f.outer.position.y
 
     f.spot.color.copy(f.color)

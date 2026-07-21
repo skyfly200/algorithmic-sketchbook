@@ -29,6 +29,7 @@ const params = rt.params({
   ripple: { value: 0.3, min: 0, max: 1, step: 0.02, label: 'Ripple' },
   scale: { value: +rt.random(1.6, 3).toFixed(1), min: 0.8, max: 6, step: 0.1, label: 'Pattern scale' },
   spin: { value: 0.4, min: 0, max: 2, step: 0.05, label: 'Orbit speed' },
+  shape: { value: rt.pick(['round', 'square', 'triangle', 'hexagon', 'star', 'heart']), type: 'select', options: ['round', 'square', 'triangle', 'hexagon', 'star', 'heart'], label: 'Wire frame' },
 })
 // Music: loudness stirs the film, beats slap it into ripples.
 rt.mapInput('audio.volume', 'swirl', 0.6)
@@ -43,9 +44,80 @@ const controls = new OrbitControls(camera, renderer.domElement)
 controls.enableDamping = true
 controls.autoRotate = true
 
-// The wire ring holding the film.
+// The outline radius at angle θ for each frame shape (unit scale — the film
+// and wire are both scaled to R below). Corners sit past r=1, so the shader's
+// edge term (1 − r²) naturally flattens the film toward them.
+const R = 2
+function outlineR(t, shape) {
+  const poly = (n) => Math.cos(Math.PI / n) / Math.cos(((t % (2 * Math.PI / n)) + 2 * Math.PI / n) % (2 * Math.PI / n) - Math.PI / n)
+  switch (shape) {
+    case 'square': return poly(4)
+    case 'triangle': return poly(3)
+    case 'hexagon': return poly(6)
+    case 'star': {
+      const k = 5
+      const seg = ((t % (2 * Math.PI / k)) + 2 * Math.PI / k) % (2 * Math.PI / k)
+      return 0.55 + 0.45 * Math.abs(Math.cos(seg * k / 2 * Math.PI / (Math.PI))) // crude 5-point star
+    }
+    case 'heart': {
+      // classic heart curve normalised to ~unit
+      const s = Math.sin(t), c = Math.cos(t)
+      const x = 16 * s * s * s
+      const y = 13 * c - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)
+      return Math.hypot(x, y) / 17
+    }
+    default: return 1
+  }
+}
+function outlinePoint(t, shape) {
+  if (shape === 'heart') {
+    const s = Math.sin(t), c = Math.cos(t)
+    const x = 16 * s * s * s
+    const y = 13 * c - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)
+    return [x / 17 * R, y / 17 * R]
+  }
+  if (shape === 'star') {
+    const k = 5
+    const spikes = k * 2
+    const idx = Math.round(t / (Math.PI * 2) * spikes)
+    // smooth star via alternating radii
+    const rr = (Math.floor(t / (Math.PI / k)) % 2 === 0) ? 1 : 0.5
+    return [Math.cos(t) * rr * R, Math.sin(t) * rr * R]
+  }
+  const r = outlineR(t, shape)
+  return [Math.cos(t) * r * R, Math.sin(t) * r * R]
+}
+
+function buildFilmGeom(shape) {
+  const N = 160
+  const pos = [0, 0, 0]
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * Math.PI * 2
+    const [x, y] = outlinePoint(t, shape)
+    pos.push(x, y, 0)
+  }
+  const idx = []
+  for (let i = 1; i <= N; i++) idx.push(0, i, i + 1)
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  g.setIndex(idx)
+  return g
+}
+function buildWireGeom(shape) {
+  const N = 200
+  const pts = []
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * Math.PI * 2
+    const [x, y] = outlinePoint(t, shape)
+    pts.push(new THREE.Vector3(x, y, 0))
+  }
+  const curve = new THREE.CatmullRomCurve3(pts, true)
+  return new THREE.TubeGeometry(curve, 240, 0.035, 12, true)
+}
+
+// The wire frame holding the film (rebuilt when the shape changes).
 const ring = new THREE.Mesh(
-  new THREE.TorusGeometry(2, 0.035, 16, 128),
+  buildWireGeom('round'),
   new THREE.MeshStandardMaterial({ color: 0x9aa4b8, metalness: 0.9, roughness: 0.35 }),
 )
 scene.add(ring)
@@ -73,7 +145,7 @@ const filmUniforms = {
   u_beat: { value: 0 },
 }
 const film = new THREE.Mesh(
-  new THREE.CircleGeometry(2, 96, 0, Math.PI * 2),
+  buildFilmGeom('round'),
   new THREE.ShaderMaterial({
     uniforms: filmUniforms,
     transparent: true,
@@ -163,12 +235,19 @@ rt.onBeat(() => (beatKick = 1))
 
 let lastNow = 0
 let swirlPhase = 0
+let curShape = 'round'
 renderer.setAnimationLoop((now) => {
   rt.tick(now)
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
   lastNow = now
   swirlPhase += params.swirl * dt
   beatKick *= Math.pow(0.2, dt * 2)
+
+  if (params.shape !== curShape) {
+    curShape = params.shape
+    film.geometry.dispose(); film.geometry = buildFilmGeom(curShape)
+    ring.geometry.dispose(); ring.geometry = buildWireGeom(curShape)
+  }
 
   filmUniforms.u_time.value = now * 0.001
   filmUniforms.u_thick.value = params.thickness
