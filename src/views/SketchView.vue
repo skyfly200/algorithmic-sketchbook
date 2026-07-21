@@ -117,8 +117,18 @@ function applyScene(scene) {
   }
 }
 
+// Toggle rather than enter-only: mobile has no Esc key, so an enter-only
+// button strands the user in fullscreen with no way back.
+const isFullscreen = ref(false)
+function fsElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null
+}
 function fullscreen() {
-  frame.value?.requestFullscreen?.()
+  if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)
+  else (frame.value?.requestFullscreen || frame.value?.webkitRequestFullscreen)?.call(frame.value)
+}
+function onFsChange() {
+  isFullscreen.value = !!fsElement()
 }
 
 // Space toggles rendering — the runtime freezes its rAF loop on pause.
@@ -133,6 +143,8 @@ function onKey(e) {
 onMounted(() => {
   window.addEventListener('message', onMessage)
   window.addEventListener('keydown', onKey)
+  document.addEventListener('fullscreenchange', onFsChange)
+  document.addEventListener('webkitfullscreenchange', onFsChange)
   const fromQuery = route.query.scene && scenes.byId(route.query.scene)
   if (fromQuery) {
     pendingScene = fromQuery
@@ -143,6 +155,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('message', onMessage)
   window.removeEventListener('keydown', onKey)
+  document.removeEventListener('fullscreenchange', onFsChange)
+  document.removeEventListener('webkitfullscreenchange', onFsChange)
 })
 </script>
 
@@ -252,7 +266,7 @@ onUnmounted(() => {
           title="Display mode — fullscreen, switch between effects"
           :to="{ name: 'present-slug', params: { slug: sketch.slug } }"
         />
-        <v-btn icon="mdi-fullscreen" variant="text" size="small" title="Fullscreen" @click="fullscreen" />
+        <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
       </template>
     </div>
 

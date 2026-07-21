@@ -83,8 +83,18 @@ function move(i, d) {
   const [x] = layers.value.splice(i, 1)
   layers.value.splice(j, 0, x)
 }
+// Toggle rather than enter-only: mobile has no Esc key, so an enter-only
+// button strands the user in fullscreen with no way back.
+const isFullscreen = ref(false)
+function fsElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null
+}
 function fullscreen() {
-  stage.value?.requestFullscreen?.()
+  if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)
+  else (stage.value?.requestFullscreen || stage.value?.webkitRequestFullscreen)?.call(stage.value)
+}
+function onFsChange() {
+  isFullscreen.value = !!fsElement()
 }
 
 // --- Motion Extraction feed ----------------------------------------------
@@ -268,11 +278,15 @@ function captureLoop(ts) {
 
 onMounted(() => {
   window.addEventListener('message', onMessage)
+  document.addEventListener('fullscreenchange', onFsChange)
+  document.addEventListener('webkitfullscreenchange', onFsChange)
   raf = requestAnimationFrame(captureLoop)
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
   window.removeEventListener('message', onMessage)
+  document.removeEventListener('fullscreenchange', onFsChange)
+  document.removeEventListener('webkitfullscreenchange', onFsChange)
   beat.stop()
 })
 </script>
@@ -339,7 +353,7 @@ onBeforeUnmount(() => {
         </v-list>
       </v-menu>
       <v-btn icon="mdi-tune-variant" variant="text" size="small" title="Toggle layers panel" :color="showPanel ? 'primary' : undefined" @click="showPanel = !showPanel" />
-      <v-btn icon="mdi-fullscreen" variant="text" size="small" title="Fullscreen" @click="fullscreen" />
+      <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
     </div>
 
     <!-- layer panel -->

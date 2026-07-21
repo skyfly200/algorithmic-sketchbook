@@ -42,14 +42,23 @@ void main(){
     // sky gradient + sun
     float sy=(p.y-horizon)/(0.5);
     col=mix(hsl(u_hueSky/360.,0.9,0.55), hsl((u_hueSky+40.)/360.,0.95,0.12), sy);
-    // sun: banded disc
-    vec2 sc=vec2(0.0,horizon+0.28);
-    float d=length((p-sc)/vec2(1.0,1.0));
-    float disc=smoothstep(u_sun*0.42,u_sun*0.4,d);
-    float bands=step(0.5,fract((p.y-sc.y)*22.0));
-    float band=disc*(p.y>sc.y? 1.0 : bands);
-    vec3 sunCol=mix(hsl(0.13,1.0,0.6),hsl(0.95,1.0,0.55), (p.y-sc.y+u_sun*0.4)/(u_sun*0.8));
-    col=mix(col,sunCol,band*(0.7+0.3*u_pulse));
+    // sun: an animated banded disc that slowly bobs as it "sets"
+    vec2 sc=vec2(0.0, horizon+0.28 + sin(u_time*0.25)*0.02);
+    float d=length(p-sc);
+    float disc=smoothstep(u_sun*0.42, u_sun*0.40, d);
+    // retro scan-bands only across the lower half — they rise over time and
+    // the dark gaps widen toward the bottom (the classic sinking-sun look)
+    float yb = clamp((sc.y - p.y) / (u_sun*0.42), 0.0, 1.0); // 0 centre → 1 base
+    float scan = sin((p.y - sc.y)*90.0 + u_time*2.2);
+    float bands = smoothstep(-0.2 - yb*1.4, 0.25, scan);    // gaps grow with yb
+    float band = disc*(p.y>sc.y ? 1.0 : bands);
+    vec3 sunCol=mix(hsl(0.13,1.0,0.62),hsl(0.95,1.0,0.55), (p.y-sc.y+u_sun*0.4)/(u_sun*0.8));
+    // gentle brightness shimmer + beat swell
+    float shimmer = 0.85 + 0.15*sin(u_time*3.0 + p.y*40.0);
+    col=mix(col, sunCol*shimmer, band*(0.7+0.3*u_pulse));
+    // soft pulsing halo around the disc
+    float halo=smoothstep(u_sun*0.95, u_sun*0.4, d);
+    col += hsl(0.05,1.0,0.5)*halo*halo*(0.12+0.10*u_pulse);
     // stars up high
     if(sy>0.5){ float st=step(0.996,hash(floor(p.x*300.)+floor(p.y*300.)*7.)); col+=st*0.6; }
   } else {

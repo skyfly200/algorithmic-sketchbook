@@ -95,6 +95,7 @@ export function createSource(opts = {}) {
     state.h = h
     state.kind = kind
     hideChooser()
+    updateFlipBtn?.()
     opts.onSource?.(kind)
   }
 
@@ -102,16 +103,45 @@ export function createSource(opts = {}) {
     set(demoCanvas, demoCanvas.width, demoCanvas.height, 'demo')
   }
 
-  async function useCamera() {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1280, height: 720, facingMode: 'user' },
+  let camStream = null
+  let facing = 'user' // 'user' (front) | 'environment' (back)
+  async function useCamera(facingMode = facing) {
+    // Release any camera we already hold before opening another (a device can
+    // only stream one facing at a time, and leaked tracks keep the light on).
+    if (camStream) for (const t of camStream.getTracks()) t.stop()
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 1280, height: 720, facingMode },
     })
+    facing = facingMode
     const video = document.createElement('video')
-    video.srcObject = stream
+    video.srcObject = camStream
     video.muted = true
     video.playsInline = true
     await video.play()
     set(video, video.videoWidth, video.videoHeight, 'camera')
+    updateFlipBtn()
+  }
+  // Flip between the front and rear cameras (mainly for phones/tablets).
+  function flipCamera() {
+    return useCamera(facing === 'user' ? 'environment' : 'user')
+  }
+  // A small floating "flip camera" button, shown only while a camera is live.
+  let flipBtn = null
+  function updateFlipBtn() {
+    if (preview) return
+    const live = state.kind === 'camera'
+    if (live && !flipBtn) {
+      flipBtn = document.createElement('button')
+      flipBtn.textContent = '🔄 flip'
+      flipBtn.title = 'Switch between the front and back camera'
+      flipBtn.style.cssText =
+        'position:fixed;left:96px;bottom:12px;z-index:9;font:13px system-ui,sans-serif;' +
+        'color:#fff;cursor:pointer;padding:7px 14px;border-radius:999px;' +
+        'background:rgba(20,22,30,0.7);border:1px solid rgba(255,255,255,0.25);backdrop-filter:blur(4px);'
+      flipBtn.addEventListener('click', () => flipCamera().catch(() => {}))
+      document.body.appendChild(flipBtn)
+    }
+    if (flipBtn) flipBtn.style.display = live ? 'block' : 'none'
   }
 
   function loadFile(file) {
@@ -241,6 +271,7 @@ export function createSource(opts = {}) {
     },
     useDemo,
     useCamera,
+    flipCamera,
     loadFile,
     hideChooser,
 

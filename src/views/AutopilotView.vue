@@ -62,6 +62,9 @@ const perfBudget = ref(savedSet.perfBudget ?? 12)
 const resolution = ref(savedSet.resolution ?? 'high') // low | medium | high | native
 const enabledEffects = ref(new Set(savedSet.enabledEffects ?? []))
 const playing = ref(true)
+// The rendered view stays clean: every control lives inside one panel opened
+// from a single, unobtrusive corner button — nothing else overlays the visuals.
+const panelOpen = ref(false)
 function persistSettings() {
   localStorage.setItem(SET_KEY, JSON.stringify({
     dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value, perfBudget: perfBudget.value,
@@ -98,6 +101,45 @@ const stack = reactive([])
 let nextId = 1
 const recent = [] // recently retired slugs — avoid immediate repeats
 const readyWins = new WeakSet()
+
+// --- learned interest --------------------------------------------------------
+// Autopilot learns what you like from what you keep vs. skip: a layer you let
+// play accrues weight, one you skip past quickly loses it, and the router then
+// favours the higher-weighted sketches. Persisted, so the taste carries over.
+const INTEREST_KEY = 'sketchbook-autopilot-interest'
+const interest = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(INTEREST_KEY)) ?? {}
+  } catch {
+    return {}
+  }
+})()
+let interestSaveTimer = 0
+function weightOf(slug) {
+  return interest[slug] ?? 1
+}
+function noteEngagement(slug, liveMs) {
+  const d = Math.max(1, dwell.value) * 1000
+  let w = weightOf(slug)
+  if (liveMs < d * 0.5) w *= 0.9 // gone before it settled in → less wanted
+  else if (liveMs > d * 1.4) w *= 1.08 // left running → more wanted
+  else return
+  interest[slug] = Math.min(4, Math.max(0.2, +w.toFixed(3)))
+  clearTimeout(interestSaveTimer)
+  interestSaveTimer = setTimeout(() => localStorage.setItem(INTEREST_KEY, JSON.stringify(interest)), 500)
+}
+// Weighted random pick, biased by learned interest.
+function weightedPick(arr) {
+  if (!arr.length) return undefined
+  let total = 0
+  for (const s of arr) total += weightOf(s.slug)
+  let r = Math.random() * total
+  for (const s of arr) {
+    r -= weightOf(s.slug)
+    if (r <= 0) return s
+  }
+  return arr[arr.length - 1]
+}
 const frames = new Map() // layer id -> iframe element
 const note = ref('')
 let noteTimer = 0
@@ -181,7 +223,7 @@ function pickSketch(pool, budgetLeft) {
       .sort((a, b) => cost(a.slug) - cost(b.slug))
       .slice(0, 5)
   }
-  return pick(cands)
+  return weightedPick(cands)
 }
 
 function makeLayer(slug, kind, blend, opacity) {
@@ -214,6 +256,8 @@ function insertLayer(l, at) {
 
 function retire(layer, after = 1600) {
   if (!layer || layer.state === 'dying') return
+  // Score how long it got to play before being retired — the core skip signal.
+  if (layer.liveAt) noteEngagement(layer.slug, performance.now() - layer.liveAt)
   layer.state = 'dying'
   if (!recent.includes(layer.slug)) recent.push(layer.slug)
   while (recent.length > 8) recent.shift()
@@ -307,24 +351,48 @@ function mutate() {
       break
     }
   }
+  redo.length = 0 // a fresh move starts a new branch — old redo is void
   snapshot()
   dwellLeft = dwell.value
 }
 
-// --- history (for the back button: a hard rebuild, user-initiated) ----------
+// --- history (back/forward: a hard rebuild, user-initiated) -----------------
 const history = []
+const redo = []
+// The *logical* stack: what the mix will be once the in-flight move settles.
+// A move inserts a warming layer and only retires the one it replaces later,
+// so at snapshot time both are present — capture the resolved set instead
+// (warming layers in, the layers they're replacing out) or history bloats
+// with phantom duplicates and back() rebuilds the wrong mix.
+function logicalLayers() {
+  const replaced = new Set(stack.filter((l) => l.replaces != null).map((l) => l.replaces))
+  return stack.filter((l) => l.state !== 'dying' && !replaced.has(l.id))
+}
 function snapshot() {
-  history.push(liveLayers().map((l) => ({ slug: l.slug, kind: l.kind, blend: l.blend, opacity: l.opacity })))
+  history.push(logicalLayers().map((l) => ({ slug: l.slug, kind: l.kind, blend: l.blend, opacity: l.opacity })))
   if (history.length > 30) history.shift()
+}
+function rebuildTo(descriptors) {
+  for (const l of [...stack]) retire(l, 1700)
+  for (const d of descriptors) insertLayer(makeLayer(d.slug, d.kind, d.blend, d.opacity))
+  dwellLeft = dwell.value
 }
 function back() {
   if (history.length < 2) return
-  history.pop() // current
-  const prev = history[history.length - 1]
-  for (const l of [...stack]) retire(l, 1700)
-  for (const d of prev) insertLayer(makeLayer(d.slug, d.kind, d.blend, d.opacity))
-  dwellLeft = dwell.value
+  redo.push(history.pop()) // stash the state we're leaving so forward can return
+  rebuildTo(history[history.length - 1])
   say('back')
+}
+// Forward: replay a state we backed out of; if there's none, make a new move.
+function forward() {
+  if (redo.length) {
+    const next = redo.pop()
+    history.push(next)
+    rebuildTo(next)
+    say('forward')
+  } else {
+    mutate()
+  }
 }
 
 // --- warm-up lifecycle -------------------------------------------------------
@@ -339,6 +407,7 @@ function settleWarming(now) {
     const age = now - l.bornAt
     if ((ready && age > 1400) || age > 6000) {
       l.state = 'live'
+      l.liveAt = now // when it started actually showing — for engagement scoring
       if (l.replaces != null) {
         retire(stack.find((x) => x.id === l.replaces))
         l.replaces = null
@@ -400,8 +469,22 @@ async function toggleMic() {
 }
 
 // --- filter feed: composite the layers below into a filter's source --------
+// The feed is sized to the *viewport's* aspect ratio, not a fixed 16:9. If it
+// were fixed, cover-fitting the scene into it (here) and then cover-fitting it
+// back to full screen (in the filter's source.js) would crop twice — visibly
+// zooming the output, badly so on non-16:9 / portrait screens. Matching the
+// aspect makes both fits identity, so a filtered mix lines up with the scene.
 const feed = new OffscreenCanvas(640, 360)
 const feedCtx = feed.getContext('2d')
+function sizeFeed() {
+  const w = window.innerWidth || 640
+  const h = window.innerHeight || 360
+  const MAXD = 640 // bound the longest side so the per-frame composite stays cheap
+  const fw = w >= h ? MAXD : Math.max(1, Math.round(MAXD * (w / h)))
+  const fh = w >= h ? Math.max(1, Math.round(MAXD * (h / w))) : MAXD
+  if (feed.width !== fw) feed.width = fw
+  if (feed.height !== fh) feed.height = fh
+}
 function canvasBlend(b) {
   if (b === 'add') return 'lighter'
   if (b === 'normal') return 'source-over'
@@ -414,6 +497,7 @@ function coverDraw(ctx, cv, sw, sh, tw, th) {
   ctx.drawImage(cv, (tw - w) / 2, (th - h) / 2, w, h)
 }
 function feedFilters() {
+  sizeFeed()
   for (let i = 0; i < stack.length; i++) {
     const L = stack[i]
     if (L.kind !== 'filter' || L.state === 'warming' && performance.now() - L.bornAt < 300) continue
@@ -452,7 +536,6 @@ function feedFilters() {
 
 // --- per-layer params + mappings (same protocol as the viewer) -------------
 const layerControls = reactive([]) // [{ win, title, schema, values, mappings, open }]
-const drawer = ref(false)
 const INPUT_GROUPS = computed(() => {
   const groups = { audio: [], midi: [], mouse: [], touch: [], tilt: [], time: [], leap: [], artnet: [] }
   for (const s of INPUT_SOURCES) {
@@ -559,8 +642,23 @@ function loop(now) {
   raf = requestAnimationFrame(loop)
 }
 
+// Toggle, not just enter — on mobile there's no Esc key, so a button that
+// only calls requestFullscreen leaves no way out. Track state and swap the
+// icon; support the WebKit-prefixed API (older iOS/Safari) too.
+const isFullscreen = ref(false)
+function fsElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null
+}
 function fullscreen() {
-  document.querySelector('.autopilot')?.requestFullscreen?.()
+  const el = document.querySelector('.autopilot')
+  if (fsElement()) {
+    ;(document.exitFullscreen || document.webkitExitFullscreen)?.call(document)
+  } else {
+    ;(el?.requestFullscreen || el?.webkitRequestFullscreen)?.call(el)
+  }
+}
+function onFsChange() {
+  isFullscreen.value = !!fsElement()
 }
 
 onMounted(() => {
@@ -573,11 +671,15 @@ onMounted(() => {
   snapshot()
   dwellLeft = dwell.value
   window.addEventListener('message', onMessage)
+  document.addEventListener('fullscreenchange', onFsChange)
+  document.addEventListener('webkitfullscreenchange', onFsChange)
   raf = requestAnimationFrame(loop)
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
   window.removeEventListener('message', onMessage)
+  document.removeEventListener('fullscreenchange', onFsChange)
+  document.removeEventListener('webkitfullscreenchange', onFsChange)
   beat.stop()
 })
 </script>
@@ -603,25 +705,52 @@ onBeforeUnmount(() => {
 
     <div v-if="note" class="skip-note">{{ note }}</div>
 
-    <!-- transport -->
-    <div class="bar">
-      <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
-      <span class="text-subtitle-2 mr-1">Autopilot</span>
-      <v-btn icon="mdi-skip-previous" variant="text" size="small" title="Back to the previous routing" :disabled="history.length < 2" @click="back" />
-      <v-btn :icon="playing ? 'mdi-pause' : 'mdi-play'" variant="text" size="small" :title="playing ? 'Pause the tour' : 'Resume'" @click="playing = !playing" />
-      <v-btn icon="mdi-skip-next" variant="text" size="small" title="Next routing move now" @click="mutate()" />
-      <v-btn icon="mdi-content-save-outline" variant="text" size="small" title="Save the current mix as a Patch routing" @click="saveAsPatch" />
-      <v-menu :close-on-content-click="false">
-        <template #activator="{ props }">
-          <v-btn v-bind="props" icon="mdi-cog-outline" variant="text" size="small" title="Autopilot settings" />
-        </template>
-        <v-card class="pa-3" min-width="280" max-height="560" style="overflow-y:auto">
+    <!-- the only thing over the render: one faint corner button that opens the
+         panel; it brightens on hover and stays tappable on touch -->
+    <v-btn
+      v-if="!panelOpen"
+      class="panel-toggle"
+      icon="mdi-tune-vertical"
+      variant="flat" size="small"
+      title="Controls"
+      @click="panelOpen = true"
+    />
+
+    <!-- consolidated options panel: transport + settings + per-layer params -->
+    <transition name="ap-panel">
+      <div v-if="panelOpen" class="panel" @pointerdown.stop @pointermove.stop>
+        <div class="panel-head">
+          <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" title="Back to gallery" />
+          <span class="panel-title">Autopilot</span>
+          <span class="fps" :class="{ low: fps < fpsFloor }">{{ fps }} fps</span>
+          <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit full screen' : 'Full screen'" @click="fullscreen" />
+          <v-btn icon="mdi-close" variant="text" size="small" title="Close controls" @click="panelOpen = false" />
+        </div>
+
+        <!-- transport -->
+        <div class="panel-transport">
+          <v-btn icon="mdi-skip-previous" variant="text" size="small" title="Back to the previous routing" :disabled="history.length < 2" @click="back" />
+          <v-btn :icon="playing ? 'mdi-pause' : 'mdi-play'" variant="text" size="small" :title="playing ? 'Pause the tour' : 'Resume'" @click="playing = !playing" />
+          <v-btn icon="mdi-skip-next" variant="text" size="small" :title="redo.length ? 'Forward' : 'Next routing move now'" @click="forward" />
+          <span class="countdown">{{ playing ? dwellShown + 's' : 'paused' }}</span>
+          <v-btn
+            :icon="micOn ? 'mdi-microphone' : 'mdi-microphone-off'"
+            variant="text" size="small"
+            :color="micOn ? 'primary' : undefined"
+            title="Mic — every layer's audio mappings react"
+            @click="toggleMic"
+          />
+          <v-btn icon="mdi-content-save-outline" variant="text" size="small" title="Save the current mix as a Patch routing" @click="saveAsPatch" />
+        </div>
+
+        <div class="panel-scroll">
+          <!-- settings -->
           <div class="set-row">Seconds between changes: {{ dwell }}s</div>
           <v-slider v-model="dwell" density="compact" hide-details :min="6" :max="120" :step="1" @end="persistSettings" />
           <div class="set-row">Perf budget: {{ perfBudget }} (bigger = richer mixes)</div>
           <v-slider v-model="perfBudget" density="compact" hide-details :min="4" :max="24" :step="1" @end="persistSettings" />
           <div class="set-row">Resolution</div>
-          <v-btn-toggle v-model="resolution" density="compact" mandatory divided class="mb-2" @update:model-value="persistSettings">
+          <v-btn-toggle v-model="resolution" density="compact" mandatory divided class="mt-1 mb-4" @update:model-value="persistSettings">
             <v-btn value="low" size="x-small">Low</v-btn>
             <v-btn value="medium" size="x-small">Med</v-btn>
             <v-btn value="high" size="x-small">High</v-btn>
@@ -640,72 +769,55 @@ onBeforeUnmount(() => {
               {{ s.title }}
             </label>
           </div>
-        </v-card>
-      </v-menu>
-      <v-btn
-        :icon="micOn ? 'mdi-microphone' : 'mdi-microphone-off'"
-        variant="text" size="small"
-        :color="micOn ? 'primary' : undefined"
-        title="Mic — every layer's audio mappings react"
-        @click="toggleMic"
-      />
-      <v-btn
-        icon="mdi-tune-variant" variant="text" size="small"
-        :color="drawer ? 'primary' : undefined"
-        title="Params & input mappings for the current mix"
-        @click="drawer = !drawer"
-      />
-      <span class="fps" :class="{ low: fps < fpsFloor }">{{ fps }} fps</span>
-      <span class="countdown">{{ playing ? dwellShown + 's' : 'paused' }}</span>
-      <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
-    </div>
 
-    <!-- per-layer params + mappings drawer -->
-    <div v-if="drawer" class="drawer" @pointerdown.stop>
-      <template v-if="layerControls.length">
-        <div v-for="c in layerControls" :key="c.title + layerControls.indexOf(c)" class="layer-sec">
-          <button class="sec-head" @click="c.open = !c.open">
-            <span>{{ c.title }}</span><span>{{ c.open ? '▾' : '▸' }}</span>
-          </button>
-          <div v-if="c.open" class="sec-body">
-            <template v-for="(spec, name) in c.schema" :key="name">
-              <label v-if="spec.type === 'bool'" class="chk">
-                <input type="checkbox" :checked="c.values[name]" @change="setParam(c, name, $event.target.checked)" /> {{ spec.label ?? name }}
-              </label>
-              <label v-else-if="spec.type === 'select'">
-                {{ spec.label ?? name }}
-                <select :value="c.values[name]" @change="setParam(c, name, $event.target.value)">
-                  <option v-for="o in spec.options" :key="o" :value="o">{{ o }}</option>
-                </select>
-              </label>
-              <label v-else>
-                {{ spec.label ?? name }}
-                <input type="range" :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :value="c.values[name]" @input="setParam(c, name, +$event.target.value)" />
-              </label>
-            </template>
-            <div class="map-head">
-              <span>Mappings</span>
-              <button class="mini" title="Add mapping" @click="addMapping(c)">+</button>
+          <!-- per-layer params + mappings -->
+          <div class="panel-sub">Layer params &amp; mappings</div>
+          <template v-if="layerControls.length">
+            <div v-for="c in layerControls" :key="c.title + layerControls.indexOf(c)" class="layer-sec">
+              <button class="sec-head" @click="c.open = !c.open">
+                <span>{{ c.title }}</span><span>{{ c.open ? '▾' : '▸' }}</span>
+              </button>
+              <div v-if="c.open" class="sec-body">
+                <template v-for="(spec, name) in c.schema" :key="name">
+                  <label v-if="spec.type === 'bool'" class="chk">
+                    <input type="checkbox" :checked="c.values[name]" @change="setParam(c, name, $event.target.checked)" /> {{ spec.label ?? name }}
+                  </label>
+                  <label v-else-if="spec.type === 'select'">
+                    {{ spec.label ?? name }}
+                    <select :value="c.values[name]" @change="setParam(c, name, $event.target.value)">
+                      <option v-for="o in spec.options" :key="o" :value="o">{{ o }}</option>
+                    </select>
+                  </label>
+                  <label v-else>
+                    {{ spec.label ?? name }}
+                    <input type="range" :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :value="c.values[name]" @input="setParam(c, name, +$event.target.value)" />
+                  </label>
+                </template>
+                <div class="map-head">
+                  <span>Mappings</span>
+                  <button class="mini" title="Add mapping" @click="addMapping(c)">+</button>
+                </div>
+                <div v-for="(m, mi) in c.mappings" :key="mi" class="map-row">
+                  <select v-model="m.source" @change="syncMappings(c)">
+                    <optgroup v-for="[g, list] in INPUT_GROUPS" :key="g" :label="g">
+                      <option v-for="src in list" :key="src" :value="src">{{ src }}</option>
+                    </optgroup>
+                  </select>
+                  <span>→</span>
+                  <select v-model="m.param" @change="syncMappings(c)">
+                    <option v-for="pn in numericParams(c)" :key="pn" :value="pn">{{ pn }}</option>
+                  </select>
+                  <input type="range" min="-1" max="1" step="0.05" v-model.number="m.amount" title="amount" @input="syncMappings(c)" />
+                  <input type="range" min="0" max="0.98" step="0.02" :value="m.smooth ?? 0" title="smoothing" @input="m.smooth = +$event.target.value; syncMappings(c)" />
+                  <button class="mini" title="Remove" @click="removeMapping(c, mi)">×</button>
+                </div>
+              </div>
             </div>
-            <div v-for="(m, mi) in c.mappings" :key="mi" class="map-row">
-              <select v-model="m.source" @change="syncMappings(c)">
-                <optgroup v-for="[g, list] in INPUT_GROUPS" :key="g" :label="g">
-                  <option v-for="src in list" :key="src" :value="src">{{ src }}</option>
-                </optgroup>
-              </select>
-              <span>→</span>
-              <select v-model="m.param" @change="syncMappings(c)">
-                <option v-for="pn in numericParams(c)" :key="pn" :value="pn">{{ pn }}</option>
-              </select>
-              <input type="range" min="-1" max="1" step="0.05" v-model.number="m.amount" title="amount" @input="syncMappings(c)" />
-              <input type="range" min="0" max="0.98" step="0.02" :value="m.smooth ?? 0" title="smoothing" @input="m.smooth = +$event.target.value; syncMappings(c)" />
-              <button class="mini" title="Remove" @click="removeMapping(c, mi)">×</button>
-            </div>
-          </div>
+          </template>
+          <div v-else class="waiting">waiting for the mix…</div>
         </div>
-      </template>
-      <div v-else class="waiting">waiting for the mix…</div>
-    </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -722,26 +834,48 @@ onBeforeUnmount(() => {
   font: 13px system-ui, sans-serif; color: #ffcf9a;
   background: rgba(30, 22, 12, 0.85); border: 1px solid rgba(255, 190, 120, 0.4);
 }
-.bar {
-  position: absolute; top: 0; left: 0; right: 0; z-index: 20;
-  display: flex; align-items: center; gap: 4px; padding: 6px 12px;
-  background: linear-gradient(to bottom, rgba(0,0,0,0.7), rgba(0,0,0,0));
-  opacity: 0.35; transition: opacity 0.25s;
+/* The lone affordance over the render: a faint corner button that brightens
+   on hover and stays tappable on touch. Everything else lives in the panel. */
+.panel-toggle {
+  position: absolute; top: 10px; right: 10px; z-index: 20;
+  opacity: 0.3; transition: opacity 0.25s;
+  background: rgba(16, 18, 26, 0.6) !important;
 }
-.bar:hover { opacity: 1; }
-.fps { margin-left: auto; font: 12px ui-monospace, monospace; color: #8f8; }
+.panel-toggle:hover { opacity: 1; }
+@media (hover: none) { .panel-toggle { opacity: 0.55; } }
+
+/* Consolidated controls panel — a right-side sheet that holds the transport,
+   settings and per-layer params, so nothing else clutters the visuals. */
+.panel {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 21;
+  width: min(320px, 92vw); display: flex; flex-direction: column;
+  background: rgba(14, 16, 24, 0.94); border-left: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(6px);
+}
+.panel-head {
+  display: flex; align-items: center; gap: 4px; padding: 6px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.panel-title { font: 600 13px system-ui, sans-serif; color: #e8ecf5; margin-right: auto; }
+.panel-transport {
+  display: flex; align-items: center; gap: 2px; padding: 4px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.panel-scroll { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.panel-sub {
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font: 600 11px system-ui, sans-serif; color: #9aa4c0; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.ap-panel-enter-active, .ap-panel-leave-active { transition: transform 0.28s ease, opacity 0.28s ease; }
+.ap-panel-enter-from, .ap-panel-leave-to { transform: translateX(20px); opacity: 0; }
+
+.fps { font: 12px ui-monospace, monospace; color: #8f8; }
 .fps.low { color: #f88; }
-.countdown { font: 12px ui-monospace, monospace; color: #9aa4c0; min-width: 48px; text-align: right; }
+.countdown { font: 12px ui-monospace, monospace; color: #9aa4c0; min-width: 48px; text-align: right; margin-right: auto; }
 .set-row { font: 12px system-ui, sans-serif; color: #cdd3e0; margin-top: 4px; }
 .eff-list { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow-y: auto; margin-top: 4px; }
-.eff-item { display: flex; align-items: center; gap: 6px; font: 11px system-ui, sans-serif; color: #cdd3e0; }
+.panel .eff-item { display: flex; flex-direction: row; align-items: center; gap: 6px; font: 11px system-ui, sans-serif; color: #cdd3e0; }
 .mini-clear { font: 10px system-ui; color: #9aa4c0; background: transparent; border: 1px solid #444; border-radius: 4px; padding: 1px 6px; cursor: pointer; }
-.drawer {
-  position: absolute; top: 52px; right: 10px; bottom: 60px; width: 290px; z-index: 20;
-  overflow-y: auto; padding: 10px; border-radius: 10px;
-  background: rgba(16, 18, 26, 0.92); border: 1px solid rgba(255, 255, 255, 0.12);
-  display: flex; flex-direction: column; gap: 6px;
-}
 .layer-sec { border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; overflow: hidden; }
 .sec-head {
   width: 100%; display: flex; justify-content: space-between; align-items: center;
@@ -749,10 +883,10 @@ onBeforeUnmount(() => {
   font: 600 12px system-ui, sans-serif; color: #e8ecf5;
 }
 .sec-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; }
-.drawer label { display: flex; flex-direction: column; gap: 2px; font: 11px system-ui, sans-serif; color: #cdd3e0; }
-.drawer .chk { flex-direction: row; align-items: center; gap: 6px; }
-.drawer select { background: #12141c; color: #cdd3e0; border: 1px solid #333; border-radius: 4px; font-size: 11px; }
-.drawer input[type=range] { width: 100%; }
+.panel label { display: flex; flex-direction: column; gap: 2px; font: 11px system-ui, sans-serif; color: #cdd3e0; }
+.panel .chk { flex-direction: row; align-items: center; gap: 6px; }
+.panel select { background: #12141c; color: #cdd3e0; border: 1px solid #333; border-radius: 4px; font-size: 11px; }
+.panel input[type=range] { width: 100%; }
 .map-head { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font: 600 10px system-ui; color: #9aa4c0; text-transform: uppercase; }
 .map-row { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: 3px; align-items: center; font-size: 10px; color: #cdd3e0; }
 .map-row input[type=range] { grid-column: 1 / -1; }
