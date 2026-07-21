@@ -30,11 +30,23 @@ const bctx = buf.getContext('2d', { willReadFrequently: true })
 let bufW = 0
 let bufH = 0
 
+// Cap the backing resolution: the number of screen cells (and their arcs)
+// scales with the canvas area × 4 CMYK passes, so a native-res sheet is by
+// far the slowest path. Rendering to ~1100px and letting the browser upscale
+// keeps the rosette crisp for a fraction of the cost.
+const RENDER_CAP = 1100
+function effPR() {
+  const long = Math.max(window.innerWidth, window.innerHeight)
+  return Math.min(rt.pixelRatio, RENDER_CAP / long)
+}
+let PR = effPR()
+
 let W = 0
 let H = 0
 function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
+  PR = effPR()
+  W = canvas.width = Math.floor(window.innerWidth * PR)
+  H = canvas.height = Math.floor(window.innerHeight * PR)
   const cap = 480
   const s = Math.min(1, cap / Math.max(W, H))
   bufW = Math.max(2, Math.round(W * s))
@@ -97,7 +109,7 @@ function frame(now) {
     return
   }
 
-  const cellPx = params.cell * rt.pixelRatio
+  const cellPx = params.cell * PR
   const base = params.angle
 
   ctx.globalCompositeOperation = 'source-over'
