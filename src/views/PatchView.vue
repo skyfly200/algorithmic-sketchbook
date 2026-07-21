@@ -79,6 +79,7 @@ function applyResolution(label) {
   // Source iframes are CSS-sized to the compositor, so their sketches actually
   // render this many pixels (they run quality=high → pixelRatio 1).
   frameSize.value = { w: W, h: H }
+  geomVer.value++ // the mask overlay's cover-fit depends on W/H
 }
 
 const NODE_W = 190
@@ -92,6 +93,7 @@ const TYPES = {
   text: { title: 'Text', ins: 0, color: '#ff9ec4' },
   portal: { title: 'Portal', ins: 1, color: '#8ad0ff' }, // remap a region elsewhere
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
+  shape: { title: 'Polygon Mask', ins: 1, color: '#f2ad00' }, // clip to an editable polygon (projection mapping)
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
   output: { title: 'Output', ins: 1, color: '#ffffff' },
   // Control emitters (0..1 values, not video): their output jacks wire into the
@@ -118,6 +120,9 @@ const PARAM_RANGES = {
   // Portal: a source region is remapped (copied/scaled) into a destination
   // region — all eight edges control-mappable so the portal can roam.
   portal: { srcX: [0, 1], srcY: [0, 1], srcW: [0.05, 1], srcH: [0.05, 1], dstX: [0, 1], dstY: [0, 1], dstW: [0.05, 1], dstH: [0.05, 1] },
+  // Polygon Mask: only the edge softness is a scalar worth modulating; the
+  // vertices are edited by dragging on the output.
+  shape: { feather: [0, 0.5] },
 }
 const TEXT_FONTS = ['sans-serif', 'serif', 'monospace', 'system-ui', 'cursive']
 const BLENDS = [
@@ -255,7 +260,9 @@ function addNode(type) {
                       ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, rotate: 0, italic: false, glow: 0.4, bg: false }
                       : type === 'portal'
                         ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true }
-                        : {},
+                        : type === 'shape'
+                          ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0, invert: false }
+                          : {},
   })
   nodes.push(n)
   st(n.id) // create runtime state
@@ -1054,6 +1061,19 @@ function inputCanvas(node, port) {
   return rtState.get(e.from)?.out ?? null
 }
 
+// Trace a normalized polygon into the compositor space. When inverted we wrap
+// the whole frame first so an even-odd fill punches the polygon out as a hole.
+function polyPath(cx, pts, invert) {
+  cx.beginPath()
+  if (invert) { cx.rect(0, 0, W, H) }
+  for (let i = 0; i < pts.length; i++) {
+    const x = pts[i][0] * W, y = pts[i][1] * H
+    if (i === 0) cx.moveTo(x, y)
+    else cx.lineTo(x, y)
+  }
+  cx.closePath()
+}
+
 function evalNode(node) {
   const s = st(node.id)
   const octx = s.octx
@@ -1147,6 +1167,36 @@ function evalNode(node) {
     if (mask) {
       octx.globalCompositeOperation = 'multiply'
       octx.drawImage(mask, 0, 0, W, H)
+      octx.globalCompositeOperation = 'source-over'
+    }
+  } else if (node.type === 'shape') {
+    // Clip the input to an editable polygon — the projection-mapping mask.
+    // Vertices live in node.params.points as normalized [x,y]; drag them on
+    // the output (Edit masks mode) to fit real surfaces.
+    const content = inputCanvas(node, 0)
+    if (content) octx.drawImage(content, 0, 0, W, H)
+    const pts = node.params.points || []
+    if (content && pts.length >= 3) {
+      const invert = !!node.params.invert
+      const feather = node.params.feather || 0
+      octx.globalCompositeOperation = 'destination-in'
+      if (feather > 0.001) {
+        // Soft edge: build a blurred matte and keep the content under it.
+        const m = s.matte || (s.matte = document.createElement('canvas'))
+        if (m.width !== W || m.height !== H) { m.width = W; m.height = H }
+        const mx = m.getContext('2d')
+        mx.clearRect(0, 0, W, H)
+        mx.filter = `blur(${feather * 0.12 * Math.min(W, H)}px)`
+        mx.fillStyle = '#fff'
+        polyPath(mx, pts, invert)
+        mx.fill(invert ? 'evenodd' : 'nonzero')
+        mx.filter = 'none'
+        octx.drawImage(m, 0, 0)
+      } else {
+        octx.fillStyle = '#fff'
+        polyPath(octx, pts, invert)
+        octx.fill(invert ? 'evenodd' : 'nonzero')
+      }
       octx.globalCompositeOperation = 'source-over'
     }
   } else if (node.type === 'blend') {
@@ -1339,6 +1389,8 @@ function loop(ts) {
 }
 
 function resizeStage() {
+  vw.value = window.innerWidth
+  vh.value = window.innerHeight
   const c = stage.value
   if (!c) return
   // Back the stage with real device pixels (CSS scales it), so a native/1080p
@@ -1445,6 +1497,84 @@ function blitPopup() {
 // Sources/graph keep running (only the graph UI is hidden), so the Output
 // node still composites live.
 const outputOnly = ref(false)
+
+// --- projection mapping: drag polygon-mask vertices on the output ----------
+// The stage shows the composite cover-fit to the window; these map a Polygon
+// Mask's normalized points to/from screen pixels through that same fit, so you
+// can drag the corners live onto a real surface — in the routing view or,
+// more usefully, output-only + fullscreen on the projector.
+const maskEdit = ref(false)
+const vw = ref(window.innerWidth)
+const vh = ref(window.innerHeight)
+const geomVer = ref(0) // bump when the compositor resolution changes
+function stageFit() {
+  const scale = Math.max(vw.value / W, vh.value / H)
+  const dispW = W * scale
+  const dispH = H * scale
+  return { offX: (vw.value - dispW) / 2, offY: (vh.value - dispH) / 2, dispW, dispH }
+}
+const shapeNodes = computed(() => nodes.filter((n) => n.type === 'shape'))
+// Per shape-node handle/edge geometry in screen pixels for the SVG overlay.
+const maskGeom = computed(() => {
+  geomVer.value // reactive dep on resolution changes
+  const fit = stageFit()
+  return shapeNodes.value.map((n) => {
+    const pts = (n.params.points || []).map((p) => ({
+      nx: p[0], ny: p[1], x: fit.offX + p[0] * fit.dispW, y: fit.offY + p[1] * fit.dispH,
+    }))
+    return { id: n.id, selected: selected.value === n.id, pts, d: pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ') + ' Z' }
+  })
+})
+let maskDrag = null // { id, i }
+function screenToNorm(clientX, clientY) {
+  const fit = stageFit()
+  return [
+    Math.min(1, Math.max(0, (clientX - fit.offX) / fit.dispW)),
+    Math.min(1, Math.max(0, (clientY - fit.offY) / fit.dispH)),
+  ]
+}
+function maskDown(id, i, e) {
+  e.stopPropagation()
+  e.target.setPointerCapture?.(e.pointerId)
+  maskDrag = { id, i }
+  selected.value = id
+}
+function maskMove(e) {
+  if (!maskDrag) return
+  const n = nodes.find((x) => x.id === maskDrag.id)
+  if (!n) return
+  const [nx, ny] = screenToNorm(e.clientX, e.clientY)
+  n.params.points[maskDrag.i] = [+nx.toFixed(4), +ny.toFixed(4)]
+}
+function maskUp() {
+  if (!maskDrag) return
+  maskDrag = null
+  persist()
+}
+function removePoint(id, i, e) {
+  e?.stopPropagation()
+  const n = nodes.find((x) => x.id === id)
+  if (!n || (n.params.points?.length ?? 0) <= 3) return // a polygon needs ≥3
+  n.params.points.splice(i, 1)
+  persist()
+}
+// Double-click an edge (segment starting at vertex i) to add a vertex there.
+function insertPoint(id, i, e) {
+  e?.stopPropagation()
+  const n = nodes.find((x) => x.id === id)
+  if (!n) return
+  const pts = n.params.points
+  const a = pts[i], b = pts[(i + 1) % pts.length]
+  pts.splice(i + 1, 0, [+((a[0] + b[0]) / 2).toFixed(4), +((a[1] + b[1]) / 2).toFixed(4)])
+  persist()
+}
+// Reset a shape back to a centered quad.
+function resetShape(id) {
+  const n = nodes.find((x) => x.id === id)
+  if (!n) return
+  n.params.points = [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]
+  persist()
+}
 
 // --- saved routings: named snapshots of the node graph in localStorage ----
 const SAVED_KEY = 'sketchbook-patch-saved'
@@ -1586,6 +1716,7 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
         <v-btn icon="mdi-image-multiple" variant="tonal" size="small" title="Add Media (camera · files · clips)" :style="{ color: TYPES.media.color }" @click="addNode('media')" />
         <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
+        <v-btn icon="mdi-vector-polygon" variant="tonal" size="small" title="Add Polygon Mask (drag points on the output — projection mapping)" :style="{ color: TYPES.shape.color }" @click="addNode('shape')" />
         <v-btn icon="mdi-shape-outline" variant="tonal" size="small" title="Add Portal (remap a region elsewhere)" :style="{ color: TYPES.portal.color }" @click="addNode('portal')" />
         <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
         <v-menu>
@@ -1728,6 +1859,13 @@ onBeforeUnmount(() => {
         title="Apply — push the current board look to the held output"
         @click="applyToOutput"
       />
+      <v-btn
+        icon="mdi-vector-square-edit"
+        variant="text" size="small"
+        :color="maskEdit ? 'primary' : undefined"
+        :title="shapeNodes.length ? 'Edit masks — drag the polygon points on the output' : 'Add a Polygon Mask first, then edit its points here'"
+        @click="maskEdit = !maskEdit"
+      />
       <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
       <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
@@ -1737,8 +1875,41 @@ onBeforeUnmount(() => {
     <!-- output-only: floating controls to exit / go fullscreen -->
     <div v-if="outputOnly" class="output-ctrls">
       <v-btn icon="mdi-tune-variant" size="small" variant="flat" title="Show routing" @click="outputOnly = false" />
+      <v-btn
+        v-if="shapeNodes.length"
+        icon="mdi-vector-square-edit" size="small" variant="flat"
+        :color="maskEdit ? 'primary' : undefined"
+        title="Edit masks — drag the polygon points"
+        @click="maskEdit = !maskEdit"
+      />
       <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" size="small" variant="flat" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
     </div>
+
+    <!-- projection-mapping overlay: draggable polygon-mask vertices over the
+         stage; the SVG root ignores pointer events so the graph/UI underneath
+         still work, only the handles and edges are interactive -->
+    <svg v-if="maskEdit && shapeNodes.length" class="mask-overlay">
+      <g v-for="sh in maskGeom" :key="sh.id" :class="{ 'mask-sel': sh.selected }">
+        <path class="mask-fill" :d="sh.d" />
+        <!-- wide invisible hit-lines: double-click an edge to add a point -->
+        <line
+          v-for="(p, i) in sh.pts" :key="'e' + i"
+          class="mask-edge-hit"
+          :x1="p.x" :y1="p.y"
+          :x2="sh.pts[(i + 1) % sh.pts.length].x" :y2="sh.pts[(i + 1) % sh.pts.length].y"
+          @dblclick="insertPoint(sh.id, i, $event)"
+        />
+        <circle
+          v-for="(p, i) in sh.pts" :key="'h' + i"
+          class="mask-handle"
+          :cx="p.x" :cy="p.y" r="9"
+          @pointerdown="maskDown(sh.id, i, $event)"
+          @pointermove="maskMove"
+          @pointerup="maskUp"
+          @dblclick="removePoint(sh.id, i, $event)"
+        />
+      </g>
+    </svg>
 
     <!-- node board -->
     <div
@@ -2006,6 +2177,19 @@ onBeforeUnmount(() => {
             <label>recurse <input type="range" min="1" max="8" step="1" v-model.number="n.params.recurse" @change="persist" @pointerdown.stop /></label>
             <label class="chk"><input type="checkbox" v-model="n.params.border" @change="persist" @pointerdown.stop /> outline</label>
           </template>
+
+          <template v-if="n.type === 'shape'">
+            <label>
+              <span class="pjack" :ref="(el) => bindJack(n.id, 'feather', el)" :data-jack-node="n.id" data-jack-param="feather" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'feather')" />
+              feather <input type="range" min="0" max="0.5" step="0.01" :value="n.params.feather" @input="n.params.feather = +$event.target.value; persist()" @pointerdown.stop />
+            </label>
+            <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert (cut a hole)</label>
+            <div class="shape-row">
+              <button class="shape-btn" :class="{ on: maskEdit }" @pointerdown.stop @click="maskEdit = !maskEdit">{{ maskEdit ? 'editing points' : 'edit points' }}</button>
+              <button class="shape-btn" @pointerdown.stop @click="resetShape(n.id)">reset</button>
+            </div>
+            <div class="shape-hint">Turn on “edit points”, then drag the corners on the output. Double-click an edge to add a point, a point to remove it.</div>
+          </template>
         </div>
       </div>
       </div>
@@ -2092,6 +2276,13 @@ onBeforeUnmount(() => {
   width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #333;
   border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif;
 }
+.shape-row { display: flex; gap: 6px; margin-top: 4px; }
+.shape-btn {
+  flex: 1; font: 10px system-ui, sans-serif; color: #cdd3e0; cursor: pointer;
+  background: #12141c; border: 1px solid #333; border-radius: 4px; padding: 3px 6px;
+}
+.shape-btn.on { border-color: #f2ad00; color: #ffcd5a; }
+.shape-hint { font: 10px system-ui, sans-serif; color: #8a90a0; margin-top: 4px; line-height: 1.35; }
 .portal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 6px; align-items: center; }
 .portal-lbl { grid-column: 1 / -1; font: 600 10px system-ui; color: #9aa4c0; text-transform: uppercase; margin-top: 2px; }
 .portal-cell { font-size: 10px; }
@@ -2152,6 +2343,20 @@ onBeforeUnmount(() => {
   display: flex; gap: 6px; opacity: 0.35; transition: opacity 0.2s;
 }
 .output-ctrls:hover { opacity: 1; }
+/* projection-mapping overlay */
+.mask-overlay {
+  position: fixed; inset: 0; z-index: 35; pointer-events: none;
+  width: 100%; height: 100%;
+}
+.mask-fill { fill: rgba(242, 173, 0, 0.08); stroke: rgba(242, 173, 0, 0.7); stroke-width: 1.5; }
+.mask-sel .mask-fill { fill: rgba(242, 173, 0, 0.14); stroke: rgba(255, 205, 90, 0.95); }
+.mask-edge-hit { stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: copy; }
+.mask-handle {
+  fill: #10121a; stroke: #f2ad00; stroke-width: 2.5;
+  pointer-events: auto; cursor: grab; touch-action: none;
+}
+.mask-handle:hover { fill: #f2ad00; }
+.mask-sel .mask-handle { stroke: #ffcd5a; }
 /* fingers need fatter targets than a mouse */
 @media (pointer: coarse) {
   .port { width: 20px; height: 20px; }
