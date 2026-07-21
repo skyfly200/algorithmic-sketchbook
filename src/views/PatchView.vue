@@ -1704,6 +1704,29 @@ function applyRamp(a, b, f) {
     }
   }
 }
+// Ramp each effect sketch's *internal* params between two cues by streaming
+// set-param to the live iframe. Only animates params that actually differ
+// between the cues, and throttles the postMessage traffic.
+let lastEffectRamp = 0
+function rampEffects(a, b, f) {
+  const now = performance.now()
+  if (now - lastEffectRamp < 45) return // ~22 Hz is plenty for a smooth ramp
+  lastEffectRamp = now
+  const ae = a.effects || {}, be = b.effects || {}
+  for (const idStr of Object.keys(ae)) {
+    if (!be[idStr]) continue
+    const av = ae[idStr].values || {}, bv = be[idStr].values || {}
+    const ec = effectControls.get(+idStr)
+    for (const k of Object.keys(av)) {
+      const x = av[k], y = bv[k]
+      if (typeof x === 'number' && typeof y === 'number' && x !== y) {
+        const v = x + (y - x) * f
+        postToEffect(+idStr, { type: 'sketch:set-param', name: k, value: v })
+        if (ec) ec.values[k] = v
+      }
+    }
+  }
+}
 function tickShow(now) {
   const dt = (now - lastShowTs) / 1000
   lastShowTs = now
@@ -1734,6 +1757,7 @@ function processTimeline() {
     const span = (next.time || 0) - (sorted[i].time || 0)
     const f = span > 0 ? Math.min(1, Math.max(0, (playhead.value - (sorted[i].time || 0)) / span)) : 0
     applyRamp(sorted[i].snap, next.snap, f)
+    rampEffects(sorted[i], next, f)
   }
 }
 // Timeline strip: a little headroom past the last cue so its marker is draggable.
