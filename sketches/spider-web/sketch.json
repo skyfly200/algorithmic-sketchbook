@@ -1,0 +1,7 @@
+{
+  "title": "Glimmering Spider Web",
+  "description": "An orb-weaver's web strung across the dark — radial spokes and catenary-sagging spiral threads hung with dew droplets that catch a slowly wheeling light and flash like tiny prisms. The web breathes on a breeze, a pointer tug pulls it, and beats set the dew ablaze.",
+  "tags": ["nature", "glimmer", "generative", "interactive", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-21"
+}

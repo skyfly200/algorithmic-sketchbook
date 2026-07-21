@@ -12,7 +12,7 @@ const settings = useSettingsStore()
 // generators — they don't belong in the random/Autopilot source pool.
 const FILTER_SLUGS = new Set([
   'pointillism', 'camera-lens', 'rain-window', 'halftone', 'channel-offset', 'delay',
-  'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope', 'fog', 'mist', 'glow',
+  'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope', 'fog', 'mist', 'glow', 'nebula-gasses',
   'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves',
 ])
 const effects = computed(() =>

@@ -27,7 +27,7 @@ const settings = useSettingsStore()
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
   'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
-  'fog', 'mist', 'glow', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves',
+  'fog', 'mist', 'glow', 'nebula-gasses', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves',
 ]
 const BLENDS = [
   'screen', 'lighten', 'overlay', 'soft-light', 'hard-light',
