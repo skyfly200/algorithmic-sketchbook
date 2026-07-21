@@ -229,7 +229,7 @@ function addNode(type) {
           : type === 'filter'
             ? { slug: filterOptions.value[0]?.slug ?? '' }
             : type === 'input'
-              ? { source: 'audio.volume', scale: 1, offset: 0 }
+              ? { source: 'audio.volume', scale: 1, offset: 0, invert: false, curve: 'linear' }
               : type === 'xy'
                 ? { x: 0.5, y: 0.5 }
                 : type === 'tracker'
@@ -481,10 +481,27 @@ function sourceValue(src, now) {
     default: return 0
   }
 }
-function inputValue(node, now) {
-  ensureInput(node.params.source)
-  return clamp(sourceValue(node.params.source, now) * node.params.scale + node.params.offset, 0, 1)
+// Response curves reshape the 0..1 signal after scale/offset: exp favours the
+// top, log/sqrt favours the bottom, s-curve steepens the middle, and step
+// hard-gates at the halfway point.
+function applyCurve(v, curve) {
+  switch (curve) {
+    case 'exp': return v * v
+    case 'log': return Math.sqrt(v)
+    case 's-curve': return v * v * (3 - 2 * v)
+    case 'step': return v >= 0.5 ? 1 : 0
+    default: return v
+  }
 }
+function inputValue(node, now) {
+  const p = node.params
+  ensureInput(p.source)
+  let v = sourceValue(p.source, now)
+  if (p.invert) v = 1 - v
+  v = clamp(v * (p.scale ?? 1) + (p.offset ?? 0), 0, 1)
+  return applyCurve(v, p.curve ?? 'linear')
+}
+const INPUT_CURVES = ['linear', 'exp', 'log', 's-curve', 'step']
 // Control value emitted by any control node's given output port.
 function controlValue(node, port, now) {
   if (node.type === 'input') return inputValue(node, now)
@@ -760,7 +777,13 @@ function removeEdge(idx) {
 const frameSize = ref({ w: W, h: H })
 function effectSrc(n) {
   const s = store.bySlug(n.params.slug)
-  return s ? `${s.url}?capture=1&preview=1&quality=high` : ''
+  // nomap=1: sketches start with their default audio/input mappings OFF in
+  // Patch, so nodes react only to the wires you draw. The ⚡ button on the
+  // node applies the sketch's own defaults on demand.
+  return s ? `${s.url}?capture=1&preview=1&quality=high&nomap=1` : ''
+}
+function autoMap(n) {
+  rtState.get(n.id)?.iframe?.contentWindow?.postMessage({ type: 'sketch:auto-map' }, '*')
 }
 function bindFrame(id, el) {
   if (el) st(id).iframe = el
@@ -1601,7 +1624,10 @@ onBeforeUnmount(() => {
 
               <div class="map-head">
                 <span>Mappings</span>
-                <button class="mini" title="Add mapping" @click="addEffectMapping(n.id)">+</button>
+                <span class="d-flex ga-1">
+                  <button class="mini" title="Auto-map — apply this sketch's default input mappings" @click="autoMap(n)">⚡</button>
+                  <button class="mini" title="Add mapping" @click="addEffectMapping(n.id)">+</button>
+                </span>
               </div>
               <div v-for="(m, mi) in effectControls.get(n.id).mappings" :key="mi" class="map-row">
                 <select v-model="m.source" @change="syncEffectMappings(n.id)">
@@ -1628,6 +1654,12 @@ onBeforeUnmount(() => {
             </select>
             <label>scale <input type="range" min="-2" max="2" step="0.05" v-model.number="n.params.scale" @change="persist" @pointerdown.stop /></label>
             <label>offset <input type="range" min="-1" max="1" step="0.02" v-model.number="n.params.offset" @change="persist" @pointerdown.stop /></label>
+            <label>curve
+              <select v-model="n.params.curve" @change="persist" @pointerdown.stop>
+                <option v-for="c in INPUT_CURVES" :key="c" :value="c">{{ c }}</option>
+              </select>
+            </label>
+            <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert</label>
           </template>
           <template v-if="n.type === 'tracker'">
             <label>threshold <input type="range" min="0.05" max="0.95" step="0.01" v-model.number="n.params.thresh" @change="persist" @pointerdown.stop /></label>
