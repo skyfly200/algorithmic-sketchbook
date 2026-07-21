@@ -79,6 +79,7 @@ function applyResolution(label) {
   // Source iframes are CSS-sized to the compositor, so their sketches actually
   // render this many pixels (they run quality=high → pixelRatio 1).
   frameSize.value = { w: W, h: H }
+  geomVer.value++ // the mask overlay's cover-fit depends on W/H
 }
 
 const NODE_W = 190
@@ -92,6 +93,7 @@ const TYPES = {
   text: { title: 'Text', ins: 0, color: '#ff9ec4' },
   portal: { title: 'Portal', ins: 1, color: '#8ad0ff' }, // remap a region elsewhere
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
+  shape: { title: 'Polygon Mask', ins: 1, color: '#f2ad00' }, // clip to an editable polygon (projection mapping)
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
   output: { title: 'Output', ins: 1, color: '#ffffff' },
   // Control emitters (0..1 values, not video): their output jacks wire into the
@@ -118,6 +120,9 @@ const PARAM_RANGES = {
   // Portal: a source region is remapped (copied/scaled) into a destination
   // region — all eight edges control-mappable so the portal can roam.
   portal: { srcX: [0, 1], srcY: [0, 1], srcW: [0.05, 1], srcH: [0.05, 1], dstX: [0, 1], dstY: [0, 1], dstW: [0.05, 1], dstH: [0.05, 1] },
+  // Polygon Mask: only the edge softness is a scalar worth modulating; the
+  // vertices are edited by dragging on the output.
+  shape: { feather: [0, 0.5] },
 }
 const TEXT_FONTS = ['sans-serif', 'serif', 'monospace', 'system-ui', 'cursive']
 const BLENDS = [
@@ -255,7 +260,9 @@ function addNode(type) {
                       ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, rotate: 0, italic: false, glow: 0.4, bg: false }
                       : type === 'portal'
                         ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true }
-                        : {},
+                        : type === 'shape'
+                          ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0, invert: false }
+                          : {},
   })
   nodes.push(n)
   st(n.id) // create runtime state
@@ -963,6 +970,8 @@ function onEffectMessage(e) {
         values: { ...e.data.values },
         mappings: (e.data.mappings ?? []).map((m) => ({ ...m })),
       })
+      // A cue being applied may be waiting to push this effect's saved params.
+      if (pendingEffects) applyPendingEffects()
       break
     }
   }
@@ -1052,6 +1061,19 @@ function inputCanvas(node, port) {
   const e = edges.find((e) => e.to === node.id && e.port === port)
   if (!e) return null
   return rtState.get(e.from)?.out ?? null
+}
+
+// Trace a normalized polygon into the compositor space. When inverted we wrap
+// the whole frame first so an even-odd fill punches the polygon out as a hole.
+function polyPath(cx, pts, invert) {
+  cx.beginPath()
+  if (invert) { cx.rect(0, 0, W, H) }
+  for (let i = 0; i < pts.length; i++) {
+    const x = pts[i][0] * W, y = pts[i][1] * H
+    if (i === 0) cx.moveTo(x, y)
+    else cx.lineTo(x, y)
+  }
+  cx.closePath()
 }
 
 function evalNode(node) {
@@ -1147,6 +1169,36 @@ function evalNode(node) {
     if (mask) {
       octx.globalCompositeOperation = 'multiply'
       octx.drawImage(mask, 0, 0, W, H)
+      octx.globalCompositeOperation = 'source-over'
+    }
+  } else if (node.type === 'shape') {
+    // Clip the input to an editable polygon — the projection-mapping mask.
+    // Vertices live in node.params.points as normalized [x,y]; drag them on
+    // the output (Edit masks mode) to fit real surfaces.
+    const content = inputCanvas(node, 0)
+    if (content) octx.drawImage(content, 0, 0, W, H)
+    const pts = node.params.points || []
+    if (content && pts.length >= 3) {
+      const invert = !!node.params.invert
+      const feather = node.params.feather || 0
+      octx.globalCompositeOperation = 'destination-in'
+      if (feather > 0.001) {
+        // Soft edge: build a blurred matte and keep the content under it.
+        const m = s.matte || (s.matte = document.createElement('canvas'))
+        if (m.width !== W || m.height !== H) { m.width = W; m.height = H }
+        const mx = m.getContext('2d')
+        mx.clearRect(0, 0, W, H)
+        mx.filter = `blur(${feather * 0.12 * Math.min(W, H)}px)`
+        mx.fillStyle = '#fff'
+        polyPath(mx, pts, invert)
+        mx.fill(invert ? 'evenodd' : 'nonzero')
+        mx.filter = 'none'
+        octx.drawImage(m, 0, 0)
+      } else {
+        octx.fillStyle = '#fff'
+        polyPath(octx, pts, invert)
+        octx.fill(invert ? 'evenodd' : 'nonzero')
+      }
       octx.globalCompositeOperation = 'source-over'
     }
   } else if (node.type === 'blend') {
@@ -1301,6 +1353,7 @@ let fpsWindow = 0
 function loop(ts) {
   const now = ts ?? performance.now()
   broadcastBeat(now)
+  if (showMode.value === 'timeline' && showPlaying.value) tickShow(now)
   applyLinks(now) // drive params from Input nodes first
   if (skipLeft > 0) {
     skipLeft--
@@ -1323,6 +1376,12 @@ function loop(ts) {
           cx.drawImage(s.out, (cnv.width - w) / 2, (cnv.height - h) / 2, w, h)
         }
       }
+      // Cue crossfade: the frozen previous frame fades out over the new one.
+      if (xfade) {
+        const a = 1 - (performance.now() - xfade.t0) / xfade.dur
+        if (a <= 0) xfade = null
+        else { cx.globalAlpha = a; cx.drawImage(xfade.img, 0, 0, cnv.width, cnv.height); cx.globalAlpha = 1 }
+      }
     }
     blitPopup()
     passCost = passCost * 0.85 + (performance.now() - t0) * 0.15
@@ -1339,6 +1398,8 @@ function loop(ts) {
 }
 
 function resizeStage() {
+  vw.value = window.innerWidth
+  vh.value = window.innerHeight
   const c = stage.value
   if (!c) return
   // Back the stage with real device pixels (CSS scales it), so a native/1080p
@@ -1446,6 +1507,286 @@ function blitPopup() {
 // node still composites live.
 const outputOnly = ref(false)
 
+// --- projection mapping: drag polygon-mask vertices on the output ----------
+// The stage shows the composite cover-fit to the window; these map a Polygon
+// Mask's normalized points to/from screen pixels through that same fit, so you
+// can drag the corners live onto a real surface — in the routing view or,
+// more usefully, output-only + fullscreen on the projector.
+const maskEdit = ref(false)
+const vw = ref(window.innerWidth)
+const vh = ref(window.innerHeight)
+const geomVer = ref(0) // bump when the compositor resolution changes
+function stageFit() {
+  const scale = Math.max(vw.value / W, vh.value / H)
+  const dispW = W * scale
+  const dispH = H * scale
+  return { offX: (vw.value - dispW) / 2, offY: (vh.value - dispH) / 2, dispW, dispH }
+}
+const shapeNodes = computed(() => nodes.filter((n) => n.type === 'shape'))
+// Per shape-node handle/edge geometry in screen pixels for the SVG overlay.
+const maskGeom = computed(() => {
+  geomVer.value // reactive dep on resolution changes
+  const fit = stageFit()
+  return shapeNodes.value.map((n) => {
+    const pts = (n.params.points || []).map((p) => ({
+      nx: p[0], ny: p[1], x: fit.offX + p[0] * fit.dispW, y: fit.offY + p[1] * fit.dispH,
+    }))
+    return { id: n.id, selected: selected.value === n.id, pts, d: pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ') + ' Z' }
+  })
+})
+let maskDrag = null // { id, i }
+function screenToNorm(clientX, clientY) {
+  const fit = stageFit()
+  return [
+    Math.min(1, Math.max(0, (clientX - fit.offX) / fit.dispW)),
+    Math.min(1, Math.max(0, (clientY - fit.offY) / fit.dispH)),
+  ]
+}
+function maskDown(id, i, e) {
+  e.stopPropagation()
+  e.target.setPointerCapture?.(e.pointerId)
+  maskDrag = { id, i }
+  selected.value = id
+}
+function maskMove(e) {
+  if (!maskDrag) return
+  const n = nodes.find((x) => x.id === maskDrag.id)
+  if (!n) return
+  const [nx, ny] = screenToNorm(e.clientX, e.clientY)
+  n.params.points[maskDrag.i] = [+nx.toFixed(4), +ny.toFixed(4)]
+}
+function maskUp() {
+  if (!maskDrag) return
+  maskDrag = null
+  persist()
+}
+function removePoint(id, i, e) {
+  e?.stopPropagation()
+  const n = nodes.find((x) => x.id === id)
+  if (!n || (n.params.points?.length ?? 0) <= 3) return // a polygon needs ≥3
+  n.params.points.splice(i, 1)
+  persist()
+}
+// Double-click an edge (segment starting at vertex i) to add a vertex there.
+function insertPoint(id, i, e) {
+  e?.stopPropagation()
+  const n = nodes.find((x) => x.id === id)
+  if (!n) return
+  const pts = n.params.points
+  const a = pts[i], b = pts[(i + 1) % pts.length]
+  pts.splice(i + 1, 0, [+((a[0] + b[0]) / 2).toFixed(4), +((a[1] + b[1]) / 2).toFixed(4)])
+  persist()
+}
+// Reset a shape back to a centered quad.
+function resetShape(id) {
+  const n = nodes.find((x) => x.id === id)
+  if (!n) return
+  n.params.points = [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]
+  persist()
+}
+
+// --- show sequencer: a cue list you can jump through or run on a timeline ---
+// A cue is a full snapshot of the patch (graph + effect params) with a name,
+// a timeline `time`, and a `fade`. Two modes: "cues" fires them on demand like
+// a lighting console's cue stack; "timeline" plays them at their times and,
+// when two adjacent cues share the same node topology, ramps their numeric
+// params between them so variables (mask corners, a portal's position, text
+// rotation, blend mix…) move smoothly over the show.
+const SHOW_KEY = 'sketchbook-patch-show'
+function loadShow() {
+  try { return JSON.parse(localStorage.getItem(SHOW_KEY)) || [] } catch { return [] }
+}
+const cues = reactive(loadShow())
+const showOpen = ref(false)
+const showMode = ref('cues') // 'cues' | 'timeline'
+const activeCue = ref(-1)
+const showPlaying = ref(false)
+const showLoop = ref(false)
+const playhead = ref(0) // seconds
+function persistShow() { localStorage.setItem(SHOW_KEY, JSON.stringify(cues)) }
+
+function currentEffects() {
+  const out = {}
+  for (const [id, c] of effectControls) out[id] = { values: { ...c.values }, mappings: c.mappings.map((m) => ({ ...m })) }
+  return out
+}
+function captureCue() {
+  const t = cues.length ? Math.max(...cues.map((c) => c.time || 0)) + 8 : 0
+  cues.push({ id: Date.now().toString(36), name: `Cue ${cues.length + 1}`, time: t, fade: 1, snap: JSON.parse(snapshot()), effects: currentEffects() })
+  activeCue.value = cues.length - 1
+  persistShow()
+}
+function updateCue(i) { cues[i].snap = JSON.parse(snapshot()); cues[i].effects = currentEffects(); persistShow() }
+function deleteCue(i) {
+  cues.splice(i, 1)
+  if (activeCue.value >= cues.length) activeCue.value = cues.length - 1
+  persistShow()
+}
+function moveCue(i, d) {
+  const j = i + d
+  if (j < 0 || j >= cues.length) return
+  const [c] = cues.splice(i, 1)
+  cues.splice(j, 0, c)
+  persistShow()
+}
+
+// Re-apply captured effect-sketch param values once each effect iframe is live
+// (reloaded effects announce ready; ones that didn't reload get it immediately).
+let pendingEffects = null
+function applyPendingEffects() {
+  if (!pendingEffects) return
+  for (const idStr of Object.keys(pendingEffects)) {
+    const win = rtState.get(+idStr)?.iframe?.contentWindow
+    if (!win) continue
+    const pe = pendingEffects[idStr]
+    win.postMessage({ type: 'sketch:apply-scene', values: pe.values, mappings: pe.mappings }, '*')
+    const ec = effectControls.get(+idStr)
+    if (ec) { ec.values = { ...pe.values }; ec.mappings = pe.mappings.map((m) => ({ ...m })) }
+    delete pendingEffects[idStr]
+  }
+  if (!Object.keys(pendingEffects).length) pendingEffects = null
+}
+function applyCueState(cue) {
+  applySnap(JSON.stringify(cue.snap))
+  pendingEffects = { ...(cue.effects || {}) }
+  nextTick(applyPendingEffects)
+}
+// Crossfade: freeze the current stage, swap the patch, fade the frozen frame
+// out — hides the black flash while new effect iframes boot.
+let xfade = null // { img, t0, dur }
+function goCue(i, opts = {}) {
+  if (i < 0 || i >= cues.length) return
+  const cue = cues[i]
+  const dur = ((opts.fade != null ? opts.fade : cue.fade) || 0) * 1000
+  const cnv = stage.value
+  if (dur > 0 && cnv && cnv.width) {
+    const img = document.createElement('canvas')
+    img.width = cnv.width; img.height = cnv.height
+    img.getContext('2d').drawImage(cnv, 0, 0)
+    xfade = { img, t0: performance.now(), dur }
+  }
+  applyCueState(cue)
+  activeCue.value = i
+}
+function nextCue() { goCue(Math.min(cues.length - 1, activeCue.value + 1)) }
+function prevCue() { goCue(Math.max(0, activeCue.value - 1)) }
+
+// --- timeline playback ------------------------------------------------------
+function showLength() { return cues.length ? Math.max(...cues.map((c) => c.time || 0)) : 0 }
+let lastShowTs = 0
+let curSeg = -1
+function playShow() { if (!cues.length) return; showPlaying.value = true; lastShowTs = performance.now(); curSeg = -1 }
+function pauseShow() { showPlaying.value = false }
+function stopShow() { showPlaying.value = false; playhead.value = 0; curSeg = -1 }
+function seekShow(t) { playhead.value = Math.max(0, Math.min(showLength(), t)); curSeg = -1 }
+function topoMatch(a, b) {
+  if (!a || !b || a.nodes.length !== b.nodes.length) return false
+  const bm = new Map(b.nodes.map((n) => [n.id, n]))
+  for (const n of a.nodes) { const m = bm.get(n.id); if (!m || m.type !== n.type) return false }
+  if (JSON.stringify(a.edges) !== JSON.stringify(b.edges)) return false
+  if (JSON.stringify(a.links || []) !== JSON.stringify(b.links || [])) return false
+  return true
+}
+// Ramp the live graph's numeric params (and point arrays) from cue A→B by f.
+function applyRamp(a, b, f) {
+  const am = new Map(a.nodes.map((n) => [n.id, n]))
+  const bm = new Map(b.nodes.map((n) => [n.id, n]))
+  for (const n of nodes) {
+    const A = am.get(n.id), B = bm.get(n.id)
+    if (!A || !B || !A.params) continue
+    for (const k of Object.keys(A.params)) {
+      const av = A.params[k], bv = B.params?.[k]
+      if (typeof av === 'number' && typeof bv === 'number') n.params[k] = av + (bv - av) * f
+      else if (Array.isArray(av) && Array.isArray(bv) && av.length === bv.length) {
+        n.params[k] = av.map((p, idx) => (Array.isArray(p) && Array.isArray(bv[idx]) && p.length === bv[idx].length)
+          ? p.map((c, ci) => c + (bv[idx][ci] - c) * f) : p)
+      }
+    }
+  }
+}
+// Ramp each effect sketch's *internal* params between two cues by streaming
+// set-param to the live iframe. Only animates params that actually differ
+// between the cues, and throttles the postMessage traffic.
+let lastEffectRamp = 0
+function rampEffects(a, b, f) {
+  const now = performance.now()
+  if (now - lastEffectRamp < 45) return // ~22 Hz is plenty for a smooth ramp
+  lastEffectRamp = now
+  const ae = a.effects || {}, be = b.effects || {}
+  for (const idStr of Object.keys(ae)) {
+    if (!be[idStr]) continue
+    const av = ae[idStr].values || {}, bv = be[idStr].values || {}
+    const ec = effectControls.get(+idStr)
+    for (const k of Object.keys(av)) {
+      const x = av[k], y = bv[k]
+      if (typeof x === 'number' && typeof y === 'number' && x !== y) {
+        const v = x + (y - x) * f
+        postToEffect(+idStr, { type: 'sketch:set-param', name: k, value: v })
+        if (ec) ec.values[k] = v
+      }
+    }
+  }
+}
+function tickShow(now) {
+  const dt = (now - lastShowTs) / 1000
+  lastShowTs = now
+  playhead.value += dt
+  const end = showLength()
+  if (playhead.value >= end) {
+    if (showLoop.value && end > 0) { playhead.value = 0; curSeg = -1 }
+    else { playhead.value = end; showPlaying.value = false }
+  }
+  processTimeline()
+}
+function processTimeline() {
+  if (!cues.length) return
+  const sorted = [...cues].sort((a, b) => (a.time || 0) - (b.time || 0))
+  let i = -1
+  for (let k = 0; k < sorted.length; k++) { if ((sorted[k].time || 0) <= playhead.value + 1e-6) i = k; else break }
+  if (i < 0) return
+  if (i !== curSeg) {
+    // Skip the reload when we're flowing forward through a ramped, same-topology
+    // segment (the graph is already sitting at this cue from the last ramp).
+    const rampedAdjacent = i === curSeg + 1 && curSeg >= 0 && topoMatch(sorted[curSeg].snap, sorted[i].snap)
+    if (rampedAdjacent) activeCue.value = cues.indexOf(sorted[i])
+    else goCue(cues.indexOf(sorted[i]), { fade: sorted[i].fade })
+    curSeg = i
+  }
+  const next = sorted[i + 1]
+  if (next && topoMatch(sorted[i].snap, next.snap)) {
+    const span = (next.time || 0) - (sorted[i].time || 0)
+    const f = span > 0 ? Math.min(1, Math.max(0, (playhead.value - (sorted[i].time || 0)) / span)) : 0
+    applyRamp(sorted[i].snap, next.snap, f)
+    rampEffects(sorted[i], next, f)
+  }
+}
+// Timeline strip: a little headroom past the last cue so its marker is draggable.
+const tlSpan = computed(() => Math.max(showLength(), 20))
+function pct(t) { return (t / tlSpan.value) * 100 }
+function tlSeek(e) {
+  const r = e.currentTarget.getBoundingClientRect()
+  seekShow(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * tlSpan.value)
+}
+let tlDrag = null
+function tlCueMove(e) {
+  if (!tlDrag) return
+  const r = tlDrag.track.getBoundingClientRect()
+  const f = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
+  cues[tlDrag.i].time = +(f * tlSpan.value).toFixed(1)
+}
+function tlCueUp() {
+  if (!tlDrag) return
+  tlDrag = null
+  persistShow()
+  window.removeEventListener('pointermove', tlCueMove)
+  window.removeEventListener('pointerup', tlCueUp)
+}
+function tlCueDown(i, e) {
+  tlDrag = { i, track: e.currentTarget.parentElement }
+  window.addEventListener('pointermove', tlCueMove)
+  window.addEventListener('pointerup', tlCueUp)
+}
+
 // --- saved routings: named snapshots of the node graph in localStorage ----
 const SAVED_KEY = 'sketchbook-patch-saved'
 function loadSaved() {
@@ -1497,6 +1838,76 @@ function deleteRouting(r) {
     savedRoutings.value.splice(i, 1)
     persistSaved()
   }
+}
+
+// --- file import / export: patches and shows as .json -----------------------
+function fileSlug(s) { return (s || 'untitled').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'untitled' }
+function downloadJson(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000)
+}
+function pickJsonFile() {
+  return new Promise((resolve) => {
+    const inp = document.createElement('input')
+    inp.type = 'file'
+    inp.accept = 'application/json,.json'
+    inp.onchange = () => {
+      const f = inp.files?.[0]
+      if (!f) return resolve(null)
+      const r = new FileReader()
+      r.onload = () => { try { resolve(JSON.parse(r.result)) } catch { resolve(null) } }
+      r.onerror = () => resolve(null)
+      r.readAsText(f)
+    }
+    inp.click()
+  })
+}
+// A patch file carries the graph plus a little metadata so it's self-describing.
+function exportPatch() {
+  const name = newName.value.trim() || 'patch'
+  downloadJson({
+    type: 'sketchbook-patch', version: 1, name, resolution: resLabel.value,
+    patch: { nodes: JSON.parse(JSON.stringify(nodes)), edges: JSON.parse(JSON.stringify(edges)), links: JSON.parse(JSON.stringify(links)) },
+  }, `${fileSlug(name)}.patch.json`)
+}
+function exportRouting(r) {
+  downloadJson({ type: 'sketchbook-patch', version: 1, name: r.name, patch: { nodes: r.nodes, edges: r.edges, links: r.links || [] } }, `${fileSlug(r.name)}.patch.json`)
+}
+async function importPatch() {
+  const data = await pickJsonFile()
+  if (!data) { alertBadFile(); return }
+  // accept the wrapped form, a bare {nodes,edges,links}, or a list of routings
+  if (Array.isArray(data)) {
+    for (const r of data) if (r?.nodes) savedRoutings.value.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: r.name || 'Imported', nodes: r.nodes, edges: r.edges || [], links: r.links || [] })
+    persistSaved()
+    return
+  }
+  const patch = data.patch || (data.nodes ? data : null)
+  if (!patch?.nodes) { alertBadFile(); return }
+  if (data.resolution && RESOLUTIONS.some((x) => x.label === data.resolution)) applyResolution(data.resolution)
+  loadRouting(patch)
+  // keep it around in the saved list too
+  savedRoutings.value.push({ id: Date.now().toString(36), name: data.name || 'Imported patch', nodes: patch.nodes, edges: patch.edges || [], links: patch.links || [] })
+  persistSaved()
+}
+function exportShow() {
+  downloadJson({ type: 'sketchbook-show', version: 1, cues: JSON.parse(JSON.stringify(cues)) }, `${fileSlug('show')}.show.json`)
+}
+async function importShow() {
+  const data = await pickJsonFile()
+  const arr = Array.isArray(data) ? data : data?.cues
+  if (!Array.isArray(arr)) { alertBadFile(); return }
+  cues.splice(0, cues.length, ...arr)
+  activeCue.value = -1
+  curSeg = -1
+  persistShow()
+}
+function alertBadFile() {
+  console.warn('Patch: could not read that JSON file')
 }
 
 onMounted(async () => {
@@ -1586,6 +1997,7 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
         <v-btn icon="mdi-image-multiple" variant="tonal" size="small" title="Add Media (camera · files · clips)" :style="{ color: TYPES.media.color }" @click="addNode('media')" />
         <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
+        <v-btn icon="mdi-vector-polygon" variant="tonal" size="small" title="Add Polygon Mask (drag points on the output — projection mapping)" :style="{ color: TYPES.shape.color }" @click="addNode('shape')" />
         <v-btn icon="mdi-shape-outline" variant="tonal" size="small" title="Add Portal (remap a region elsewhere)" :style="{ color: TYPES.portal.color }" @click="addNode('portal')" />
         <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
         <v-menu>
@@ -1622,6 +2034,10 @@ onBeforeUnmount(() => {
             />
             <v-btn size="small" variant="tonal" @click="saveRouting">Save</v-btn>
           </div>
+          <div class="d-flex ga-1 mb-2">
+            <v-btn size="small" variant="text" prepend-icon="mdi-download" @click="exportPatch">Export .json</v-btn>
+            <v-btn size="small" variant="text" prepend-icon="mdi-upload" @click="importPatch">Import file</v-btn>
+          </div>
           <v-list density="compact" max-height="260">
             <v-list-item
               v-for="r in savedRoutings"
@@ -1630,6 +2046,7 @@ onBeforeUnmount(() => {
               @click="loadRouting(r)"
             >
               <template #append>
+                <v-icon icon="mdi-download" size="16" class="mr-2" title="Export this routing as a file" @click.stop="exportRouting(r)" />
                 <v-icon icon="mdi-delete" size="16" @click.stop="deleteRouting(r)" />
               </template>
             </v-list-item>
@@ -1728,6 +2145,20 @@ onBeforeUnmount(() => {
         title="Apply — push the current board look to the held output"
         @click="applyToOutput"
       />
+      <v-btn
+        icon="mdi-vector-square-edit"
+        variant="text" size="small"
+        :color="maskEdit ? 'primary' : undefined"
+        :title="shapeNodes.length ? 'Edit masks — drag the polygon points on the output' : 'Add a Polygon Mask first, then edit its points here'"
+        @click="maskEdit = !maskEdit"
+      />
+      <v-btn
+        icon="mdi-movie-open-play-outline"
+        variant="text" size="small"
+        :color="showOpen ? 'primary' : undefined"
+        title="Show — plan cues and run them manually or on a timeline"
+        @click="showOpen = !showOpen"
+      />
       <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
       <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
@@ -1737,7 +2168,105 @@ onBeforeUnmount(() => {
     <!-- output-only: floating controls to exit / go fullscreen -->
     <div v-if="outputOnly" class="output-ctrls">
       <v-btn icon="mdi-tune-variant" size="small" variant="flat" title="Show routing" @click="outputOnly = false" />
+      <v-btn
+        v-if="shapeNodes.length"
+        icon="mdi-vector-square-edit" size="small" variant="flat"
+        :color="maskEdit ? 'primary' : undefined"
+        title="Edit masks — drag the polygon points"
+        @click="maskEdit = !maskEdit"
+      />
+      <v-btn
+        icon="mdi-movie-open-play-outline" size="small" variant="flat"
+        :color="showOpen ? 'primary' : undefined"
+        title="Show — run cues / timeline"
+        @click="showOpen = !showOpen"
+      />
       <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" size="small" variant="flat" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
+    </div>
+
+    <!-- projection-mapping overlay: draggable polygon-mask vertices over the
+         stage; the SVG root ignores pointer events so the graph/UI underneath
+         still work, only the handles and edges are interactive -->
+    <svg v-if="maskEdit && shapeNodes.length" class="mask-overlay">
+      <g v-for="sh in maskGeom" :key="sh.id" :class="{ 'mask-sel': sh.selected }">
+        <path class="mask-fill" :d="sh.d" />
+        <!-- wide invisible hit-lines: double-click an edge to add a point -->
+        <line
+          v-for="(p, i) in sh.pts" :key="'e' + i"
+          class="mask-edge-hit"
+          :x1="p.x" :y1="p.y"
+          :x2="sh.pts[(i + 1) % sh.pts.length].x" :y2="sh.pts[(i + 1) % sh.pts.length].y"
+          @dblclick="insertPoint(sh.id, i, $event)"
+        />
+        <circle
+          v-for="(p, i) in sh.pts" :key="'h' + i"
+          class="mask-handle"
+          :cx="p.x" :cy="p.y" r="9"
+          @pointerdown="maskDown(sh.id, i, $event)"
+          @pointermove="maskMove"
+          @pointerup="maskUp"
+          @dblclick="removePoint(sh.id, i, $event)"
+        />
+      </g>
+    </svg>
+
+    <!-- show sequencer: cue list (manual) or timeline (auto + param ramps) -->
+    <div v-if="showOpen" class="show-panel" @pointerdown.stop @wheel.stop>
+      <div class="show-head">
+        <span class="show-title">Show</span>
+        <div class="show-modes">
+          <button :class="{ on: showMode === 'cues' }" @click="showMode = 'cues'">Cues</button>
+          <button :class="{ on: showMode === 'timeline' }" @click="showMode = 'timeline'">Timeline</button>
+        </div>
+        <button class="show-capture" title="Capture the current patch as a new cue" @click="captureCue">＋ Capture cue</button>
+        <span class="show-spacer" />
+        <v-btn icon="mdi-download" size="x-small" variant="text" :disabled="!cues.length" title="Export show as a .json file" @click="exportShow" />
+        <v-btn icon="mdi-upload" size="x-small" variant="text" title="Import a show .json file" @click="importShow" />
+        <v-btn icon="mdi-close" size="x-small" variant="text" @click="showOpen = false" />
+      </div>
+
+      <!-- transport: manual GO stack, or timeline play/scrub -->
+      <div v-if="showMode === 'cues'" class="show-transport">
+        <v-btn icon="mdi-skip-previous" size="small" variant="text" :disabled="activeCue <= 0" title="Previous cue" @click="prevCue" />
+        <button class="go-btn" :disabled="!cues.length" title="Go to the next cue" @click="activeCue < 0 ? goCue(0) : nextCue()">GO</button>
+        <v-btn icon="mdi-skip-next" size="small" variant="text" :disabled="activeCue >= cues.length - 1" title="Next cue" @click="nextCue" />
+        <span class="show-hint">Click a cue to jump to it. GO steps through in order.</span>
+      </div>
+      <div v-else class="show-transport">
+        <v-btn :icon="showPlaying ? 'mdi-pause' : 'mdi-play'" size="small" variant="text" @click="showPlaying ? pauseShow() : playShow()" />
+        <v-btn icon="mdi-stop" size="small" variant="text" title="Stop and rewind" @click="stopShow" />
+        <v-btn :icon="showLoop ? 'mdi-repeat' : 'mdi-repeat-off'" size="small" variant="text" :color="showLoop ? 'primary' : undefined" title="Loop the show" @click="showLoop = !showLoop" />
+        <span class="show-clock">{{ playhead.toFixed(1) }}s / {{ showLength().toFixed(1) }}s</span>
+        <div class="tl-track" @pointerdown="tlSeek($event)">
+          <div class="tl-fill" :style="{ width: pct(playhead) + '%' }" />
+          <div
+            v-for="(c, i) in cues" :key="c.id"
+            class="tl-cue" :class="{ on: activeCue === i }"
+            :style="{ left: pct(c.time) + '%' }"
+            :title="c.name + ' @ ' + c.time + 's'"
+            @pointerdown.stop="tlCueDown(i, $event)"
+          />
+        </div>
+      </div>
+
+      <!-- cue list -->
+      <div class="cue-list">
+        <div v-if="!cues.length" class="show-empty">No cues yet. Set up the patch, then “＋ Capture cue”. Capture a few and step or time them into a show.</div>
+        <div v-for="(c, i) in cues" :key="c.id" class="cue" :class="{ on: activeCue === i }" @click="goCue(i)">
+          <span class="cue-idx">{{ i + 1 }}</span>
+          <input class="cue-name" :value="c.name" @click.stop @change="c.name = $event.target.value; persistShow()" />
+          <label v-if="showMode === 'timeline'" class="cue-num" title="Start time (s)" @click.stop>
+            @<input type="number" min="0" step="0.5" :value="c.time" @change="c.time = Math.max(0, +$event.target.value); persistShow()" />s
+          </label>
+          <label class="cue-num" title="Crossfade (s)" @click.stop>
+            ↝<input type="number" min="0" step="0.1" :value="c.fade" @change="c.fade = Math.max(0, +$event.target.value); persistShow()" />s
+          </label>
+          <button class="cue-mini" title="Update this cue to the current patch" @click.stop="updateCue(i)">⟳</button>
+          <button class="cue-mini" title="Move up" @click.stop="moveCue(i, -1)">↑</button>
+          <button class="cue-mini" title="Move down" @click.stop="moveCue(i, 1)">↓</button>
+          <button class="cue-mini" title="Delete cue" @click.stop="deleteCue(i)">✕</button>
+        </div>
+      </div>
     </div>
 
     <!-- node board -->
@@ -2006,6 +2535,19 @@ onBeforeUnmount(() => {
             <label>recurse <input type="range" min="1" max="8" step="1" v-model.number="n.params.recurse" @change="persist" @pointerdown.stop /></label>
             <label class="chk"><input type="checkbox" v-model="n.params.border" @change="persist" @pointerdown.stop /> outline</label>
           </template>
+
+          <template v-if="n.type === 'shape'">
+            <label>
+              <span class="pjack" :ref="(el) => bindJack(n.id, 'feather', el)" :data-jack-node="n.id" data-jack-param="feather" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'feather')" />
+              feather <input type="range" min="0" max="0.5" step="0.01" :value="n.params.feather" @input="n.params.feather = +$event.target.value; persist()" @pointerdown.stop />
+            </label>
+            <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert (cut a hole)</label>
+            <div class="shape-row">
+              <button class="shape-btn" :class="{ on: maskEdit }" @pointerdown.stop @click="maskEdit = !maskEdit">{{ maskEdit ? 'editing points' : 'edit points' }}</button>
+              <button class="shape-btn" @pointerdown.stop @click="resetShape(n.id)">reset</button>
+            </div>
+            <div class="shape-hint">Turn on “edit points”, then drag the corners on the output. Double-click an edge to add a point, a point to remove it.</div>
+          </template>
         </div>
       </div>
       </div>
@@ -2092,8 +2634,52 @@ onBeforeUnmount(() => {
   width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #333;
   border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif;
 }
+.shape-row { display: flex; gap: 6px; margin-top: 4px; }
+.shape-btn {
+  flex: 1; font: 10px system-ui, sans-serif; color: #cdd3e0; cursor: pointer;
+  background: #12141c; border: 1px solid #333; border-radius: 4px; padding: 3px 6px;
+}
+.shape-btn.on { border-color: #f2ad00; color: #ffcd5a; }
+.shape-hint { font: 10px system-ui, sans-serif; color: #8a90a0; margin-top: 4px; line-height: 1.35; }
 .portal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 6px; align-items: center; }
 .portal-lbl { grid-column: 1 / -1; font: 600 10px system-ui; color: #9aa4c0; text-transform: uppercase; margin-top: 2px; }
+
+/* --- show sequencer panel (bottom sheet) --- */
+.show-panel {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 41;
+  max-height: 42vh; display: flex; flex-direction: column;
+  background: rgba(12, 14, 20, 0.96); border-top: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(6px); font: 12px system-ui, sans-serif; color: #cdd3e0;
+}
+.show-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.show-title { font-weight: 600; color: #e8ecf5; }
+.show-modes { display: flex; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
+.show-modes button { font: 11px system-ui; color: #9aa4c0; background: transparent; border: 0; padding: 3px 12px; cursor: pointer; }
+.show-modes button.on { background: rgba(124,140,255,0.25); color: #fff; }
+.show-capture { font: 11px system-ui; color: #cdd3e0; background: #1a1d28; border: 1px solid #3a4056; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.show-capture:hover { border-color: #7c8cff; }
+.show-spacer { flex: 1; }
+.show-transport { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.go-btn { font: 700 12px system-ui; color: #0a0b0f; background: #a0e060; border: 0; border-radius: 6px; padding: 5px 18px; cursor: pointer; letter-spacing: 0.08em; }
+.go-btn:disabled { opacity: 0.4; cursor: default; }
+.show-hint { font: 11px system-ui; color: #8a90a0; margin-left: 6px; }
+.show-clock { font: 11px ui-monospace, monospace; color: #9aa4c0; min-width: 96px; }
+.tl-track { position: relative; flex: 1; height: 22px; margin-left: 6px; border-radius: 6px; background: #1a1d28; border: 1px solid #2a2f40; cursor: pointer; overflow: hidden; }
+.tl-fill { position: absolute; top: 0; bottom: 0; left: 0; background: rgba(124,140,255,0.22); }
+.tl-cue { position: absolute; top: -1px; bottom: -1px; width: 3px; margin-left: -1.5px; background: #a0e060; cursor: ew-resize; }
+.tl-cue.on { background: #fff; box-shadow: 0 0 6px rgba(255,255,255,0.7); }
+.cue-list { overflow-y: auto; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; }
+.show-empty { color: #8a90a0; font: 11px system-ui; padding: 10px 4px; line-height: 1.5; }
+.cue { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; background: #14171f; border: 1px solid transparent; cursor: pointer; }
+.cue:hover { border-color: #3a4056; }
+.cue.on { border-color: #a0e060; background: rgba(160,224,96,0.08); }
+.cue-idx { font: 11px ui-monospace, monospace; color: #7a8090; min-width: 16px; text-align: right; }
+.cue-name { flex: 1; min-width: 60px; background: transparent; border: 0; color: #e8ecf5; font: 12px system-ui; padding: 2px 4px; border-radius: 4px; }
+.cue-name:focus { background: #12141c; outline: 1px solid #3a4056; }
+.cue-num { display: inline-flex; align-items: center; gap: 1px; font: 10px system-ui; color: #9aa4c0; }
+.cue-num input { width: 42px; background: #12141c; color: #cdd3e0; border: 1px solid #333; border-radius: 4px; font: 10px ui-monospace, monospace; padding: 1px 3px; }
+.cue-mini { width: 20px; height: 20px; border-radius: 4px; background: #12141c; color: #cdd3e0; border: 1px solid #333; cursor: pointer; font-size: 11px; line-height: 1; }
+.cue-mini:hover { border-color: #7c8cff; }
 .portal-cell { font-size: 10px; }
 .node-thumb { width: 100%; background: #000; }
 .node-thumb :deep(canvas) { width: 100%; height: 100%; display: block; }
@@ -2152,6 +2738,20 @@ onBeforeUnmount(() => {
   display: flex; gap: 6px; opacity: 0.35; transition: opacity 0.2s;
 }
 .output-ctrls:hover { opacity: 1; }
+/* projection-mapping overlay */
+.mask-overlay {
+  position: fixed; inset: 0; z-index: 35; pointer-events: none;
+  width: 100%; height: 100%;
+}
+.mask-fill { fill: rgba(242, 173, 0, 0.08); stroke: rgba(242, 173, 0, 0.7); stroke-width: 1.5; }
+.mask-sel .mask-fill { fill: rgba(242, 173, 0, 0.14); stroke: rgba(255, 205, 90, 0.95); }
+.mask-edge-hit { stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: copy; }
+.mask-handle {
+  fill: #10121a; stroke: #f2ad00; stroke-width: 2.5;
+  pointer-events: auto; cursor: grab; touch-action: none;
+}
+.mask-handle:hover { fill: #f2ad00; }
+.mask-sel .mask-handle { stroke: #ffcd5a; }
 /* fingers need fatter targets than a mouse */
 @media (pointer: coarse) {
   .port { width: 20px; height: 20px; }
