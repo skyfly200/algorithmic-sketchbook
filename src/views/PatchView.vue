@@ -1816,6 +1816,76 @@ function deleteRouting(r) {
   }
 }
 
+// --- file import / export: patches and shows as .json -----------------------
+function fileSlug(s) { return (s || 'untitled').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'untitled' }
+function downloadJson(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000)
+}
+function pickJsonFile() {
+  return new Promise((resolve) => {
+    const inp = document.createElement('input')
+    inp.type = 'file'
+    inp.accept = 'application/json,.json'
+    inp.onchange = () => {
+      const f = inp.files?.[0]
+      if (!f) return resolve(null)
+      const r = new FileReader()
+      r.onload = () => { try { resolve(JSON.parse(r.result)) } catch { resolve(null) } }
+      r.onerror = () => resolve(null)
+      r.readAsText(f)
+    }
+    inp.click()
+  })
+}
+// A patch file carries the graph plus a little metadata so it's self-describing.
+function exportPatch() {
+  const name = newName.value.trim() || 'patch'
+  downloadJson({
+    type: 'sketchbook-patch', version: 1, name, resolution: resLabel.value,
+    patch: { nodes: JSON.parse(JSON.stringify(nodes)), edges: JSON.parse(JSON.stringify(edges)), links: JSON.parse(JSON.stringify(links)) },
+  }, `${fileSlug(name)}.patch.json`)
+}
+function exportRouting(r) {
+  downloadJson({ type: 'sketchbook-patch', version: 1, name: r.name, patch: { nodes: r.nodes, edges: r.edges, links: r.links || [] } }, `${fileSlug(r.name)}.patch.json`)
+}
+async function importPatch() {
+  const data = await pickJsonFile()
+  if (!data) { alertBadFile(); return }
+  // accept the wrapped form, a bare {nodes,edges,links}, or a list of routings
+  if (Array.isArray(data)) {
+    for (const r of data) if (r?.nodes) savedRoutings.value.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: r.name || 'Imported', nodes: r.nodes, edges: r.edges || [], links: r.links || [] })
+    persistSaved()
+    return
+  }
+  const patch = data.patch || (data.nodes ? data : null)
+  if (!patch?.nodes) { alertBadFile(); return }
+  if (data.resolution && RESOLUTIONS.some((x) => x.label === data.resolution)) applyResolution(data.resolution)
+  loadRouting(patch)
+  // keep it around in the saved list too
+  savedRoutings.value.push({ id: Date.now().toString(36), name: data.name || 'Imported patch', nodes: patch.nodes, edges: patch.edges || [], links: patch.links || [] })
+  persistSaved()
+}
+function exportShow() {
+  downloadJson({ type: 'sketchbook-show', version: 1, cues: JSON.parse(JSON.stringify(cues)) }, `${fileSlug('show')}.show.json`)
+}
+async function importShow() {
+  const data = await pickJsonFile()
+  const arr = Array.isArray(data) ? data : data?.cues
+  if (!Array.isArray(arr)) { alertBadFile(); return }
+  cues.splice(0, cues.length, ...arr)
+  activeCue.value = -1
+  curSeg = -1
+  persistShow()
+}
+function alertBadFile() {
+  console.warn('Patch: could not read that JSON file')
+}
+
 onMounted(async () => {
   document.addEventListener('fullscreenchange', onFsChange)
   document.addEventListener('webkitfullscreenchange', onFsChange)
@@ -1940,6 +2010,10 @@ onBeforeUnmount(() => {
             />
             <v-btn size="small" variant="tonal" @click="saveRouting">Save</v-btn>
           </div>
+          <div class="d-flex ga-1 mb-2">
+            <v-btn size="small" variant="text" prepend-icon="mdi-download" @click="exportPatch">Export .json</v-btn>
+            <v-btn size="small" variant="text" prepend-icon="mdi-upload" @click="importPatch">Import file</v-btn>
+          </div>
           <v-list density="compact" max-height="260">
             <v-list-item
               v-for="r in savedRoutings"
@@ -1948,6 +2022,7 @@ onBeforeUnmount(() => {
               @click="loadRouting(r)"
             >
               <template #append>
+                <v-icon icon="mdi-download" size="16" class="mr-2" title="Export this routing as a file" @click.stop="exportRouting(r)" />
                 <v-icon icon="mdi-delete" size="16" @click.stop="deleteRouting(r)" />
               </template>
             </v-list-item>
@@ -2121,6 +2196,8 @@ onBeforeUnmount(() => {
         </div>
         <button class="show-capture" title="Capture the current patch as a new cue" @click="captureCue">＋ Capture cue</button>
         <span class="show-spacer" />
+        <v-btn icon="mdi-download" size="x-small" variant="text" :disabled="!cues.length" title="Export show as a .json file" @click="exportShow" />
+        <v-btn icon="mdi-upload" size="x-small" variant="text" title="Import a show .json file" @click="importShow" />
         <v-btn icon="mdi-close" size="x-small" variant="text" @click="showOpen = false" />
       </div>
 
