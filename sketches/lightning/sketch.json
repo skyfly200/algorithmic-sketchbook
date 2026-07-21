@@ -1,0 +1,15 @@
+{
+  "title": "Lightning",
+  "description": "Branching bolts crack across a stormy sky — midpoint-displaced channels with forked side-branches, a screen-wide flash per strike and lingering afterglow. Beats and clicks summon strikes.",
+  "tags": [
+    "generative",
+    "storm",
+    "light",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

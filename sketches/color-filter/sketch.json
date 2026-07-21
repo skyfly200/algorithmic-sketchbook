@@ -1,0 +1,14 @@
+{
+  "title": "Color Filter",
+  "description": "Cinematic colour grading for a live source — hue rotate, saturation, contrast, temperature, a shadow→highlight duotone map, and posterize. A one-stop grade node.",
+  "tags": [
+    "filter",
+    "color",
+    "camera",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

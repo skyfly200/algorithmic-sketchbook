@@ -1,0 +1,14 @@
+{
+  "title": "Matrix Rain",
+  "description": "Cascading columns of glowing glyphs, brightest at the leading drop and fading up the trail, with glitch flips. Beats speed the fall and flash the grid.",
+  "tags": [
+    "generative",
+    "retro",
+    "text",
+    "audio-reactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}
