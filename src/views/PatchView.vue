@@ -90,6 +90,7 @@ const TYPES = {
   filter: { title: 'Filter', ins: 1, color: '#c98cff' },
   media: { title: 'Media', ins: 0, color: '#4dd0c4' }, // camera / files / clips
   text: { title: 'Text', ins: 0, color: '#ff9ec4' },
+  portal: { title: 'Portal', ins: 1, color: '#8ad0ff' }, // remap a region elsewhere
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
   output: { title: 'Output', ins: 1, color: '#ffffff' },
@@ -114,6 +115,9 @@ const PARAM_RANGES = {
   // Text's numeric font/layout controls are all control-mappable (drag an
   // Input/XY/Tracker output onto their ▣ jacks to animate the type).
   text: { size: [0.03, 0.6], weight: [100, 900], tracking: [-0.1, 0.5], x: [0, 1], y: [0, 1], hue: [0, 360], rotate: [-180, 180] },
+  // Portal: a source region is remapped (copied/scaled) into a destination
+  // region — all eight edges control-mappable so the portal can roam.
+  portal: { srcX: [0, 1], srcY: [0, 1], srcW: [0.05, 1], srcH: [0.05, 1], dstX: [0, 1], dstY: [0, 1], dstW: [0.05, 1], dstH: [0.05, 1] },
 }
 const TEXT_FONTS = ['sans-serif', 'serif', 'monospace', 'system-ui', 'cursive']
 const BLENDS = [
@@ -248,7 +252,9 @@ function addNode(type) {
                     ? { mode: 'camera', mediaId: null }
                     : type === 'text'
                       ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, rotate: 0, italic: false, glow: 0.4, bg: false }
-                      : {},
+                      : type === 'portal'
+                        ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true }
+                        : {},
   })
   nodes.push(n)
   st(n.id) // create runtime state
@@ -1105,6 +1111,23 @@ function evalNode(node) {
     }
     octx.restore()
     octx.shadowBlur = 0
+  } else if (node.type === 'portal') {
+    const input = inputCanvas(node, 0)
+    if (input) octx.drawImage(input, 0, 0, W, H)
+    const p = node.params
+    const sx = p.srcX * W, sy = p.srcY * H, sw = p.srcW * W, sh = p.srcH * H
+    // remap the source region into the destination region, optionally
+    // recursively so the portal shows a portal showing a portal…
+    const times = Math.max(1, Math.round(p.recurse ?? 1))
+    for (let k = 0; k < times; k++) {
+      const dx = p.dstX * W, dy = p.dstY * H, dw = p.dstW * W, dh = p.dstH * H
+      octx.drawImage(s.out, sx, sy, sw, sh, dx, dy, dw, dh)
+    }
+    if (p.border) {
+      octx.strokeStyle = 'rgba(138,208,255,0.8)'
+      octx.lineWidth = Math.max(1, W * 0.003)
+      octx.strokeRect(p.dstX * W, p.dstY * H, p.dstW * W, p.dstH * H)
+    }
   } else if (node.type === 'mask') {
     const content = inputCanvas(node, 0)
     const mask = inputCanvas(node, 1)
@@ -1357,6 +1380,13 @@ function togglePopup() {
   })
   popupOpen.value = true
 }
+// Preview / program: with hold on, the pop-out keeps showing the last APPLIED
+// composite (the live show on the projector) while you redesign the graph on
+// the board (your preview). "Apply" pushes the current board look to the
+// output — design and verify the next look, then cut to it cleanly.
+const previewHold = ref(false)
+let applyOne = false
+function applyToOutput() { applyOne = true }
 function blitPopup() {
   if (!popup || popup.closed) {
     if (popupOpen.value) {
@@ -1365,6 +1395,9 @@ function blitPopup() {
     }
     return
   }
+  // held: don't update the show unless an Apply was requested
+  if (previewHold.value && !applyOne) return
+  applyOne = false
   const c = popup.document.getElementById('out')
   if (!c) return
   const dpr = Math.min(popup.devicePixelRatio || 1, 2)
@@ -1509,6 +1542,7 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
         <v-btn icon="mdi-image-multiple" variant="tonal" size="small" title="Add Media (camera · files · clips)" :style="{ color: TYPES.media.color }" @click="addNode('media')" />
         <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
+        <v-btn icon="mdi-shape-outline" variant="tonal" size="small" title="Add Portal (remap a region elsewhere)" :style="{ color: TYPES.portal.color }" @click="addNode('portal')" />
         <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
         <v-menu>
           <template #activator="{ props }">
@@ -1623,6 +1657,24 @@ onBeforeUnmount(() => {
         :color="popupOpen ? 'primary' : undefined"
         title="Pop out the output — drag it to a second display and keep adjusting here"
         @click="togglePopup"
+      />
+      <v-btn
+        v-if="popupOpen"
+        :icon="previewHold ? 'mdi-lock' : 'mdi-lock-open-variant-outline'"
+        variant="text"
+        size="small"
+        :color="previewHold ? 'primary' : undefined"
+        title="Preview hold — freeze the pop-out on the applied look while you redesign; use Apply to cut to the new one"
+        @click="previewHold = !previewHold"
+      />
+      <v-btn
+        v-if="popupOpen && previewHold"
+        icon="mdi-check-bold"
+        variant="tonal"
+        size="small"
+        color="primary"
+        title="Apply — push the current board look to the held output"
+        @click="applyToOutput"
       />
       <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
@@ -1884,6 +1936,24 @@ onBeforeUnmount(() => {
             <label class="chk"><input type="checkbox" v-model="n.params.bg" @change="persist" @pointerdown.stop /> black background</label>
             <label>glow <input type="range" min="0" max="1.5" step="0.05" v-model.number="n.params.glow" @change="persist" @pointerdown.stop /></label>
           </template>
+          <template v-if="n.type === 'portal'">
+            <div class="portal-grid">
+              <span class="portal-lbl">from</span>
+              <label v-for="pk in ['srcX', 'srcY', 'srcW', 'srcH']" :key="pk" class="portal-cell">
+                <span class="pjack" :ref="(el) => bindJack(n.id, pk, el)" :data-jack-node="n.id" :data-jack-param="pk" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, pk)" />
+                {{ pk.slice(3).toLowerCase() }}
+                <input type="range" min="0" max="1" step="0.01" :value="n.params[pk]" @input="n.params[pk] = +$event.target.value; persist()" @pointerdown.stop />
+              </label>
+              <span class="portal-lbl">to</span>
+              <label v-for="pk in ['dstX', 'dstY', 'dstW', 'dstH']" :key="pk" class="portal-cell">
+                <span class="pjack" :ref="(el) => bindJack(n.id, pk, el)" :data-jack-node="n.id" :data-jack-param="pk" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, pk)" />
+                {{ pk.slice(3).toLowerCase() }}
+                <input type="range" min="0" max="1" step="0.01" :value="n.params[pk]" @input="n.params[pk] = +$event.target.value; persist()" @pointerdown.stop />
+              </label>
+            </div>
+            <label>recurse <input type="range" min="1" max="8" step="1" v-model.number="n.params.recurse" @change="persist" @pointerdown.stop /></label>
+            <label class="chk"><input type="checkbox" v-model="n.params.border" @change="persist" @pointerdown.stop /> outline</label>
+          </template>
         </div>
       </div>
       </div>
@@ -1970,6 +2040,9 @@ onBeforeUnmount(() => {
   width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #333;
   border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif;
 }
+.portal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 6px; align-items: center; }
+.portal-lbl { grid-column: 1 / -1; font: 600 10px system-ui; color: #9aa4c0; text-transform: uppercase; margin-top: 2px; }
+.portal-cell { font-size: 10px; }
 .node-thumb { width: 100%; background: #000; }
 .node-thumb :deep(canvas) { width: 100%; height: 100%; display: block; }
 .node-body { padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; }
