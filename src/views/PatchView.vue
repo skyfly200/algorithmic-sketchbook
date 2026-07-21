@@ -14,12 +14,15 @@
  */
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useSketchStore } from '../stores/sketches'
+import { useSettingsStore } from '../stores/settings'
+import TourOverlay from '../components/TourOverlay.vue'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
 import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, flipSharedCamera } from '../stores/media.js'
 
 const store = useSketchStore()
+const settings = useSettingsStore()
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
 // feed, so in the graph they live behind a dedicated Filter node type that
 // pipes its video input straight into them.
@@ -330,9 +333,10 @@ function randomPatch() {
   const nChains = 1 + Math.floor(Math.random() * 3)
   const heads = [] // last node of each chain
   let maxCol = 0
+  const pooledEffects = settings.filterToPool(effectOptions.value) // app-wide effect selection
   for (let i = 0; i < nChains; i++) {
     const y = 90 + i * 230
-    let prev = mk('effect', { slug: pick(effectOptions.value)?.slug ?? '' }, 0, y)
+    let prev = mk('effect', { slug: pick(pooledEffects)?.slug ?? '' }, 0, y)
     const nFilters = chance(0.75) ? 1 + (chance(0.3) ? 1 : 0) : 0
     for (let f = 0; f < nFilters; f++) {
       const filt = mk('filter', { slug: pick(filterOptions.value)?.slug ?? '' }, 1 + f, y + 20 * (f + 1))
@@ -1910,9 +1914,23 @@ function alertBadFile() {
   console.warn('Patch: could not read that JSON file')
 }
 
+// --- guided tour -------------------------------------------------------------
+const tourActive = ref(false)
+const tourSteps = [
+  { title: 'Patch — the studio', body: 'A node compositor: wire generator effects through filters and blends into an Output, then project it. This is the deep end.' },
+  { target: '[data-tour="patch-add"]', title: 'Build the graph', body: 'Add effects, filters, text, media, masks and blends from here, then drag a node’s right port to another’s left port to wire them.', pad: 8 },
+  { target: '[data-tour="patch-random"]', title: 'Randomize', body: 'Deal out a whole new random-but-sensible patch in one click (undoable). It draws from the effect pool you set in Settings.' },
+  { target: '[data-tour="patch-mask"]', title: 'Projection mapping', body: 'Add a Polygon Mask node, then turn this on and drag the mask’s corners on the output to fit it to a real surface.' },
+  { target: '[data-tour="patch-show"]', title: 'Plan a show', body: 'Capture the patch as cues and step through them, or lay them on a timeline that ramps parameters between them.' },
+  { target: '[data-tour="patch-output"]', title: 'Go live', body: 'Switch to output-only and fullscreen for a clean projection, pop the output to a second display, or export the patch to a file.' },
+]
+function startTour() { tourActive.value = true }
+function finishTour() { settings.markSeen('patch') }
+
 onMounted(async () => {
   document.addEventListener('fullscreenchange', onFsChange)
   document.addEventListener('webkitfullscreenchange', onFsChange)
+  if (settings.shouldAutoTour('patch')) setTimeout(startTour, 600)
   // Deep link from the Library: ?load=<id> opens a saved routing.
   const loadId = new URLSearchParams(location.hash.split('?')[1] || '').get('load')
   if (loadId) {
@@ -1993,7 +2011,7 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
         <span class="text-subtitle-2 mr-2">Patch</span>
         <!-- add-node buttons: icons tinted with each node type's colour -->
-        <v-btn icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
+        <v-btn data-tour="patch-add" icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
         <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
         <v-btn icon="mdi-image-multiple" variant="tonal" size="small" title="Add Media (camera · files · clips)" :style="{ color: TYPES.media.color }" @click="addNode('media')" />
         <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
@@ -2013,7 +2031,7 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-format-text" variant="tonal" size="small" title="Add Text (mappable font)" :style="{ color: TYPES.text.color }" @click="addNode('text')" />
         <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
         <v-spacer />
-        <v-btn icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
+        <v-btn data-tour="patch-random" icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
         <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
         <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
       </div>
@@ -2146,6 +2164,7 @@ onBeforeUnmount(() => {
         @click="applyToOutput"
       />
       <v-btn
+        data-tour="patch-mask"
         icon="mdi-vector-square-edit"
         variant="text" size="small"
         :color="maskEdit ? 'primary' : undefined"
@@ -2153,14 +2172,16 @@ onBeforeUnmount(() => {
         @click="maskEdit = !maskEdit"
       />
       <v-btn
+        data-tour="patch-show"
         icon="mdi-movie-open-play-outline"
         variant="text" size="small"
         :color="showOpen ? 'primary' : undefined"
         title="Show — plan cues and run them manually or on a timeline"
         @click="showOpen = !showOpen"
       />
-      <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
+      <v-btn data-tour="patch-output" icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
+      <v-btn icon="mdi-help-circle-outline" variant="text" size="small" title="Replay the walkthrough" @click="startTour" />
       <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
       </div>
     </div>
@@ -2563,6 +2584,8 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-show="!outputOnly" class="hint">Drag a node's right port to another node's left port to wire it. Drag an Input node's ▣ output to any param's ▣ jack to modulate it. Click a wire to remove it.</div>
+
+    <TourOverlay v-model="tourActive" :steps="tourSteps" @finish="finishTour" />
   </div>
 </template>
 

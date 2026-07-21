@@ -11,12 +11,15 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSketchStore } from '../stores/sketches'
 import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
+import { useSettingsStore } from '../stores/settings'
+import TourOverlay from '../components/TourOverlay.vue'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 // Single source of truth for mapping sources (audio/mouse/tilt/midi/leap/artnet).
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 
 const store = useSketchStore()
 const viewer = useViewerStore()
+const settings = useSettingsStore()
 
 const options = computed(() => store.sketches.filter((s) => s.embed && s.url))
 const BLENDS = [
@@ -276,11 +279,23 @@ function captureLoop(ts) {
   raf = requestAnimationFrame(captureLoop)
 }
 
+// --- guided tour -------------------------------------------------------------
+const tourActive = ref(false)
+const tourSteps = [
+  { title: 'Mixer', body: 'Stack several effects into one composite — simpler than Patch when you just want to layer looks.' },
+  { target: '[data-tour="mix-panel"]', title: 'Layers panel', body: 'Add layers, pick an effect for each, set its blend mode and opacity, reorder or remove them — the stack composites top-down.', pad: 8 },
+  { target: '[data-tour="mix-add"]', title: 'Add a layer', body: 'Add as many as you like, then wire audio/MIDI/mouse inputs to each layer’s params to make the mix react.', pad: 6 },
+  { title: 'Project it', body: 'Toggle the layers panel off and go fullscreen for a clean output. Replay this tour anytime from the ? button.' },
+]
+function startTour() { showPanel.value = true; setTimeout(() => (tourActive.value = true), 80) }
+function finishTour() { settings.markSeen('mixer') }
+
 onMounted(() => {
   window.addEventListener('message', onMessage)
   document.addEventListener('fullscreenchange', onFsChange)
   document.addEventListener('webkitfullscreenchange', onFsChange)
   raf = requestAnimationFrame(captureLoop)
+  if (settings.shouldAutoTour('mixer')) setTimeout(startTour, 500)
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
@@ -352,7 +367,8 @@ onBeforeUnmount(() => {
           />
         </v-list>
       </v-menu>
-      <v-btn icon="mdi-tune-variant" variant="text" size="small" title="Toggle layers panel" :color="showPanel ? 'primary' : undefined" @click="showPanel = !showPanel" />
+      <v-btn data-tour="mix-panel" icon="mdi-tune-variant" variant="text" size="small" title="Toggle layers panel" :color="showPanel ? 'primary' : undefined" @click="showPanel = !showPanel" />
+      <v-btn icon="mdi-help-circle-outline" variant="text" size="small" title="Replay the walkthrough" @click="startTour" />
       <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
     </div>
 
@@ -360,7 +376,7 @@ onBeforeUnmount(() => {
     <v-card v-if="showPanel" class="panel pa-3" variant="outlined">
       <div class="d-flex align-center mb-2">
         <h2 class="text-subtitle-2 mr-auto">Layers</h2>
-        <v-btn icon="mdi-plus" size="x-small" variant="tonal" title="Add layer" @click="addLayer" />
+        <v-btn data-tour="mix-add" icon="mdi-plus" size="x-small" variant="tonal" title="Add layer" @click="addLayer" />
       </div>
       <p class="text-caption text-medium-emphasis mb-3">
         Top of the list is the back layer; each row below stacks in front of it.
@@ -564,6 +580,8 @@ onBeforeUnmount(() => {
         </template>
       </v-card>
     </v-card>
+
+    <TourOverlay v-model="tourActive" :steps="tourSteps" @finish="finishTour" />
   </div>
 </template>
 

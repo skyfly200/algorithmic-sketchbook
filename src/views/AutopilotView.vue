@@ -16,11 +16,14 @@
  */
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useSketchStore } from '../stores/sketches'
+import { useSettingsStore } from '../stores/settings'
+import TourOverlay from '../components/TourOverlay.vue'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import perfScores from '../registry/perf.json'
 
 const store = useSketchStore()
+const settings = useSettingsStore()
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
   'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
@@ -37,11 +40,9 @@ const allEffects = computed(() =>
     (s) => s.type === 'local' && s.embed && !FILTER_SLUGS.includes(s.slug) && s.slug !== 'bright-waves-logo',
   ),
 )
-const effectPool = computed(() =>
-  enabledEffects.value.size
-    ? allEffects.value.filter((s) => enabledEffects.value.has(s.slug))
-    : allEffects.value,
-)
+// The pool Autopilot picks from is the app-wide effect selection (shared with
+// the Randomize feature), configurable here or on the Settings page.
+const effectPool = computed(() => settings.filterToPool(allEffects.value))
 const filterPool = computed(() =>
   store.sketches.filter((s) => s.type === 'local' && s.embed && FILTER_SLUGS.includes(s.slug)),
 )
@@ -60,7 +61,6 @@ const lowSkip = ref(savedSet.lowSkip ?? true)
 const fpsFloor = ref(savedSet.fpsFloor ?? 24)
 const perfBudget = ref(savedSet.perfBudget ?? 12)
 const resolution = ref(savedSet.resolution ?? 'high') // low | medium | high | native
-const enabledEffects = ref(new Set(savedSet.enabledEffects ?? []))
 const playing = ref(true)
 // The rendered view stays clean: every control lives inside one panel opened
 // from a single, unobtrusive corner button — nothing else overlays the visuals.
@@ -68,17 +68,11 @@ const panelOpen = ref(false)
 function persistSettings() {
   localStorage.setItem(SET_KEY, JSON.stringify({
     dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value, perfBudget: perfBudget.value,
-    resolution: resolution.value, enabledEffects: [...enabledEffects.value],
+    resolution: resolution.value,
   }))
 }
 function toggleEffect(slug) {
-  // Empty set means "all on"; the first uncheck materialises the full set so
-  // the toggle removes exactly that one and keeps the rest.
-  const set = enabledEffects.value.size ? new Set(enabledEffects.value) : new Set(allEffects.value.map((s) => s.slug))
-  set.has(slug) ? set.delete(slug) : set.add(slug)
-  // if everything ended up ticked again, collapse back to the "all" sentinel
-  enabledEffects.value = set.size === allEffects.value.length ? new Set() : set
-  persistSettings()
+  settings.toggleEffect(slug, allEffects.value.map((s) => s.slug))
 }
 
 // --- perf-aware routing ------------------------------------------------------
@@ -661,6 +655,17 @@ function onFsChange() {
   isFullscreen.value = !!fsElement()
 }
 
+// --- guided tour -------------------------------------------------------------
+const tourActive = ref(false)
+const tourSteps = [
+  { title: 'Autopilot', body: 'A hands-free show — it evolves an ever-changing mix of effects on its own. It’s already running behind this panel.' },
+  { target: '[data-tour="ap-transport"]', title: 'Transport', body: 'Pause, step back to the previous mix, jump forward, save the current look as a Patch, or turn on the mic so the effects react to sound.', pad: 8 },
+  { target: '[data-tour="ap-settings"]', title: 'Tune the tour', body: 'How often it changes, the performance budget, output resolution, and which effects are in rotation (shared with Settings).', pad: 8 },
+  { title: 'Clean view', body: 'Close this panel (✕) for an unobstructed view — the corner button reopens it. Replay this tour anytime from the ? here.' },
+]
+function startTour() { panelOpen.value = true; setTimeout(() => (tourActive.value = true), 80) }
+function finishTour() { settings.markSeen('autopilot') }
+
 onMounted(() => {
   // opening mix: a base layer, usually a partner, maybe a filter — each
   // fades in as it becomes ready
@@ -674,6 +679,7 @@ onMounted(() => {
   document.addEventListener('fullscreenchange', onFsChange)
   document.addEventListener('webkitfullscreenchange', onFsChange)
   raf = requestAnimationFrame(loop)
+  if (settings.shouldAutoTour('autopilot')) setTimeout(startTour, 700)
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
@@ -723,12 +729,13 @@ onBeforeUnmount(() => {
           <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" title="Back to gallery" />
           <span class="panel-title">Autopilot</span>
           <span class="fps" :class="{ low: fps < fpsFloor }">{{ fps }} fps</span>
+          <v-btn icon="mdi-help-circle-outline" variant="text" size="small" title="Replay the walkthrough" @click="startTour" />
           <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit full screen' : 'Full screen'" @click="fullscreen" />
           <v-btn icon="mdi-close" variant="text" size="small" title="Close controls" @click="panelOpen = false" />
         </div>
 
         <!-- transport -->
-        <div class="panel-transport">
+        <div class="panel-transport" data-tour="ap-transport">
           <v-btn icon="mdi-skip-previous" variant="text" size="small" title="Back to the previous routing" :disabled="history.length < 2" @click="back" />
           <v-btn :icon="playing ? 'mdi-pause' : 'mdi-play'" variant="text" size="small" :title="playing ? 'Pause the tour' : 'Resume'" @click="playing = !playing" />
           <v-btn icon="mdi-skip-next" variant="text" size="small" :title="redo.length ? 'Forward' : 'Next routing move now'" @click="forward" />
@@ -743,7 +750,7 @@ onBeforeUnmount(() => {
           <v-btn icon="mdi-content-save-outline" variant="text" size="small" title="Save the current mix as a Patch routing" @click="saveAsPatch" />
         </div>
 
-        <div class="panel-scroll">
+        <div class="panel-scroll" data-tour="ap-settings">
           <!-- settings -->
           <div class="set-row">Seconds between changes: {{ dwell }}s</div>
           <v-slider v-model="dwell" density="compact" hide-details :min="6" :max="120" :step="1" @end="persistSettings" />
@@ -760,12 +767,12 @@ onBeforeUnmount(() => {
           <div v-if="lowSkip" class="set-row">FPS floor: {{ fpsFloor }}</div>
           <v-slider v-if="lowSkip" v-model="fpsFloor" density="compact" hide-details :min="10" :max="50" :step="1" @end="persistSettings" />
           <div class="set-row d-flex justify-space-between align-center">
-            <span>Effects in rotation</span>
-            <button class="mini-clear" @click="enabledEffects = new Set(); persistSettings()">all</button>
+            <span>Effects in rotation <span class="set-sub">(shared with Settings)</span></span>
+            <button class="mini-clear" @click="settings.enableAllEffects()">all</button>
           </div>
           <div class="eff-list">
             <label v-for="s in allEffects" :key="s.slug" class="eff-item">
-              <input type="checkbox" :checked="!enabledEffects.size || enabledEffects.has(s.slug)" @change="toggleEffect(s.slug)" />
+              <input type="checkbox" :checked="settings.isEffectEnabled(s.slug)" @change="toggleEffect(s.slug)" />
               {{ s.title }}
             </label>
           </div>
@@ -818,6 +825,8 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </transition>
+
+    <TourOverlay v-model="tourActive" :steps="tourSteps" @finish="finishTour" />
   </div>
 </template>
 

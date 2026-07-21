@@ -12,12 +12,16 @@ import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 const props = defineProps({
   steps: { type: Array, default: () => [] },
   modelValue: { type: Boolean, default: false },
+  // When true, the final step offers a "don't show tutorials again" checkbox.
+  allowDisableAll: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue', 'finish'])
 
 const idx = ref(0)
 const rect = ref(null)
+const disableAll = ref(false)
 const step = computed(() => props.steps[idx.value] || null)
+const onLast = computed(() => idx.value >= props.steps.length - 1)
 
 function measure() {
   const s = step.value
@@ -47,9 +51,9 @@ const cardStyle = computed(() => {
     : { left: left + 'px', top: Math.max(12, r.top - 16) + 'px', width: W + 'px', transform: 'translateY(-100%)' }
 })
 
-function next() { if (idx.value >= props.steps.length - 1) done(); else idx.value++ }
+function next() { if (onLast.value) done(); else idx.value++ }
 function back() { if (idx.value > 0) idx.value-- }
-function done() { emit('finish'); emit('update:modelValue', false) }
+function done() { emit('finish', { disableAll: disableAll.value }); emit('update:modelValue', false) }
 
 function onKey(e) {
   if (!props.modelValue) return
@@ -62,6 +66,7 @@ function onResize() { measure() }
 watch(() => props.modelValue, (on) => {
   if (on) {
     idx.value = 0
+    disableAll.value = false
     nextTick(measure)
     window.addEventListener('resize', onResize)
     window.addEventListener('scroll', onResize, true)
@@ -87,6 +92,10 @@ onBeforeUnmount(() => {
       <button class="tour-x" title="Skip the tour (Esc)" @click="done">✕</button>
       <div class="tour-title">{{ step?.title }}</div>
       <div class="tour-body">{{ step?.body }}</div>
+      <label v-if="allowDisableAll && onLast" class="tour-disable">
+        <input type="checkbox" v-model="disableAll" />
+        Don’t show tutorials again
+      </label>
       <div class="tour-foot">
         <span class="tour-prog">{{ idx + 1 }} / {{ steps.length }}</span>
         <span class="tour-spacer" />
@@ -120,6 +129,11 @@ onBeforeUnmount(() => {
 .tour-x:hover { color: #fff; }
 .tour-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; padding-right: 16px; color: #fff; }
 .tour-body { color: #c2c8d6; margin-bottom: 12px; }
+.tour-disable {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
+  font: 12px system-ui, sans-serif; color: #9aa4c0; cursor: pointer;
+}
+.tour-disable input { cursor: pointer; }
 .tour-foot { display: flex; align-items: center; gap: 6px; }
 .tour-prog { font: 11px ui-monospace, monospace; color: #7a8090; }
 .tour-spacer { flex: 1; }

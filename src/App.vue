@@ -3,9 +3,10 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import BrandLogo from './components/BrandLogo.vue'
 import TourOverlay from './components/TourOverlay.vue'
+import { useSettingsStore } from './stores/settings'
 
 const router = useRouter()
-const TOUR_KEY = 'sketchbook-tour-done'
+const settings = useSettingsStore()
 const tourActive = ref(false)
 
 // The first-open walkthrough: points at the main tools and where they live.
@@ -17,8 +18,8 @@ const tourSteps = [
   {
     target: '[data-tour="gallery"]',
     title: 'The experiments',
-    body: 'Browse the sketches here and click any card to open it full-screen with live controls, audio reactivity, and saveable scenes.',
-    pad: 10,
+    body: 'Click any card to open that sketch full-screen with live controls, audio reactivity, and saveable scenes. Use the search and tag filters above to narrow the grid.',
+    pad: 8,
   },
   {
     target: '[data-tour="autopilot"]',
@@ -46,9 +47,14 @@ const tourSteps = [
     body: 'Your saved patches, mixes, and scenes live here. Patches and shows can also be exported to JSON files from Patch.',
   },
   {
+    target: '[data-tour="settings"]',
+    title: 'Settings',
+    body: 'Turn tutorials on or off, pick which effects the random and Autopilot features draw from, and more.',
+  },
+  {
     target: '[data-tour="help"]',
     title: 'That’s the tour',
-    body: 'Full details are in the Docs. You can replay this walkthrough anytime from this ? button. Have fun.',
+    body: 'Full details are in the Docs. Replay this walkthrough anytime from this ? button. Each studio view (Patch, Mixer, Autopilot) has its own quick tour too. Have fun.',
   },
 ]
 
@@ -57,12 +63,13 @@ function startTour() {
   // let the gallery render before measuring targets
   setTimeout(() => (tourActive.value = true), 350)
 }
-function finishTour() {
-  localStorage.setItem(TOUR_KEY, '1')
+function finishTour(payload) {
+  settings.markSeen('app')
+  if (payload?.disableAll) settings.setTutorials(false)
 }
 
 onMounted(() => {
-  if (!localStorage.getItem(TOUR_KEY)) startTour()
+  if (settings.shouldAutoTour('app')) startTour()
 })
 </script>
 
@@ -137,6 +144,13 @@ onMounted(() => {
         :to="{ name: 'docs' }"
       />
       <v-btn
+        data-tour="settings"
+        icon="mdi-cog-outline"
+        variant="text"
+        title="Settings — tutorials, effect pool and more"
+        :to="{ name: 'settings' }"
+      />
+      <v-btn
         data-tour="help"
         icon="mdi-help-circle-outline"
         variant="text"
@@ -157,7 +171,7 @@ onMounted(() => {
       <router-view />
     </v-main>
 
-    <TourOverlay v-model="tourActive" :steps="tourSteps" @finish="finishTour" />
+    <TourOverlay v-model="tourActive" :steps="tourSteps" allow-disable-all @finish="finishTour" />
   </v-app>
 </template>
 

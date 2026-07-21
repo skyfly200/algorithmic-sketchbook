@@ -54,10 +54,11 @@ function sketchTitle(slug) {
       </div>
     </template>
 
-    <v-row v-if="store.filtered.length" data-tour="gallery">
+    <v-row v-if="store.filtered.length">
       <v-col
-        v-for="sketch in store.filtered"
+        v-for="(sketch, i) in store.filtered"
         :key="sketch.slug"
+        :data-tour="i === 0 ? 'gallery' : null"
         cols="12"
         sm="6"
         md="4"
