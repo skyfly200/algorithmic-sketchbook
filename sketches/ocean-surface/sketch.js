@@ -11,8 +11,8 @@ const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
 const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: CAPTURE })
 
 const params = rt.params({
-  choppiness: { value: 1, min: 0.2, max: 2.5, step: 0.05, label: 'Choppiness' },
-  windSpeed: { value: 1, min: 0, max: 3, step: 0.05, label: 'Wind speed' },
+  choppiness: { value: 1.25, min: 0.2, max: 2.5, step: 0.05, label: 'Choppiness' },
+  windSpeed: { value: 1.6, min: 0, max: 3, step: 0.05, label: 'Wind speed' },
   scale: { value: 1, min: 0.4, max: 2.5, step: 0.05, label: 'Wave scale' },
   sunHeight: { value: 0.25, min: 0.02, max: 0.8, step: 0.01, label: 'Sun height' },
   deep: { value: 210, min: 160, max: 260, step: 1, label: 'Water hue' },
@@ -38,7 +38,7 @@ float waves(vec2 p, out vec2 grad){
   float ang=u_seed;
   for(int i=0;i<7;i++){
     vec2 dir=vec2(cos(ang),sin(ang));
-    float ph=dot(dir,p)*freq + u_time*u_wind*sp;
+    float ph=dot(dir,p)*freq + u_time*u_wind*sp*1.5;
     float w=exp(sin(ph)-1.0)*amp; // sharp-crest wave (Acerola-style)
     h+=w;
     float dw=w*cos(ph)*freq;

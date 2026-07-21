@@ -310,6 +310,13 @@ onUnmounted(() => {
                   color="primary"
                   @update:model-value="(v) => setParam(name, v)"
                 />
+                <v-btn
+                  v-else-if="spec.type === 'action'"
+                  variant="tonal"
+                  size="small"
+                  block
+                  @click="post({ type: 'sketch:action', name })"
+                >{{ spec.label ?? name }}</v-btn>
                 <template v-else-if="spec.type === 'select'">
                   <span class="param-label">{{ spec.label ?? name }}</span>
                   <v-select

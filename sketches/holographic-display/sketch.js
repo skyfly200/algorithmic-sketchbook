@@ -45,6 +45,7 @@ const params = rt.params({
   scan: { value: 1, min: 0, max: 3, step: 0.05, label: 'Scanline density' },
   hue: { value: +rt.random(0.5, 0.62).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hologram hue' },
   float: { value: 0.5, min: 0, max: 1.5, step: 0.02, label: 'Float bob' },
+  loadModel: { type: 'action', label: 'Load 3D model (.glb · .obj · .stl · .fbx)' },
 })
 // Music: beats spike the glitch, loudness drives the glimmer, mids turn 4D.
 rt.mapInput('audio.pulse', 'glitch', 0.8)
@@ -406,6 +407,9 @@ function loadFile(file) {
 }
 const fileInput = document.getElementById('file')
 document.getElementById('load')?.addEventListener('click', () => fileInput.click())
+// The "Load model" button lives in the viewer's controls panel (an action
+// param) rather than overlaying the render.
+rt.onAction('loadModel', () => fileInput?.click())
 fileInput?.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]) })
 // Drag & drop anywhere.
 window.addEventListener('dragover', (e) => e.preventDefault())

@@ -490,6 +490,11 @@ onBeforeUnmount(() => {
               color="primary"
               @update:model-value="(v) => setLayerParam(layer, name, v)"
             />
+            <v-btn
+              v-else-if="spec.type === 'action'"
+              variant="tonal" size="small" block class="my-1"
+              @click="postToLayer(layer, { type: 'sketch:action', name })"
+            >{{ spec.label ?? name }}</v-btn>
             <template v-else-if="spec.type === 'select'">
               <span class="ctrl-label">{{ spec.label ?? name }}</span>
               <v-select

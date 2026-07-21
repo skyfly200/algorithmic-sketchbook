@@ -260,6 +260,7 @@ export function createRuntime() {
   const schema = {}
   const base = {} // values as set by the sketch / viewer / scene
   const effective = {} // base + input modulation, what sketches read
+  const actions = {} // { name: callback } for `type:'action'` param buttons
   let mappings = []
   const defaultMappings = [] // the sketch's own rt.mapInput() calls, for auto-map
   // Patch loads effect iframes with ?nomap=1 so they start with no reactivity
@@ -484,6 +485,8 @@ export function createRuntime() {
       // own mic button. Pulse stays locally-driven via trigger()+decay.
       Object.assign(beat.state, msg.state)
       if (msg.beat) beat.trigger(msg.energy ?? 1)
+    } else if (msg.type === 'sketch:action') {
+      actions[msg.name]?.()
     } else if (msg.type === 'sketch:pause') {
       setPaused(!!msg.paused)
     } else if (msg.type === 'sketch:auto-map') {
@@ -522,6 +525,7 @@ export function createRuntime() {
       const view = {}
       for (const [name, spec] of Object.entries(def)) {
         schema[name] = spec
+        if (spec.type === 'action') continue // a button, not a stored value
         base[name] = spec.value
         effective[name] = spec.value
         Object.defineProperty(view, name, { get: () => effective[name], enumerable: true })
@@ -529,6 +533,10 @@ export function createRuntime() {
       announce()
       return view
     },
+
+    // Register a handler for a `type:'action'` param — the controls panel shows
+    // it as a button that fires this callback (e.g. "Load model…").
+    onAction(name, cb) { actions[name] = cb },
 
     mapInput(source, param, amount = 0.5, smooth = defaultSmooth(source)) {
       // Default mappings used to run with no inertia (smooth 0), so the param

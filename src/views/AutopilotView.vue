@@ -757,7 +757,7 @@ onBeforeUnmount(() => {
           <div class="set-row">Perf budget: {{ perfBudget }} (bigger = richer mixes)</div>
           <v-slider v-model="perfBudget" density="compact" hide-details :min="4" :max="24" :step="1" @end="persistSettings" />
           <div class="set-row">Resolution</div>
-          <v-btn-toggle v-model="resolution" density="compact" mandatory divided class="mt-1 mb-4" @update:model-value="persistSettings">
+          <v-btn-toggle v-model="resolution" density="compact" mandatory divided class="mt-1 mb-4 res-toggle" @update:model-value="persistSettings">
             <v-btn value="low" size="x-small">Low</v-btn>
             <v-btn value="medium" size="x-small">Med</v-btn>
             <v-btn value="high" size="x-small">High</v-btn>
@@ -789,6 +789,7 @@ onBeforeUnmount(() => {
                   <label v-if="spec.type === 'bool'" class="chk">
                     <input type="checkbox" :checked="c.values[name]" @change="setParam(c, name, $event.target.checked)" /> {{ spec.label ?? name }}
                   </label>
+                  <button v-else-if="spec.type === 'action'" class="act-btn" @click="c.win.postMessage({ type: 'sketch:action', name }, '*')">{{ spec.label ?? name }}</button>
                   <label v-else-if="spec.type === 'select'">
                     {{ spec.label ?? name }}
                     <select :value="c.values[name]" @change="setParam(c, name, $event.target.value)">
@@ -896,6 +897,12 @@ onBeforeUnmount(() => {
 .panel .chk { flex-direction: row; align-items: center; gap: 6px; }
 .panel select { background: #12141c; color: #cdd3e0; border: 1px solid #333; border-radius: 4px; font-size: 11px; }
 .panel input[type=range] { width: 100%; }
+.act-btn { font: 11px system-ui, sans-serif; color: #cdd3e0; background: #1a1d28; border: 1px solid #3a4056; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
+.act-btn:hover { border-color: #7c8cff; }
+/* Resolution toggle: stretch the four buttons to fill the panel so "Native"
+   never spills past the edge. */
+.res-toggle { display: flex; width: 100%; height: 30px; }
+.res-toggle :deep(.v-btn) { flex: 1 1 0; min-width: 0; padding: 0; letter-spacing: 0; }
 .map-head { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font: 600 10px system-ui; color: #9aa4c0; text-transform: uppercase; }
 .map-row { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: 3px; align-items: center; font-size: 10px; color: #cdd3e0; }
 .map-row input[type=range] { grid-column: 1 / -1; }

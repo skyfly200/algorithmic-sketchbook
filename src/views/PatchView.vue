@@ -1835,6 +1835,15 @@ function loadSaved() {
 }
 const savedRoutings = ref(loadSaved())
 const newName = ref('')
+// Inline rename of a saved routing.
+const editRoutingId = ref(null)
+const editRoutingName = ref('')
+function startRenameRouting(r) { editRoutingId.value = r.id; editRoutingName.value = r.name }
+function commitRenameRouting() {
+  const r = savedRoutings.value.find((x) => x.id === editRoutingId.value)
+  if (r) { const n = editRoutingName.value.trim(); if (n) { r.name = n; persistSaved() } }
+  editRoutingId.value = null
+}
 function persistSaved() {
   localStorage.setItem(SAVED_KEY, JSON.stringify(savedRoutings.value))
 }
@@ -2093,10 +2102,23 @@ onBeforeUnmount(() => {
             <v-list-item
               v-for="r in savedRoutings"
               :key="r.id"
-              :title="r.name"
-              @click="loadRouting(r)"
+              @click="editRoutingId === r.id ? null : loadRouting(r)"
             >
+              <template #title>
+                <input
+                  v-if="editRoutingId === r.id"
+                  class="routing-rename"
+                  :value="editRoutingName"
+                  autofocus
+                  @click.stop
+                  @input="editRoutingName = $event.target.value"
+                  @keyup.enter="commitRenameRouting"
+                  @blur="commitRenameRouting"
+                />
+                <span v-else>{{ r.name }}</span>
+              </template>
               <template #append>
+                <v-icon icon="mdi-pencil" size="16" class="mr-2" title="Rename" @click.stop="startRenameRouting(r)" />
                 <v-icon icon="mdi-download" size="16" class="mr-2" title="Export this routing as a file" @click.stop="exportRouting(r)" />
                 <v-icon icon="mdi-delete" size="16" @click.stop="deleteRouting(r)" />
               </template>
@@ -2482,6 +2504,7 @@ onBeforeUnmount(() => {
                 <label v-if="spec.type === 'bool'" class="chk">
                   <input type="checkbox" :checked="effectControls.get(n.id).values[name]" @change="setEffectParam(n.id, name, $event.target.checked)" /> {{ spec.label ?? name }}
                 </label>
+                <button v-else-if="spec.type === 'action'" class="shape-btn" @pointerdown.stop @click="postToEffect(n.id, { type: 'sketch:action', name })">{{ spec.label ?? name }}</button>
                 <label v-else-if="spec.type === 'select'">
                   {{ spec.label ?? name }}
                   <select :value="effectControls.get(n.id).values[name]" @change="setEffectParam(n.id, name, $event.target.value)">
@@ -2699,6 +2722,7 @@ onBeforeUnmount(() => {
   width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #333;
   border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif;
 }
+.routing-rename { width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #3a4056; border-radius: 4px; font: 13px system-ui, sans-serif; padding: 2px 6px; }
 .shape-row { display: flex; gap: 6px; margin-top: 4px; }
 .shape-btn {
   flex: 1; font: 10px system-ui, sans-serif; color: #cdd3e0; cursor: pointer;
