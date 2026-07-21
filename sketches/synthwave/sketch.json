@@ -1,0 +1,15 @@
+{
+  "title": "Synthwave",
+  "description": "An endless retro-future drive — a neon wireframe grid rolling toward the horizon over rippled hills, a huge banded sun setting into a scanlined gradient sky with stars and distant mountains. The grid scrolls and everything glows on the beat.",
+  "tags": [
+    "shader",
+    "retro",
+    "landscape",
+    "audio-reactive"
+  ],
+  "tech": [
+    "webgl",
+    "glsl"
+  ],
+  "created": "2026-07-21"
+}

@@ -1,0 +1,16 @@
+{
+  "title": "Ocean Surface",
+  "description": "A stylised sea rendered per-pixel — summed sharp-crested waves give a height/normal field shaded with Fresnel sky reflection, deep/shallow tint, sub-surface scatter through the crests and dancing sun glitter. Drag to swing the sun.",
+  "tags": [
+    "shader",
+    "water",
+    "simulation",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "webgl",
+    "glsl"
+  ],
+  "created": "2026-07-21"
+}
