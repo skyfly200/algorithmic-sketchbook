@@ -13,7 +13,9 @@ import { createSource, clamp } from '../_lib/source.js'
 const rt = createRuntime()
 const params = rt.params({
   intensity: { value: 0.8, min: 0, max: 2, step: 0.05, label: 'Intensity' },
-  streak: { value: +rt.random(0.5, 1.1).toFixed(2), min: 0, max: 1.5, step: 0.05, label: 'Anamorphic streak' },
+  burst: { value: +rt.random(0.6, 1.0).toFixed(2), min: 0, max: 1.5, step: 0.05, label: 'Radial burst' },
+  spikes: { value: 2 * Math.round(rt.random(5, 9)), min: 4, max: 24, step: 1, label: 'Burst spikes' },
+  streak: { value: +rt.random(0.1, 0.35).toFixed(2), min: 0, max: 1.5, step: 0.05, label: 'Anamorphic streak' },
   ghosts: { value: Math.round(rt.random(4, 9)), min: 0, max: 12, step: 1, label: 'Ghosts' },
   halo: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Halo ring' },
   chroma: { value: +rt.random(0.3, 0.9).toFixed(2), min: 0, max: 1, step: 0.05, label: 'Chromatic fringe' },
@@ -154,6 +156,33 @@ function frame(now) {
   // Hot core + chromatic fringe.
   glow(lx, ly, m * 0.05 * flicker, '255,255,255', 0.9 * I)
   glow(lx, ly, m * 0.16 * flicker, '255,235,200', 0.45 * I)
+
+  // Radial starburst: fine spikes radiating in every direction from the light
+  // (the diaphragm diffraction star), so the default flare reads radial.
+  if (params.burst > 0.01) {
+    const n = Math.round(params.spikes)
+    const len = m * (0.22 + 0.55 * params.burst) * flicker
+    ctx.save()
+    ctx.translate(lx, ly)
+    ctx.globalCompositeOperation = 'lighter'
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + i * 0.0
+      const long = i % 2 === 0 ? 1 : 0.5 // alternating long/short rays
+      const ll = len * long * (0.7 + 0.6 * Math.abs(Math.sin(i * 1.3 + t)))
+      const g = ctx.createLinearGradient(0, 0, Math.cos(a) * ll, Math.sin(a) * ll)
+      g.addColorStop(0, `rgba(255,240,210,${0.5 * I * params.burst})`)
+      g.addColorStop(0.5, `rgba(255,210,170,${0.12 * I * params.burst})`)
+      g.addColorStop(1, 'rgba(255,200,160,0)')
+      ctx.strokeStyle = g
+      ctx.lineWidth = Math.max(1, m * 0.004 * long)
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.lineTo(Math.cos(a) * ll, Math.sin(a) * ll)
+      ctx.stroke()
+    }
+    ctx.restore()
+    ctx.globalCompositeOperation = 'source-over'
+  }
   if (params.chroma > 0.01) {
     glow(lx - m * 0.01, ly, m * 0.2, '255,80,60', 0.12 * I * params.chroma)
     glow(lx + m * 0.01, ly, m * 0.23, '80,120,255', 0.12 * I * params.chroma)

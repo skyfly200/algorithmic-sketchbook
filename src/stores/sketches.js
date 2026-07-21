@@ -40,7 +40,9 @@ export const useSketchStore = defineStore('sketches', {
     },
 
     filtered(state) {
-      const q = state.search.trim().toLowerCase()
+      // `clearable` on the search field sets the model to null — coerce so an
+      // empty/cleared search shows every sketch instead of throwing.
+      const q = (state.search ?? '').trim().toLowerCase()
       return state.sketches.filter((s) => {
         if (state.typeFilter !== 'all' && s.type !== state.typeFilter) return false
         // Union: a project shows if it matches ANY selected theme, so combining

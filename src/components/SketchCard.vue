@@ -38,6 +38,20 @@ function posterKey(slug) {
   return `sketchbook-poster-${slug}`
 }
 
+// A near-black frame means the sketch hasn't drawn yet — sample a grid and
+// treat it as blank if almost every pixel is black.
+function frameIsBlank(ctx) {
+  const { data } = ctx.getImageData(0, 0, POSTER_W, POSTER_H)
+  let lit = 0
+  const step = 40 * 4 // sample sparsely
+  let total = 0
+  for (let i = 0; i < data.length; i += step) {
+    total++
+    if (data[i] > 12 || data[i + 1] > 12 || data[i + 2] > 12) lit++
+  }
+  return lit / total < 0.02
+}
+
 // Capture posters two at a time so a fresh visit doesn't boot every sketch
 // at once — each card takes a turn, runs ~2s hidden, gets snapshotted.
 let capturing = 0
@@ -75,19 +89,30 @@ async function capturePoster() {
       frame.addEventListener('load', resolve, { once: true })
       setTimeout(resolve, 4000)
     })
-    await new Promise((r) => setTimeout(r, 2200)) // let the sketch settle in
-    const canvas = frame.contentDocument?.querySelector('canvas')
-    if (canvas && canvas.width > 0) {
+    // Retry until the sketch has actually drawn something — a black frame
+    // means it hasn't rendered yet (or a WebGL buffer wasn't ready), so we
+    // wait rather than caching a black square. If it never lights up we bail
+    // and leave the card on its fallback gradient.
+    let url = null
+    for (let attempt = 0; attempt < 4 && !url; attempt++) {
+      await new Promise((r) => setTimeout(r, attempt === 0 ? 2200 : 1200))
+      const canvas = frame.contentDocument?.querySelector('canvas')
+      if (!canvas || !canvas.width) continue
       const out = document.createElement('canvas')
       out.width = POSTER_W
       out.height = POSTER_H
       const ctx = out.getContext('2d')
-      // cover-fit the sketch canvas into the poster
       const s = Math.max(POSTER_W / canvas.width, POSTER_H / canvas.height)
       const dw = canvas.width * s
       const dh = canvas.height * s
-      ctx.drawImage(canvas, (POSTER_W - dw) / 2, (POSTER_H - dh) / 2, dw, dh)
-      const url = out.toDataURL('image/jpeg', 0.72)
+      try {
+        ctx.drawImage(canvas, (POSTER_W - dw) / 2, (POSTER_H - dh) / 2, dw, dh)
+      } catch {
+        continue
+      }
+      if (!frameIsBlank(ctx)) url = out.toDataURL('image/jpeg', 0.72)
+    }
+    if (url) {
       poster.value = url
       try {
         sessionStorage.setItem(posterKey(props.sketch.slug), url)
