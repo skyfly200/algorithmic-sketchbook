@@ -26,7 +26,12 @@ let blobs = []
 function resize() {
   W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
   H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  FW = fc.width = Math.max(80, W >> 3); FH = fc.height = Math.max(120, H >> 3)
+  // Higher-res metaball field — capped so retina/4K doesn't explode the
+  // per-pixel × per-blob loop, but far crisper than the old 1/8 grid.
+  const cap = 560
+  const s = Math.min(1, cap / Math.max(W, H))
+  FW = fc.width = Math.max(120, Math.round(W * s))
+  FH = fc.height = Math.max(180, Math.round(H * s))
   init()
 }
 function init() {
@@ -85,12 +90,15 @@ function frame(now) {
         f += (b.rr * b.rr) / (dx * dx + dy * dy + 0.0004)
       }
       const i = (y * FW + x) * 4
-      if (f > 1.3) {
-        // inside wax: shade by field strength for a rounded look
+      // Anti-aliased threshold: a soft coverage ramp across the boundary
+      // reads as a smooth high-res edge even at a modest field size, instead
+      // of the old hard pixelated cutoff.
+      if (f > 1.05) {
+        const cov = Math.min(1, (f - 1.05) * 3.0) // 0 at rim → 1 inside
         const lit = Math.min(1, (f - 1.3) * 0.25)
         const hue = (waxHue + lit * 20) % 360
-        const rgb = hslRgb(hue / 360, 0.9, 0.4 + lit * 0.35)
-        d[i] = rgb[0]; d[i + 1] = rgb[1]; d[i + 2] = rgb[2]; d[i + 3] = 255
+        const rgb = hslRgb(hue / 360, 0.9, 0.36 + lit * 0.38)
+        d[i] = rgb[0]; d[i + 1] = rgb[1]; d[i + 2] = rgb[2]; d[i + 3] = Math.round(cov * 255)
       } else {
         d[i + 3] = 0
       }

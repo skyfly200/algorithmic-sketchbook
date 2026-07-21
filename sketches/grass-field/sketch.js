@@ -38,7 +38,10 @@ function build() {
       len: (40 + depth * 130) * rt.pixelRatio * params.height * rt.random(0.7, 1.2),
       w: (1.5 + depth * 4) * rt.pixelRatio,
       lean: rt.random(-0.2, 0.2), phase: rt.random(0, Math.PI * 2),
-      hue: params.hue + rt.random(-15, 20), light: 25 + depth * 30 + rt.random(-6, 8),
+      hue: params.hue + rt.random(-18, 22), sat: 45 + rt.random(-8, 18),
+      light: 22 + depth * 26 + rt.random(-6, 8),
+      curl: rt.random(0.15, 0.5), // how much the blade arcs over toward its tip
+      flip: rt.rng() < 0.5 ? 1 : -1, // which side the highlight sits on
       flower: rt.rng() < 0.04 ? { h: rt.random(0, 360), s: rt.random(3, 6) * rt.pixelRatio } : null,
     })
   }
@@ -62,7 +65,7 @@ function frame(now) {
   g.addColorStop(1, `hsl(${params.hue + 10}, 55%, 12%)`)
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
 
-  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
   for (const b of blades) {
     // travelling wind wave across x + per-blade gust noise
     const wave = Math.sin(b.x * 0.006 - t * 2 * params.wind) * params.wind
@@ -73,19 +76,42 @@ function frame(now) {
     const near = Math.max(0, 1 - Math.abs(dx) / (120 * rt.pixelRatio)) * Math.max(0, 1 - Math.abs(b.y - py_) / (200 * rt.pixelRatio))
     bend += Math.sign(dx || 1) * near * 0.9
 
-    const tipX = b.x + bend * b.len
-    const tipY = b.y - b.len
-    const ctrlX = b.x + bend * b.len * 0.5
-    const ctrlY = b.y - b.len * 0.55
-    ctx.strokeStyle = `hsl(${b.hue}, 55%, ${b.light}%)`
-    ctx.lineWidth = b.w
+    // A blade is a tapered leaf: two edges from a wide base to a fine tip,
+    // arcing over via the curl. The spine curves, the width shrinks to 0.
+    const off = bend * b.len // horizontal tip displacement
+    const tipX = b.x + off
+    const tipY = b.y - b.len + Math.abs(off) * b.curl * 0.35 // arcing tips droop
+    const cx = b.x + off * 0.45
+    const cy = b.y - b.len * (0.55 - b.curl * 0.15)
+    const hw = b.w * 0.6 // half-width at the base
+    // outline: up the left edge (spine offset -hw) to the tip, back down the right
+    const nx = -(cy - b.y), ny = (cx - b.x) // base normal (perp to spine start)
+    const nl = Math.hypot(nx, ny) || 1
+    const ox = (nx / nl) * hw, oy = (ny / nl) * hw
+    const lit = Math.min(60, b.light + (bend * b.flip > 0 ? 20 : 2)) // wind-facing edge catches light
+    const grad = ctx.createLinearGradient(b.x, b.y, tipX, tipY)
+    grad.addColorStop(0, `hsl(${b.hue + 8}, ${b.sat}%, ${Math.max(8, b.light - 12)}%)`) // shaded base
+    grad.addColorStop(0.6, `hsl(${b.hue}, ${b.sat}%, ${b.light}%)`)
+    grad.addColorStop(1, `hsl(${b.hue - 8}, ${b.sat + 10}%, ${lit}%)`) // brighter, yellower tip
+    ctx.fillStyle = grad
     ctx.beginPath()
-    ctx.moveTo(b.x, b.y)
-    ctx.quadraticCurveTo(ctrlX, ctrlY, tipX, tipY)
-    ctx.stroke()
-    if (b.flower) {
+    ctx.moveTo(b.x - ox, b.y - oy)
+    ctx.quadraticCurveTo(cx - ox * 0.5, cy, tipX, tipY)
+    ctx.quadraticCurveTo(cx + ox * 0.5, cy, b.x + ox, b.y + oy)
+    ctx.closePath()
+    ctx.fill()
+    // a thin bright rim on the lit edge for a blade-of-grass sheen
+    if (bend * b.flip > 0.05) {
+      ctx.strokeStyle = `hsla(${b.hue - 12}, 70%, ${lit + 12}%, 0.5)`
+      ctx.lineWidth = Math.max(0.5, hw * 0.4)
+      ctx.beginPath()
+      ctx.moveTo(b.x - ox, b.y - oy)
+      ctx.quadraticCurveTo(cx - ox * 0.5, cy, tipX, tipY)
+      ctx.stroke()
+    }
+    if (b.flower && params.flowers > 0.05) {
       ctx.fillStyle = `hsl(${b.flower.h}, 80%, 70%)`
-      ctx.beginPath(); ctx.arc(tipX, tipY, b.flower.s * (params.flowers > 0.05 ? 1 : 0), 0, Math.PI * 2); ctx.fill()
+      ctx.beginPath(); ctx.arc(tipX, tipY, b.flower.s, 0, Math.PI * 2); ctx.fill()
     }
   }
   requestAnimationFrame(frame)
