@@ -1,0 +1,15 @@
+{
+  "title": "Crystallization",
+  "description": "Supercooled liquid freezing into crystals — seeds nucleate and grow dendritic arms on a lattice, branching like frost on a window until the pane glazes over, then thaws and re-nucleates. Click drops a seed.",
+  "tags": [
+    "generative",
+    "simulation",
+    "ice",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

@@ -24,7 +24,7 @@ const store = useSketchStore()
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
   'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
-  'fog', 'mist', 'glow', 'strobe', 'color-filter', 'crt',
+  'fog', 'mist', 'glow', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization',
 ]
 const BLENDS = [
   'screen', 'lighten', 'overlay', 'soft-light', 'hard-light',
