@@ -1,0 +1,15 @@
+{
+  "title": "Blowing Bubbles",
+  "description": "Iridescent soap bubbles drift up on warm thermals — deformable wobbling rings with thin-film rainbow sheen and specular highlights, riding rising swirling air and popping into puffs. Click blows a cluster; beats release a burst.",
+  "tags": [
+    "generative",
+    "bubbles",
+    "iridescent",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}

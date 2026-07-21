@@ -1,0 +1,15 @@
+{
+  "title": "Grass Field",
+  "description": "A meadow of thousands of blades bending in the wind — each a tapered Bézier sway driven by a travelling wind field so gusts roll across as visible waves, with depth haze, wildflowers and a warm sky. The pointer parts the grass.",
+  "tags": [
+    "generative",
+    "nature",
+    "wind",
+    "audio-reactive",
+    "interactive"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-07-21"
+}
