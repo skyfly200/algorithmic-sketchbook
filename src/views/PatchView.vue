@@ -1338,8 +1338,19 @@ function resizeStage() {
   // Native resolution tracks the window, so re-resolve it when the window changes.
   if (RESOLUTIONS.find((r) => r.label === resLabel.value)?.native) applyResolution(resLabel.value)
 }
+// Toggle rather than enter-only: mobile has no Esc key, so an enter-only
+// button strands the user in fullscreen with no way back.
+const isFullscreen = ref(false)
+function fsElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null
+}
 function fullscreen() {
-  board.value?.parentElement?.requestFullscreen?.()
+  const el = board.value?.parentElement
+  if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)
+  else (el?.requestFullscreen || el?.webkitRequestFullscreen)?.call(el)
+}
+function onFsChange() {
+  isFullscreen.value = !!fsElement()
 }
 
 // --- pop-out output: a separate window for a second display -----------------
@@ -1478,6 +1489,8 @@ function deleteRouting(r) {
 }
 
 onMounted(async () => {
+  document.addEventListener('fullscreenchange', onFsChange)
+  document.addEventListener('webkitfullscreenchange', onFsChange)
   // Deep link from the Library: ?load=<id> opens a saved routing.
   const loadId = new URLSearchParams(location.hash.split('?')[1] || '').get('load')
   if (loadId) {
@@ -1526,6 +1539,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('message', onEffectMessage)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('pointermove', trackMouse)
+  document.removeEventListener('fullscreenchange', onFsChange)
+  document.removeEventListener('webkitfullscreenchange', onFsChange)
   beat.stop()
   if (popup && !popup.closed) popup.close()
   stopSharedCamera()
@@ -1696,14 +1711,14 @@ onBeforeUnmount(() => {
       />
       <v-btn icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
-      <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
+      <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
       </div>
     </div>
 
     <!-- output-only: floating controls to exit / go fullscreen -->
     <div v-if="outputOnly" class="output-ctrls">
       <v-btn icon="mdi-tune-variant" size="small" variant="flat" title="Show routing" @click="outputOnly = false" />
-      <v-btn icon="mdi-fullscreen" size="small" variant="flat" title="Fullscreen" @click="fullscreen" />
+      <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" size="small" variant="flat" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
     </div>
 
     <!-- node board -->

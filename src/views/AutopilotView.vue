@@ -574,8 +574,23 @@ function loop(now) {
   raf = requestAnimationFrame(loop)
 }
 
+// Toggle, not just enter — on mobile there's no Esc key, so a button that
+// only calls requestFullscreen leaves no way out. Track state and swap the
+// icon; support the WebKit-prefixed API (older iOS/Safari) too.
+const isFullscreen = ref(false)
+function fsElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null
+}
 function fullscreen() {
-  document.querySelector('.autopilot')?.requestFullscreen?.()
+  const el = document.querySelector('.autopilot')
+  if (fsElement()) {
+    ;(document.exitFullscreen || document.webkitExitFullscreen)?.call(document)
+  } else {
+    ;(el?.requestFullscreen || el?.webkitRequestFullscreen)?.call(el)
+  }
+}
+function onFsChange() {
+  isFullscreen.value = !!fsElement()
 }
 
 onMounted(() => {
@@ -588,11 +603,15 @@ onMounted(() => {
   snapshot()
   dwellLeft = dwell.value
   window.addEventListener('message', onMessage)
+  document.addEventListener('fullscreenchange', onFsChange)
+  document.addEventListener('webkitfullscreenchange', onFsChange)
   raf = requestAnimationFrame(loop)
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
   window.removeEventListener('message', onMessage)
+  document.removeEventListener('fullscreenchange', onFsChange)
+  document.removeEventListener('webkitfullscreenchange', onFsChange)
   beat.stop()
 })
 </script>
@@ -672,7 +691,7 @@ onBeforeUnmount(() => {
       />
       <span class="fps" :class="{ low: fps < fpsFloor }">{{ fps }} fps</span>
       <span class="countdown">{{ playing ? dwellShown + 's' : 'paused' }}</span>
-      <v-btn icon="mdi-fullscreen" variant="text" size="small" @click="fullscreen" />
+      <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit full screen' : 'Full screen'" @click="fullscreen" />
     </div>
 
     <!-- per-layer params + mappings drawer -->
@@ -744,6 +763,9 @@ onBeforeUnmount(() => {
   opacity: 0.35; transition: opacity 0.25s;
 }
 .bar:hover { opacity: 1; }
+/* Touch devices never fire :hover, so keep the transport (and its exit-full-
+   screen button) visible — otherwise there's no discoverable way back out. */
+@media (hover: none) { .bar { opacity: 1; } }
 .fps { margin-left: auto; font: 12px ui-monospace, monospace; color: #8f8; }
 .fps.low { color: #f88; }
 .countdown { font: 12px ui-monospace, monospace; color: #9aa4c0; min-width: 48px; text-align: right; }
