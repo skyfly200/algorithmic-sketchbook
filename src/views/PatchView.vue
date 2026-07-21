@@ -180,6 +180,7 @@ function applySnap(s) {
   nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
   edges.splice(0, edges.length, ...data.edges)
   links.splice(0, links.length, ...(data.links ?? []))
+  pruneOrphans()
   nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
   const ids = new Set(nodes.map((n) => n.id))
   for (const id of [...rtState.keys()]) if (!ids.has(id)) rtState.delete(id)
@@ -243,12 +244,36 @@ function addNode(type) {
 function removeNode(id) {
   const i = nodes.findIndex((n) => n.id === id)
   if (i >= 0) nodes.splice(i, 1)
-  for (let k = edges.length - 1; k >= 0; k--)
-    if (edges[k].from === id || edges[k].to === id) edges.splice(k, 1)
-  for (let k = links.length - 1; k >= 0; k--)
-    if (links[k].from === id || links[k].node === id) links.splice(k, 1)
+  pruneOrphans()
   rtState.delete(id)
   persist()
+}
+
+// Drop any edge/link whose endpoints (or ports) no longer exist — a routing
+// loaded after a node was deleted, or a control link whose source port
+// disappeared when the node's type changed, would otherwise leave a wire
+// pointing at nothing. Returns true if anything was removed.
+function pruneOrphans() {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  let changed = false
+  for (let k = edges.length - 1; k >= 0; k--) {
+    const e = edges[k]
+    const to = byId.get(e.to)
+    if (!byId.has(e.from) || !to || e.port >= (TYPES[to.type]?.ins ?? 0)) {
+      edges.splice(k, 1)
+      changed = true
+    }
+  }
+  for (let k = links.length - 1; k >= 0; k--) {
+    const l = links[k]
+    const from = byId.get(l.from)
+    const tgt = byId.get(l.node)
+    if (!from || !tgt || (l.srcPort ?? 0) >= outCount(from)) {
+      links.splice(k, 1)
+      changed = true
+    }
+  }
+  return changed
 }
 
 // --- randomize: deal out a whole new patch -------------------------------
@@ -1222,6 +1247,7 @@ function loadRouting(r) {
   nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
   edges.splice(0, edges.length, ...data.edges)
   links.splice(0, links.length, ...(data.links ?? []))
+  pruneOrphans()
   nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
   // Keep runtime state (canvases, bound iframes/video) for node ids that
   // survive the swap — Vue won't re-mount same-keyed iframes, so clearing
@@ -1446,7 +1472,7 @@ onBeforeUnmount(() => {
         />
         <path
           v-if="wire.active"
-          :d="wirePath(outPort(nodes.find((n) => n.id === wire.from)), { x: wire.x, y: wire.y })"
+          :d="wirePath(outPortAt(nodes.find((n) => n.id === wire.from), wire.fromPort), { x: wire.x, y: wire.y })"
           :stroke="wire.kind === 'control' ? '#e0a060' : '#fff'"
           fill="none"
           stroke-width="2"
