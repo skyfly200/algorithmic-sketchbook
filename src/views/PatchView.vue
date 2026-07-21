@@ -89,6 +89,7 @@ const TYPES = {
   effect: { title: 'Effect', ins: 0, color: '#7c8cff' },
   filter: { title: 'Filter', ins: 1, color: '#c98cff' },
   media: { title: 'Media', ins: 0, color: '#4dd0c4' }, // camera / files / clips
+  text: { title: 'Text', ins: 0, color: '#ff9ec4' },
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
   output: { title: 'Output', ins: 1, color: '#ffffff' },
@@ -110,7 +111,11 @@ const OUT_LABELS = { xy: ['x', 'y'], tracker: ['x', 'y', 'size'] }
 // (effect params come from the sketch's own schema over postMessage).
 const PARAM_RANGES = {
   blend: { mix: [0, 1] },
+  // Text's numeric font/layout controls are all control-mappable (drag an
+  // Input/XY/Tracker output onto their ▣ jacks to animate the type).
+  text: { size: [0.03, 0.6], weight: [100, 900], tracking: [-0.1, 0.5], x: [0, 1], y: [0, 1], hue: [0, 360], rotate: [-180, 180] },
 }
+const TEXT_FONTS = ['sans-serif', 'serif', 'monospace', 'system-ui', 'cursive']
 const BLENDS = [
   'screen', 'add', 'lighten', 'darken', 'multiply', 'overlay', 'soft-light',
   'hard-light', 'color-dodge', 'color-burn', 'difference', 'exclusion',
@@ -241,7 +246,9 @@ function addNode(type) {
                   ? { thresh: 0.5, smooth: 0.7 }
                   : type === 'media'
                     ? { mode: 'camera', mediaId: null }
-                    : {},
+                    : type === 'text'
+                      ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, rotate: 0, italic: false, glow: 0.4, bg: false }
+                      : {},
   })
   nodes.push(n)
   st(n.id) // create runtime state
@@ -1071,6 +1078,33 @@ function evalNode(node) {
       else if (el.tagName === 'IMG' && el.naturalWidth) cover(octx, el, el.naturalWidth, el.naturalHeight)
       else if (el.tagName === 'CANVAS') cover(octx, el, el.width, el.height)
     }
+  } else if (node.type === 'text') {
+    const p = node.params
+    if (p.bg) { octx.fillStyle = '#000'; octx.fillRect(0, 0, W, H) }
+    else octx.clearRect(0, 0, W, H)
+    const px = Math.max(4, p.size * H)
+    octx.save()
+    octx.translate(p.x * W, p.y * H)
+    octx.rotate(((p.rotate ?? 0) * Math.PI) / 180)
+    octx.font = `${p.italic ? 'italic ' : ''}${Math.round(p.weight)} ${px}px ${p.font || 'sans-serif'}`
+    octx.textAlign = 'center'
+    octx.textBaseline = 'middle'
+    octx.fillStyle = `hsl(${p.hue}, 90%, 62%)`
+    // letter-spacing (tracking) — draw glyph by glyph
+    const track = (p.tracking ?? 0) * px
+    const str = String(p.text ?? '')
+    let total = 0
+    for (const ch of str) total += octx.measureText(ch).width + track
+    total -= track
+    let cx = -total / 2
+    if (p.glow > 0.01) { octx.shadowColor = `hsl(${p.hue}, 100%, 60%)`; octx.shadowBlur = px * 0.4 * p.glow }
+    for (const ch of str) {
+      const w = octx.measureText(ch).width
+      octx.fillText(ch, cx + w / 2, 0)
+      cx += w + track
+    }
+    octx.restore()
+    octx.shadowBlur = 0
   } else if (node.type === 'mask') {
     const content = inputCanvas(node, 0)
     const mask = inputCanvas(node, 1)
@@ -1486,6 +1520,7 @@ onBeforeUnmount(() => {
             <v-list-item prepend-icon="mdi-target" title="Tracker (video tracking)" @click="addNode('tracker')" />
           </v-list>
         </v-menu>
+        <v-btn icon="mdi-format-text" variant="tonal" size="small" title="Add Text (mappable font)" :style="{ color: TYPES.text.color }" @click="addNode('text')" />
         <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
         <v-spacer />
         <v-btn icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
@@ -1833,6 +1868,22 @@ onBeforeUnmount(() => {
             </label>
             <div v-if="n.params.mode === 'camera' && !cameraOn" class="media-hint">Camera is off — enable it with the webcam button in the toolbar.</div>
           </template>
+          <template v-if="n.type === 'text'">
+            <input class="text-in" type="text" :value="n.params.text" placeholder="type…" @input="n.params.text = $event.target.value; persist()" @pointerdown.stop />
+            <label>font
+              <select v-model="n.params.font" @change="persist" @pointerdown.stop>
+                <option v-for="f in TEXT_FONTS" :key="f" :value="f">{{ f }}</option>
+              </select>
+            </label>
+            <label v-for="pk in ['size', 'weight', 'tracking', 'x', 'y', 'hue', 'rotate']" :key="pk">
+              <span class="pjack" :ref="(el) => bindJack(n.id, pk, el)" :data-jack-node="n.id" :data-jack-param="pk" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, pk)" />
+              {{ pk }}
+              <input type="range" :min="PARAM_RANGES.text[pk][0]" :max="PARAM_RANGES.text[pk][1]" :step="(PARAM_RANGES.text[pk][1] - PARAM_RANGES.text[pk][0]) / 100" :value="n.params[pk]" @input="n.params[pk] = +$event.target.value; persist()" @pointerdown.stop />
+            </label>
+            <label class="chk"><input type="checkbox" v-model="n.params.italic" @change="persist" @pointerdown.stop /> italic</label>
+            <label class="chk"><input type="checkbox" v-model="n.params.bg" @change="persist" @pointerdown.stop /> black background</label>
+            <label>glow <input type="range" min="0" max="1.5" step="0.05" v-model.number="n.params.glow" @change="persist" @pointerdown.stop /></label>
+          </template>
         </div>
       </div>
       </div>
@@ -1915,6 +1966,10 @@ onBeforeUnmount(() => {
 }
 .load-btn:hover { background: #1a1d28; }
 .media-hint { font: 10px system-ui, sans-serif; color: #9aa4c0; opacity: 0.8; }
+.text-in {
+  width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #333;
+  border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif;
+}
 .node-thumb { width: 100%; background: #000; }
 .node-thumb :deep(canvas) { width: 100%; height: 100%; display: block; }
 .node-body { padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; }
