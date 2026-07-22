@@ -35,7 +35,9 @@ function frame(now) {
   ctx.fillStyle = '#08060c'; ctx.fillRect(0, 0, W, H)
   const cx = W / 2, cy = H / 2
   const n = Math.round(params.seeds * grow)
-  const c = Math.min(W, H) * 0.012 * params.spacing
+  // scale seed spacing so the outermost seed reaches the screen corner → the
+  // phyllotaxis fills the whole viewport regardless of seed count / aspect
+  const c = params.spacing * 0.55 * Math.hypot(W, H) / Math.sqrt(params.seeds)
   const ang = (params.angle * Math.PI) / 180
   const spin = t * params.spin
   const pulse = rt.beat.state.pulse

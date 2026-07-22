@@ -86,7 +86,7 @@ function drawBubble(b, t, lx, ly) {
     const hue = ((rf * 360 * params.film + drift * 90) % 360 + 360) % 360
     // fade in from the core, peak near the rim (thin film), soft at the very edge
     const edge = Math.sin(rf * Math.PI) * (0.4 + rf * 0.6)
-    g.addColorStop(rf, hsl(hue, 85, 64, 0.18 * params.iridescence * edge))
+    g.addColorStop(rf, hsl(hue, 60, 62, 0.09 * params.iridescence * edge))
   }
   ctx.fillStyle = g
   ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill()
@@ -94,17 +94,17 @@ function drawBubble(b, t, lx, ly) {
   // 3) primary specular glare — a hot spot where the light hits the sphere,
   //    positioned by the (orbiting) light direction so it slides as light moves
   const sx = -lx * R * 0.5, sy = -ly * R * 0.5
-  const spec = ctx.createRadialGradient(sx, sy, 0, sx, sy, R * 0.42)
-  spec.addColorStop(0, 'rgba(255,255,255,0.95)')
-  spec.addColorStop(0.4, 'rgba(255,255,255,0.35)')
+  const spec = ctx.createRadialGradient(sx, sy, 0, sx, sy, R * 0.38)
+  spec.addColorStop(0, 'rgba(255,255,255,0.55)')
+  spec.addColorStop(0.35, 'rgba(255,255,255,0.13)')
   spec.addColorStop(1, 'rgba(255,255,255,0)')
   ctx.fillStyle = spec
-  ctx.beginPath(); ctx.arc(sx, sy, R * 0.42, 0, Math.PI * 2); ctx.fill()
+  ctx.beginPath(); ctx.arc(sx, sy, R * 0.38, 0, Math.PI * 2); ctx.fill()
 
   // 4) a soft reflected "window" glare, offset from the specular
   const wx = lx * R * 0.4, wy = ly * R * 0.4
   const win = ctx.createRadialGradient(wx, wy, 0, wx, wy, R * 0.3)
-  win.addColorStop(0, 'rgba(180,220,255,0.35)')
+  win.addColorStop(0, 'rgba(180,220,255,0.2)')
   win.addColorStop(1, 'rgba(180,220,255,0)')
   ctx.fillStyle = win
   ctx.beginPath(); ctx.arc(wx, wy, R * 0.3, 0, Math.PI * 2); ctx.fill()
@@ -112,8 +112,8 @@ function drawBubble(b, t, lx, ly) {
   ctx.restore() // remove clip
   // 5) crisp Fresnel rim stroke on top
   ctx.globalCompositeOperation = 'lighter'
-  ctx.lineWidth = Math.max(1, R * 0.02)
-  ctx.strokeStyle = 'rgba(200,230,255,0.5)'
+  ctx.lineWidth = Math.max(1, R * 0.018)
+  ctx.strokeStyle = 'rgba(200,230,255,0.34)'
   ctx.beginPath(); ctx.arc(0, 0, R * 0.99, 0, Math.PI * 2); ctx.stroke()
   ctx.restore()
 }

@@ -168,7 +168,7 @@ function frame(now) {
   // sun / moon: travel a low arc across the sky. Angle from phase; the sun is
   // up ~0.25..0.75, the moon opposite.
   const bodyArc = (ph, warm) => {
-    const a = (ph - 0.25) * Math.PI // 0 at dawn(left) → π at dusk(right)
+    const a = (ph - 0.25) * 2 * Math.PI // 0 at dawn(left) → π/2 noon → π at dusk(right); <0 or >π = night
     const x = 0.5 * W + Math.cos(Math.PI - a) * 0.42 * W
     const y = H * 0.72 - Math.sin(a) * H * 0.58
     if (Math.sin(a) < -0.05) return // below horizon
