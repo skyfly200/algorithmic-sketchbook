@@ -37,7 +37,10 @@ function buildCoals() {
         const rr = step * 0.5 * rt.random(0.7, 1.05)
         verts.push([Math.cos(a) * rr, Math.sin(a) * rr])
       }
-      coals.push({ x: cx, y: cy, verts, base: rt.random(0.3, 1), phase: rt.random(0, 6.28), rate: rt.random(0.3, 1.1) })
+      // a few baked ash flecks per coal, for a crusty ashen surface texture
+      const flecks = []
+      for (let k = 0; k < 5; k++) flecks.push([rt.random(-step * 0.3, step * 0.3), rt.random(-step * 0.3, step * 0.3), rt.random(1, 2.5) * PR])
+      coals.push({ x: cx, y: cy, verts, flecks, base: rt.random(0.3, 1), phase: rt.random(0, 6.28), rate: rt.random(0.3, 1.1) })
     }
   }
 }
@@ -73,24 +76,36 @@ function frame(now) {
   const fanNear = performance.now() - ptr.t < 1200
   const crackScale = 1 - params.cracks * 0.35 // crust shrink → wider cracks
 
-  // 1) molten glow beneath: a hot radial per coal, additive
+  // 0) a dim, deep-red ambient bed so the whole heap reads as hot embers, not
+  //    isolated dots — brightest toward the centre where a real bed pools heat.
   ctx.globalCompositeOperation = 'lighter'
+  const bed = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.6)
+  bed.addColorStop(0, `hsla(${hue + 2}, 100%, ${18 + gust * 6}%, 0.5)`)
+  bed.addColorStop(1, 'hsla(6, 100%, 8%, 0)')
+  ctx.fillStyle = bed
+  ctx.fillRect(0, 0, W, H)
+
+  // 1) molten glow beneath: a hot radial per coal, additive. A slow directional
+  //    "breath" of air sweeps a brighter band across the bed, as when you blow
+  //    on coals; the hottest cores go white-hot.
   for (const c of coals) {
-    // breathing temperature + shared airflow + a pointer fan + beat gust
-    let h = c.base * (0.55 + 0.45 * Math.sin(t * c.rate + c.phase))
-    h *= 1 + params.airflow * 0.5 * Math.sin(t * 0.7 + c.x * 0.003)
+    const breath = 0.72 + 0.28 * Math.sin(t * 0.8 * (0.5 + params.airflow) - c.x * 0.004 - c.y * 0.0025)
+    let h = c.base * (0.55 + 0.45 * Math.sin(t * c.rate + c.phase)) * breath
+    h *= 1 + params.airflow * 0.4 * Math.sin(t * 0.7 + c.x * 0.003)
     h += gust * 0.5
     if (fanNear) {
       const d = Math.hypot(c.x - ptr.x, c.y - ptr.y)
       h += Math.max(0, 1 - d / (160 * PR)) * (0.6 + params.airflow)
     }
-    h = Math.max(0, Math.min(1.4, h * params.heat))
+    h = Math.max(0, Math.min(1.5, h * params.heat))
     c.h = h
-    const r = 40 * PR * params.coalSize
+    const r = 42 * PR * params.coalSize
     const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r)
-    const light = 30 + h * 35
-    g.addColorStop(0, `hsla(${hue + h * 20}, 100%, ${light}%, ${Math.min(1, h)})`)
-    g.addColorStop(1, 'hsla(10, 100%, 20%, 0)')
+    const hot = Math.max(0, h - 0.95) // white-hot excess
+    // core: white-hot when very hot, else saturated orange; edge deep red
+    g.addColorStop(0, `hsla(${hue + h * 22}, ${100 - hot * 120}%, ${Math.min(94, 34 + h * 34 + hot * 40)}%, ${Math.min(1, h)})`)
+    g.addColorStop(0.45, `hsla(${hue + h * 10}, 100%, ${28 + h * 22}%, ${Math.min(0.8, h * 0.7)})`)
+    g.addColorStop(1, 'hsla(8, 100%, 16%, 0)')
     ctx.fillStyle = g
     ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.fill()
   }
@@ -99,6 +114,7 @@ function frame(now) {
   ctx.globalCompositeOperation = 'source-over'
   for (const c of coals) {
     const h = c.h ?? 0
+    const cool = 1 - Math.min(1, h) // cool coals go ashen grey
     ctx.save()
     ctx.translate(c.x, c.y)
     ctx.beginPath()
@@ -108,13 +124,22 @@ function frame(now) {
       if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py)
     }
     ctx.closePath()
-    // crust: near-black, warming faintly with its own heat
+    ctx.save(); ctx.clip()
+    // crust: hot coals are dark char; cool ones grey over with ash
     const dk = 1 - params.crust
-    ctx.fillStyle = `hsl(${hue}, 40%, ${Math.round((4 + h * 10) * (0.4 + dk))}%)`
+    const light = Math.round((3 + h * 8 + cool * cool * 16 * params.crust) * (0.5 + dk))
+    const sat = Math.round(35 - cool * 28)
+    ctx.fillStyle = `hsl(${hue - cool * 20}, ${sat}%, ${light}%)`
     ctx.fill()
+    // ash flecks on the cooler crust
+    if (cool > 0.2) {
+      ctx.fillStyle = `hsla(30, 8%, ${60 * cool}%, ${0.35 * cool})`
+      for (const [fx, fy, fr] of c.flecks) { ctx.beginPath(); ctx.arc(fx * crackScale, fy * crackScale, fr, 0, 6.28); ctx.fill() }
+    }
+    ctx.restore()
     // hot rim where the crust meets the cracks
     ctx.lineWidth = 1.5 * PR
-    ctx.strokeStyle = `hsla(${hue + 8}, 100%, ${45 + h * 25}%, ${Math.min(0.9, h)})`
+    ctx.strokeStyle = `hsla(${hue + 8}, 100%, ${Math.min(75, 45 + h * 30)}%, ${Math.min(0.95, h)})`
     ctx.stroke()
     ctx.restore()
   }

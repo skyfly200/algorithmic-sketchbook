@@ -19,7 +19,7 @@ const params = rt.params({
   wiggle: { value: 0.18, min: 0, max: 1, step: 0.02, label: 'Wander (chaos)' },
   deposit: { value: 1, min: 0.2, max: 2, step: 0.05, label: 'Trail deposit' },
   decay: { value: 0.09, min: 0.02, max: 0.3, step: 0.005, label: 'Evaporation' },
-  hue: { value: +rt.random(0.1, 0.35).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
+  hue: { value: 0.25, min: 0, max: 1, step: 0.01, label: 'Hue' },
 })
 // Music: beats surge the crawl, loudness thickens the trails.
 rt.mapInput('audio.pulse', 'speed', 0.5)
@@ -144,14 +144,27 @@ function hsl(h, s, l) {
   const f = (n) => Math.round((l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))) * 255)
   return [f(0), f(8), f(4)]
 }
+// The neutral petri-dish grey the plasmodium grows on, so the reticulated veins
+// read as a translucent chartreuse net over the dish (as in real Physarum).
+const DISH = [76, 80, 78]
 function render() {
-  const h = params.hue * 360
+  // hue centred on chartreuse-green (~82°), user-tunable across yellow→green
+  const hDeg = 60 + params.hue * 90
   const d = img.data
   for (let i = 0; i < W * H; i++) {
-    const v = Math.min(1, trail[i] * 0.5)
+    const v = Math.min(1, trail[i] * 0.6)
     const j = i * 4
-    const c = hsl(h, 0.8, Math.min(0.95, 0.03 + v * v * 0.8 + Math.pow(v, 6) * 0.4))
-    d[j] = c[0]; d[j + 1] = c[1]; d[j + 2] = c[2]; d[j + 3] = 255
+    if (v < 0.008) { d[j] = DISH[0]; d[j + 1] = DISH[1]; d[j + 2] = DISH[2]; d[j + 3] = 255; continue }
+    // translucent plasmodium: faint at the fine veins, brightening and paling
+    // to a creamy chartreuse at the dense advancing fan.
+    const a = Math.min(1, 0.25 + v * 1.5)
+    const light = Math.min(0.9, 0.32 + v * v * 0.4 + Math.pow(v, 5) * 0.35)
+    const sat = 0.72 - v * 0.35
+    const [r, g, b] = hsl(hDeg, sat, light)
+    d[j] = Math.round(DISH[0] * (1 - a) + r * a)
+    d[j + 1] = Math.round(DISH[1] * (1 - a) + g * a)
+    d[j + 2] = Math.round(DISH[2] * (1 - a) + b * a)
+    d[j + 3] = 255
   }
   sctx.putImageData(img, 0, 0)
   ctx.imageSmoothingEnabled = true
