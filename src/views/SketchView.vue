@@ -274,7 +274,7 @@ onUnmounted(() => {
       {{ sketch.description }}
     </p>
 
-    <div class="d-flex ga-3 flex-grow-1" style="min-height: 0">
+    <div class="viewer-body d-flex ga-3 flex-grow-1" style="min-height: 0">
       <div v-if="sketch.embed && sketch.url" class="frame-wrap">
         <iframe
           ref="frame"
@@ -530,6 +530,12 @@ onUnmounted(() => {
   width: 320px;
   flex-shrink: 0;
   overflow-y: auto;
+}
+/* On phones, stack the controls below the sketch and let them run full-width
+   with a capped height, instead of squeezing a 320px column beside the frame. */
+@media (max-width: 720px) {
+  .viewer-body { flex-direction: column; }
+  .controls-panel { width: 100%; max-height: 45vh; }
 }
 .param {
   margin-bottom: 10px;

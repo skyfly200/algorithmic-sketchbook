@@ -119,4 +119,10 @@ function sketchTitle(slug) {
   font-size: 0.98rem;
   margin: 0;
 }
+@media (max-width: 600px) {
+  .hero { gap: 14px; }
+  .hero-logo { width: 72px !important; height: 72px !important; }
+  .hero-title { font-size: 1.9rem; }
+  .hero-tagline { font-size: 0.9rem; }
+}
 </style>
