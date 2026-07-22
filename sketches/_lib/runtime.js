@@ -499,6 +499,13 @@ export function createRuntime() {
       // own mic button. Pulse stays locally-driven via trigger()+decay.
       Object.assign(beat.state, msg.state)
       if (msg.beat) beat.trigger(msg.energy ?? 1)
+    } else if (msg.type === 'sketch:announce') {
+      // A host that missed the one-shot sketch:ready (it can race the host's
+      // iframe bookkeeping) asks us to say it again with the current state.
+      window.parent?.postMessage(
+        { type: 'sketch:ready', schema, values: { ...base }, mappings: [...mappings], defaultMappings: [...defaultMappings] },
+        '*',
+      )
     } else if (msg.type === 'sketch:action') {
       actions[msg.name]?.()
     } else if (msg.type === 'sketch:pause') {

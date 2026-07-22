@@ -80,10 +80,14 @@ const playing = ref(true)
 // The rendered view stays clean: every control lives inside one panel opened
 // from a single, unobtrusive corner button — nothing else overlays the visuals.
 const panelOpen = ref(false)
+// Collapsible drawer sections (persisted so the drawer opens how you left it).
+const sections = reactive(savedSet.sections ?? { mix: true, settings: true, effects: false, layers: true })
+function toggleSection(k) { sections[k] = !sections[k]; persistSettings() }
 function persistSettings() {
   localStorage.setItem(SET_KEY, JSON.stringify({
     dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value, perfBudget: perfBudget.value,
     resolution: resolution.value, evolveMode: evolveMode.value, showNotes: showNotes.value,
+    sections: { ...sections },
   }))
 }
 function toggleEffect(slug) {
@@ -575,6 +579,12 @@ function settleWarming(now) {
         retire(stack.find((x) => x.id === l.replaces))
         l.replaces = null
       }
+      // Guarantee the panel gets this layer's controls: if its one-shot
+      // sketch:ready raced our bookkeeping (no entry yet), ask it to re-announce.
+      const win = el?.contentWindow
+      if (win && !layerControls.some((c) => c.win === win)) {
+        try { win.postMessage({ type: 'sketch:announce' }, '*') } catch {}
+      }
     }
   }
 }
@@ -709,7 +719,8 @@ function feedFilters() {
 }
 
 // --- per-layer params + mappings (same protocol as the viewer) -------------
-const layerControls = reactive([]) // [{ win, title, schema, values, mappings, open }]
+const layerControls = reactive([]) // [{ id, win, title, schema, values, mappings, open }]
+let controlSeq = 1
 const INPUT_GROUPS = computed(() => {
   const groups = { audio: [], midi: [], mouse: [], touch: [], tilt: [], time: [], leap: [], artnet: [] }
   for (const s of INPUT_SOURCES) {
@@ -744,17 +755,25 @@ function onMessage(e) {
   if (e.data?.type !== 'sketch:ready') return
   readyWins.add(e.source)
   const title = titleForWindow(e.source)
-  if (!title) return
+  if (!title) {
+    // sketch:ready fires at iframe boot and can race our ref bookkeeping —
+    // if we can't resolve which layer this window belongs to yet, ask the
+    // sketch to announce again shortly instead of dropping its controls.
+    setTimeout(() => { try { e.source?.postMessage({ type: 'sketch:announce' }, '*') } catch {} }, 400)
+    return
+  }
   const slug = slugForWindow(e.source)
   const cached = slug ? paramCache[slug] : null
+  const existing = layerControls.find((c) => c.win === e.source)
   const entry = {
+    id: existing?.id ?? controlSeq++, // stable key so mid-edit re-renders don't reset inputs
     win: e.source,
     slug,
     title,
     schema: e.data.schema ?? {},
     values: { ...e.data.values, ...(cached?.values ?? {}) },
     mappings: (cached?.mappings ?? e.data.mappings ?? []).map((m) => ({ ...m })),
-    open: layerControls.length === 0,
+    open: existing?.open ?? layerControls.length === 0,
   }
   // Re-apply any options you'd set for this slug before (across back/forward
   // and rerolls) so the effect keeps its look instead of resetting.
@@ -935,7 +954,7 @@ onBeforeUnmount(() => {
 
     <transition name="card-fade">
       <div v-if="note" class="change-card">
-        <span class="change-label">now playing</span>
+        <span class="change-label">now</span>
         <span class="change-text">{{ note }}</span>
       </div>
     </transition>
@@ -990,56 +1009,74 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="panel-scroll" data-tour="ap-settings">
-          <!-- current mix: lock layers, or target one to swap next (with a
-               preview of the incoming sketch's name) -->
-          <div class="panel-sub" style="margin-top:0;border-top:0;padding-top:0">Current mix</div>
-          <div v-if="plannedTitle" class="planned">next → {{ plannedTitle }}</div>
-          <div class="mix-list">
-            <div v-for="l in liveLayers()" :key="l.id" class="mix-item" :class="{ locked: l.locked, planned: plannedNext?.targetId === l.id }">
-              <span class="mix-kind" :title="l.kind">{{ l.kind === 'filter' ? '⧉' : '◆' }}</span>
-              <span class="mix-name">{{ titleOf(l.slug) }}</span>
-              <button class="mix-btn" :title="l.locked ? 'Unlock' : 'Lock — keep this layer'" @click="toggleLock(l)">{{ l.locked ? '🔒' : '🔓' }}</button>
-              <button class="mix-btn" :disabled="l.locked" title="Swap this layer next (preview)" @click="planSwap(l)">⇄</button>
+          <!-- ── Current mix ──────────────────────────────────────────────── -->
+          <button class="drawer-head" @click="toggleSection('mix')">
+            <span>Current mix</span><span>{{ sections.mix ? '▾' : '▸' }}</span>
+          </button>
+          <div v-show="sections.mix" class="drawer-body">
+            <div v-if="plannedTitle" class="planned">next → {{ plannedTitle }}</div>
+            <div class="mix-list">
+              <div v-for="l in liveLayers()" :key="l.id" class="mix-item" :class="{ locked: l.locked, planned: plannedNext?.targetId === l.id }">
+                <span class="mix-kind" :title="l.kind">{{ l.kind === 'filter' ? '⧉' : '◆' }}</span>
+                <span class="mix-name">{{ titleOf(l.slug) }}</span>
+                <button class="mix-btn" :title="l.locked ? 'Unlock' : 'Lock — keep this layer'" @click="toggleLock(l)">{{ l.locked ? '🔒' : '🔓' }}</button>
+                <button class="mix-btn" :disabled="l.locked" title="Swap this layer next (preview)" @click="planSwap(l)">⇄</button>
+              </div>
+              <div v-if="!liveLayers().length" class="waiting">building the mix…</div>
             </div>
-            <div v-if="!liveLayers().length" class="waiting">building the mix…</div>
           </div>
 
-          <!-- settings -->
-          <div class="set-row">Evolution mode</div>
-          <select class="mode-select" :value="evolveMode" @change="evolveMode = $event.target.value; persistSettings()">
-            <option v-for="m in EVOLVE_MODES" :key="m" :value="m">{{ m }}</option>
-          </select>
-          <p class="set-sub mb-2">{{ MODE_BLURB[evolveMode] }}</p>
-          <div class="set-row">Seconds between changes: {{ dwell }}s</div>
-          <v-slider v-model="dwell" density="compact" hide-details :min="6" :max="120" :step="1" @end="persistSettings" />
-          <div class="set-row">Perf budget: {{ perfBudget }} (bigger = richer mixes)</div>
-          <v-slider v-model="perfBudget" density="compact" hide-details :min="4" :max="24" :step="1" @end="persistSettings" />
-          <div class="set-row">Resolution</div>
-          <v-btn-toggle v-model="resolution" density="compact" mandatory divided class="mt-1 mb-4 res-toggle" @update:model-value="persistSettings">
-            <v-btn value="low" size="x-small">Low</v-btn>
-            <v-btn value="medium" size="x-small">Med</v-btn>
-            <v-btn value="high" size="x-small">High</v-btn>
-            <v-btn value="native" size="x-small">Native</v-btn>
-          </v-btn-toggle>
-          <v-checkbox v-model="showNotes" density="compact" hide-details label="Show change title-card" @change="persistSettings" />
-          <v-checkbox v-model="lowSkip" density="compact" hide-details label="Auto-thin the mix on low FPS" @change="persistSettings" />
-          <div v-if="lowSkip" class="set-row">FPS floor: {{ fpsFloor }}</div>
-          <v-slider v-if="lowSkip" v-model="fpsFloor" density="compact" hide-details :min="10" :max="50" :step="1" @end="persistSettings" />
-          <div class="set-row d-flex justify-space-between align-center">
-            <span>Effects in rotation <span class="set-sub">(shared with Settings)</span></span>
-            <button class="mini-clear" @click="settings.enableAllEffects()">all</button>
-          </div>
-          <div class="eff-list">
-            <label v-for="s in allEffects" :key="s.slug" class="eff-item">
-              <input type="checkbox" :checked="settings.isEffectEnabled(s.slug)" @change="toggleEffect(s.slug)" />
-              {{ s.title }}
-            </label>
+          <!-- ── Settings ─────────────────────────────────────────────────── -->
+          <button class="drawer-head" @click="toggleSection('settings')">
+            <span>Settings</span><span>{{ sections.settings ? '▾' : '▸' }}</span>
+          </button>
+          <div v-show="sections.settings" class="drawer-body">
+            <div class="set-row">Evolution mode</div>
+            <select class="mode-select" :value="evolveMode" @change="evolveMode = $event.target.value; persistSettings()">
+              <option v-for="m in EVOLVE_MODES" :key="m" :value="m">{{ m }}</option>
+            </select>
+            <p class="set-sub mb-2">{{ MODE_BLURB[evolveMode] }}</p>
+            <div class="set-row">Seconds between changes: {{ dwell }}s</div>
+            <v-slider v-model="dwell" density="compact" hide-details :min="6" :max="120" :step="1" @end="persistSettings" />
+            <div class="set-row">Perf budget: {{ perfBudget }} (bigger = richer mixes)</div>
+            <v-slider v-model="perfBudget" density="compact" hide-details :min="4" :max="24" :step="1" @end="persistSettings" />
+            <div class="set-row">Resolution</div>
+            <v-btn-toggle v-model="resolution" density="compact" mandatory divided class="mt-1 mb-4 res-toggle" @update:model-value="persistSettings">
+              <v-btn value="low" size="x-small">Low</v-btn>
+              <v-btn value="medium" size="x-small">Med</v-btn>
+              <v-btn value="high" size="x-small">High</v-btn>
+              <v-btn value="native" size="x-small">Native</v-btn>
+            </v-btn-toggle>
+            <v-checkbox v-model="showNotes" density="compact" hide-details label="Show change title-card" @change="persistSettings" />
+            <v-checkbox v-model="lowSkip" density="compact" hide-details label="Auto-thin the mix on low FPS" @change="persistSettings" />
+            <div v-if="lowSkip" class="set-row">FPS floor: {{ fpsFloor }}</div>
+            <v-slider v-if="lowSkip" v-model="fpsFloor" density="compact" hide-details :min="10" :max="50" :step="1" @end="persistSettings" />
           </div>
 
-          <!-- per-layer params + mappings -->
-          <div class="panel-sub">Layer params &amp; mappings</div>
+          <!-- ── Effects in rotation ──────────────────────────────────────── -->
+          <button class="drawer-head" @click="toggleSection('effects')">
+            <span>Effects in rotation</span><span>{{ sections.effects ? '▾' : '▸' }}</span>
+          </button>
+          <div v-show="sections.effects" class="drawer-body">
+            <div class="set-row d-flex justify-space-between align-center">
+              <span class="set-sub">shared with Settings</span>
+              <button class="mini-clear" @click="settings.enableAllEffects()">all</button>
+            </div>
+            <div class="eff-list">
+              <label v-for="s in allEffects" :key="s.slug" class="eff-item">
+                <input type="checkbox" :checked="settings.isEffectEnabled(s.slug)" @change="toggleEffect(s.slug)" />
+                {{ s.title }}
+              </label>
+            </div>
+          </div>
+
+          <!-- ── Layer params & mappings ──────────────────────────────────── -->
+          <button class="drawer-head" @click="toggleSection('layers')">
+            <span>Layer params &amp; mappings</span><span>{{ sections.layers ? '▾' : '▸' }}</span>
+          </button>
+          <div v-show="sections.layers" class="drawer-body">
           <template v-if="layerControls.length">
-            <div v-for="c in layerControls" :key="c.title + layerControls.indexOf(c)" class="layer-sec">
+            <div v-for="c in layerControls" :key="c.id" class="layer-sec">
               <button class="sec-head" @click="c.open = !c.open">
                 <span>{{ c.title }}</span><span>{{ c.open ? '▾' : '▸' }}</span>
               </button>
@@ -1082,6 +1119,7 @@ onBeforeUnmount(() => {
             </div>
           </template>
           <div v-else class="waiting">waiting for the mix…</div>
+          </div>
         </div>
       </div>
     </transition>
@@ -1144,6 +1182,15 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 .panel-scroll { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+/* Collapsible drawer sections. */
+.drawer-head {
+  display: flex; align-items: center; justify-content: space-between; width: 100%;
+  padding: 7px 10px; margin-top: 2px; border: 0; cursor: pointer;
+  background: rgba(255,255,255,0.06); border-radius: 8px;
+  font: 700 11px system-ui, sans-serif; color: #e8ecf5; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.drawer-head:hover { background: rgba(255,255,255,0.1); }
+.drawer-body { display: flex; flex-direction: column; gap: 6px; padding: 6px 2px 4px; }
 .panel-sub {
   margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08);
   font: 600 11px system-ui, sans-serif; color: #9aa4c0; text-transform: uppercase; letter-spacing: 0.04em;
