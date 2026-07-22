@@ -7,10 +7,13 @@ import { useSceneStore } from '../stores/scenes'
 
 // Single source of truth for mapping sources (audio/mouse/tilt/midi/leap/artnet).
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
+import { recordFps } from '../registry/localPerf'
 
 const props = defineProps({
   slug: { type: String, required: true },
 })
+
+let fpsReadings = 0 // skip warm-up readings before trusting the frame rate
 
 const route = useRoute()
 const store = useSketchStore()
@@ -49,6 +52,14 @@ function post(msg) {
 
 function onMessage(e) {
   if (e.source !== frame.value?.contentWindow) return
+  // Record the real frame rate on this device so the gallery gauge grades the
+  // sketch by how it actually runs here. Skip the first couple of readings
+  // (boot/warm-up) and only while playing at a real quality.
+  if (e.data?.type === 'sketch:fps') {
+    fpsReadings++
+    if (fpsReadings > 2 && !paused.value) recordFps(props.slug, e.data.fps)
+    return
+  }
   if (e.data?.type !== 'sketch:ready') return
   controls.value = {
     schema: e.data.schema ?? {},

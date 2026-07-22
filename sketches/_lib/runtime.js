@@ -214,6 +214,20 @@ export function createRuntime() {
   // Preview mode (gallery thumbnail iframes): no overlay chrome, no mic button.
   const preview = urlParams.get('preview') === '1'
   const fpsTick = !preview && urlParams.get('fps') === '1' ? mountFpsMeter() : null
+  // Always report a measured frame rate to the parent window (the viewer) so it
+  // can grade each sketch's performance on THIS device, rather than relying on
+  // a score measured elsewhere. Cheap: a counter + one postMessage per second.
+  let fpsFrames = 0, fpsWinStart = 0
+  function reportFps(now) {
+    if (!fpsWinStart) fpsWinStart = now
+    fpsFrames++
+    if (now - fpsWinStart >= 1000) {
+      const fps = Math.round((fpsFrames * 1000) / (now - fpsWinStart))
+      try { window.parent?.postMessage({ type: 'sketch:fps', fps }, '*') } catch {}
+      fpsFrames = 0
+      fpsWinStart = now
+    }
+  }
 
   // Seeded RNG (mulberry32): a sketch that derives its look from rt.rng() gets
   // a fresh variation per ?seed= (the viewer's 🎲 button re-seeds), while the
@@ -549,6 +563,7 @@ export function createRuntime() {
 
     tick(now = performance.now()) {
       fpsTick?.(now)
+      reportFps(now)
       beat.update(now)
       motion.shake *= 0.9 // shake decays like beat.pulse
       applyModulation(now)

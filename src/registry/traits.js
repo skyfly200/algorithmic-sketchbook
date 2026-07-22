@@ -4,6 +4,7 @@
 // element and energy are inferred from each sketch's slug + tags + title with
 // keyword scoring, so we don't have to hand-annotate ~90 sketch.json files.
 // A per-slug OVERRIDES map fixes any the heuristic gets wrong.
+import { effectivePerf } from './localPerf'
 
 export const ELEMENTS = [
   { key: 'fire', label: 'Fire', emoji: '🔥' },
@@ -15,9 +16,12 @@ export const ENERGIES = [
   { key: 'calm', label: 'Calm', emoji: '🍃' },
   { key: 'energetic', label: 'Energetic', emoji: '⚡' },
 ]
+// Performance tiers by how much a sketch costs to run (measured on-device when
+// available). "Light" is cheap/fast, "Heavy" is expensive/slow.
 export const SPEEDS = [
-  { key: 'fast', label: 'Fast' },
-  { key: 'slow', label: 'Slow' },
+  { key: 'light', label: 'Light' },
+  { key: 'medium', label: 'Med' },
+  { key: 'heavy', label: 'Heavy' },
 ]
 
 const ELEMENT_KEYS = {
@@ -57,23 +61,27 @@ function scoreKeys(hay, map) {
   return best
 }
 
+// Element/energy don't change; cache them. Speed is computed fresh each call so
+// it reflects any on-device measurement recorded since.
 const cache = new Map()
 export function traitsOf(sketch) {
-  if (cache.has(sketch.slug)) return cache.get(sketch.slug)
-  const ov = OVERRIDES[sketch.slug] ?? {}
-  const hay = haystack(sketch)
-  const element = ov.element ?? scoreKeys(hay, ELEMENT_KEYS)
-  let energy = ov.energy ?? scoreKeys(hay, ENERGY_KEYS)
-  if (!energy) energy = (sketch.tags ?? []).includes('audio-reactive') ? 'energetic' : 'calm'
-  const t = { element, energy, speed: speedTier(sketch.perf) }
-  cache.set(sketch.slug, t)
-  return t
+  let ee = cache.get(sketch.slug)
+  if (!ee) {
+    const ov = OVERRIDES[sketch.slug] ?? {}
+    const hay = haystack(sketch)
+    const element = ov.element ?? scoreKeys(hay, ELEMENT_KEYS)
+    let energy = ov.energy ?? scoreKeys(hay, ENERGY_KEYS)
+    if (!energy) energy = (sketch.tags ?? []).includes('audio-reactive') ? 'energetic' : 'calm'
+    ee = { element, energy }
+    cache.set(sketch.slug, ee)
+  }
+  return { ...ee, speed: speedTier(effectivePerf(sketch)) }
 }
 
-// Three-level speed tier from the perf score, with fast/slow for filtering.
+// Three-level performance tier from a 0-100 score: light / medium / heavy.
 export function speedTier(perf) {
   if (perf == null) return null
-  return perf >= 55 ? 'fast' : 'slow'
+  return perf >= 70 ? 'light' : perf >= 40 ? 'medium' : 'heavy'
 }
 
 export function elementMeta(key) { return ELEMENTS.find((e) => e.key === key) }

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { traitsOf, elementMeta, energyMeta } from '../registry/traits'
+import { effectivePerf } from '../registry/localPerf'
 
 const props = defineProps({
   sketch: { type: Object, required: true },
@@ -10,6 +11,8 @@ const props = defineProps({
 const traits = computed(() => traitsOf(props.sketch))
 const element = computed(() => elementMeta(traits.value.element))
 const energy = computed(() => energyMeta(traits.value.energy))
+// The perf score to show: the on-device measurement if we have one.
+const perfScore = computed(() => effectivePerf(props.sketch))
 
 // Deterministic gradient per slug — the last-resort fallback when a sketch
 // can't be previewed live and has no thumbnail.
@@ -191,17 +194,17 @@ onBeforeUnmount(() => {
         {{ sketch.type === 'local' ? 'embedded' : 'external repo' }}
       </v-chip>
       <div
-        v-if="sketch.perf"
+        v-if="perfScore"
         class="perf-bubble"
-        :class="`perf-${sketch.perf >= 70 ? 'green' : sketch.perf >= 40 ? 'yellow' : 'red'}`"
-        :title="`Performance ${sketch.perf}/100 — measured frame rate vs a 60fps target (npm run perf). ${traits.speed === 'fast' ? 'Fast' : 'Slow'}.`"
+        :class="`perf-${perfScore >= 70 ? 'green' : perfScore >= 40 ? 'yellow' : 'red'}`"
+        :title="`Performance ${perfScore}/100 vs a 60fps target — ${traits.speed} load${effectivePerf(sketch) !== sketch.perf ? ' (measured on this device)' : ''}.`"
       >
         <span class="perf-bars" aria-hidden="true">
-          <i :class="{ on: sketch.perf >= 20 }" />
-          <i :class="{ on: sketch.perf >= 45 }" />
-          <i :class="{ on: sketch.perf >= 70 }" />
+          <i :class="{ on: perfScore >= 20 }" />
+          <i :class="{ on: perfScore >= 45 }" />
+          <i :class="{ on: perfScore >= 70 }" />
         </span>
-        {{ sketch.perf }}
+        {{ perfScore }}
       </div>
 
       <!-- vibe badges: element + energy -->

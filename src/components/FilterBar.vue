@@ -68,7 +68,7 @@ const store = useSketchStore()
         {{ en.emoji }} {{ en.label }}
       </v-chip>
 
-      <span class="trait-label ml-3">Speed</span>
+      <span class="trait-label ml-3">Performance</span>
       <v-chip
         v-for="sp in SPEEDS"
         :key="sp.key"
@@ -78,7 +78,7 @@ const store = useSketchStore()
         :color="store.selectedSpeed.includes(sp.key) ? 'primary' : undefined"
         @click="store.toggleTrait('selectedSpeed', sp.key)"
       >
-        <v-icon :icon="sp.key === 'fast' ? 'mdi-speedometer' : 'mdi-speedometer-slow'" size="14" class="mr-1" />
+        <v-icon :icon="sp.key === 'light' ? 'mdi-speedometer' : sp.key === 'medium' ? 'mdi-speedometer-medium' : 'mdi-speedometer-slow'" size="14" class="mr-1" />
         {{ sp.label }}
       </v-chip>
     </div>
