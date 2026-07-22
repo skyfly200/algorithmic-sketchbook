@@ -100,6 +100,36 @@ function makeBee() {
     wob: rt.random(0, 6.28),
     pause: 0, // remaining pause time at a cell
     turn: 0,
+    dance: null, // set to a waggle-dance state object while dancing
+  }
+}
+// Start a rare waggle dance: the bee runs a straight "waggle run" in a chosen
+// direction, then loops back in a semicircle, alternating sides each circuit —
+// the honeybee figure-eight that communicates a direction to nestmates.
+function startDance(b) {
+  b.dance = { dir: rt.random(0, 6.28), phase: 0, side: rt.rng() < 0.5 ? 1 : -1, circuits: 0, max: 3 + (rt.rng() * 5 | 0), cx: b.x, cy: b.y }
+}
+function updateDance(b, dt) {
+  const d = b.dance
+  d.phase += dt / (1.9 / Math.max(0.4, params.speed))
+  if (d.phase >= 1) { d.phase -= 1; d.side *= -1; d.circuits++; if (d.circuits >= d.max) { b.dance = null; b.pause = rt.random(0.3, 1); return } }
+  const U0 = Math.cos(d.dir), U1 = Math.sin(d.dir)
+  const runLen = hexR * 3.2, runFrac = 0.5
+  if (d.phase < runFrac) {
+    const pr = d.phase / runFrac
+    const along = pr * runLen
+    const wag = Math.sin(pr * Math.PI * 2 * 5) * hexR * 0.3 // side-to-side waggle
+    b.x = d.cx + U0 * along - U1 * d.side * wag
+    b.y = d.cy + U1 * along + U0 * d.side * wag
+    b.a = d.dir + Math.sin(pr * Math.PI * 2 * 5) * 0.6
+  } else {
+    const ar = (d.phase - runFrac) / (1 - runFrac)
+    const mx = d.cx + U0 * runLen * 0.5, my = d.cy + U1 * runLen * 0.5
+    const rad = runLen * 0.5, start = Math.atan2(U1, U0)
+    const ang = start + d.side * Math.PI * ar
+    b.x = mx + Math.cos(ang) * rad
+    b.y = my + Math.sin(ang) * rad
+    b.a = ang + d.side * Math.PI / 2
   }
 }
 function buildBees() { beeList = Array.from({ length: wantBees() }, makeBee) }
@@ -169,7 +199,13 @@ function frame(now) {
   ctx.drawImage(comb, 0, 0)
 
   const near = performance.now() - ptr.t < 1500
+  const dancers = beeList.filter((b) => b.dance)
   for (const b of beeList) {
+    if (b.dance) {
+      updateDance(b, dt)
+      drawBee(b, t)
+      continue
+    }
     if (b.pause > 0) {
       b.pause -= dt
       // shiver in place
@@ -185,11 +221,23 @@ function frame(now) {
         d = Math.atan2(Math.sin(d), Math.cos(d))
         b.a += d * 0.04
       }
-      const v = (18 + bustle * 40) * params.speed * PR
+      // nestmates gather around a dancer to read the waggle, and slow down
+      let watch = 1
+      if (dancers.length) {
+        let nd = 1e9, near2 = null
+        for (const dz of dancers) { const dd = Math.hypot(dz.x - b.x, dz.y - b.y); if (dd < nd) { nd = dd; near2 = dz } }
+        if (near2 && nd < 140 * PR) {
+          const desired = Math.atan2(near2.y - b.y, near2.x - b.x)
+          let d = desired - b.a; d = Math.atan2(Math.sin(d), Math.cos(d)); b.a += d * 0.05
+          watch = nd < 55 * PR ? 0.25 : 0.7
+        }
+      }
+      const v = (18 + bustle * 40) * params.speed * PR * watch
       b.x += Math.cos(b.a) * v * dt
       b.y += Math.sin(b.a) * v * dt
-      // occasionally pause at a cell
+      // occasionally pause at a cell, and rarely break into a waggle dance
       if (rt.rng() < 0.004) b.pause = rt.random(0.4, 1.6)
+      else if (dancers.length < 2 && rt.rng() < 0.0006) startDance(b)
       // wrap
       if (b.x < -20) b.x = W + 20; else if (b.x > W + 20) b.x = -20
       if (b.y < -20) b.y = H + 20; else if (b.y > H + 20) b.y = -20
