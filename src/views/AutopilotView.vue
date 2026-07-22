@@ -509,19 +509,39 @@ function reroll() {
 // Replace a whole branch: retire every unlocked layer (effects + the filter it
 // caps) at once and grow a fresh sub-mix in their place — a bigger, more
 // dramatic change than nudging one layer, but still keeping any locked layers.
+// Common branch "blocks" Autopilot builds a fresh sub-mix from — structural
+// templates of how many effect layers stack and whether a filter caps them.
+const BRANCH_BLOCKS = [
+  { name: 'single', effects: 1, filter: false },
+  { name: 'blended pair', effects: 2, filter: false },
+  { name: 'filtered effect', effects: 1, filter: true },
+  { name: 'filtered pair', effects: 2, filter: true },
+  { name: 'trio', effects: 3, filter: false },
+  { name: 'filtered trio', effects: 3, filter: true },
+]
 function opSwapBranch() {
   const un = liveLayers().filter((l) => !l.locked)
   if (un.length < 2) return false
   for (const l of un) retire(l)
-  const keptCost = liveLayers().filter((l) => l.locked).reduce((a, l) => a + cost(l.slug), 0)
-  if (!liveLayers().some((l) => l.kind === 'effect' && l.locked)) {
-    const base = pickSketch(effectPool.value, perfBudget.value - keptCost)
-    if (base) insertLayer(makeLayer(base.slug, 'effect', 'normal', 1))
+  const lockedEffect = liveLayers().some((l) => l.kind === 'effect' && l.locked)
+  const lockedFilter = liveLayers().some((l) => l.kind === 'filter')
+  // pick a routing block that fits the layer ceiling + perf budget
+  const maxE = maxLayersForMode()
+  const blocks = BRANCH_BLOCKS.filter((b) => b.effects <= maxE)
+  const blk = pick(blocks) ?? BRANCH_BLOCKS[0]
+  // grow the effects (unless a locked base already anchors the mix)
+  const startE = lockedEffect ? 1 : 0
+  for (let i = startE; i < blk.effects; i++) {
+    const budgetLeft = perfBudget.value - stackCost()
+    if (budgetLeft < 1) break
+    if (i === 0 && !lockedEffect) {
+      const base = pickSketch(effectPool.value, budgetLeft)
+      if (base) insertLayer(makeLayer(base.slug, 'effect', 'normal', 1))
+    } else if (!opAdd()) break
   }
-  if (chance(0.7)) opAdd()
-  if (!liveLayers().some((l) => l.kind === 'filter') && chance(0.5)) opAddFilter()
+  if (blk.filter && !lockedFilter) opAddFilter()
   settleUntil = performance.now() + 4000
-  say('new branch')
+  say(`new branch · ${blk.name}`)
   return true
 }
 

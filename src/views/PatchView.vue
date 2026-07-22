@@ -438,6 +438,42 @@ function randomPatch() {
   nextTick(() => layoutTick.value++)
 }
 
+// All nodes that feed (directly or transitively) into `id` via video edges.
+function ancestorsOf(id) {
+  const anc = new Set()
+  const stack = [id]
+  while (stack.length) {
+    const cur = stack.pop()
+    for (const e of edges) if (e.to === cur && !anc.has(e.from)) { anc.add(e.from); stack.push(e.from) }
+  }
+  return anc
+}
+// Replace the whole branch feeding a node: remove every (unlocked) node upstream
+// of it and grow a fresh random source into each of its now-empty input ports.
+function rerollUpstream(node) {
+  if (!node || TYPES[node.type].ins === 0) return
+  const anc = ancestorsOf(node.id)
+  const rm = new Set([...anc].filter((id) => !nodeById(id)?.locked))
+  for (let i = nodes.length - 1; i >= 0; i--) if (rm.has(nodes[i].id)) { rtState.delete(nodes[i].id); nodes.splice(i, 1) }
+  for (let i = edges.length - 1; i >= 0; i--) if (rm.has(edges[i].from) || rm.has(edges[i].to)) edges.splice(i, 1)
+  for (let i = links.length - 1; i >= 0; i--) if (rm.has(links[i].from) || rm.has(links[i].node)) links.splice(i, 1)
+  const pool = settings.filterToPool(effectOptions.value)
+  const ins = Math.max(1, TYPES[node.type].ins)
+  for (let port = 0; port < ins; port++) {
+    if (edges.some((e) => e.to === node.id && e.port === port)) continue // still fed by a locked branch
+    const eff = reactive({ id: nextId++, type: 'effect', x: node.x - 260, y: node.y + port * 170, params: { slug: pk(pool.length ? pool : effectOptions.value)?.slug ?? '' } })
+    nodes.push(eff); st(eff.id)
+    let src = eff
+    if (Math.random() < 0.4) {
+      const f = reactive({ id: nextId++, type: 'filter', x: node.x - 130, y: node.y + port * 170, params: { slug: pk(filterOptions.value)?.slug ?? '' } })
+      nodes.push(f); st(f.id); edges.push({ from: eff.id, to: f.id, port: 0 }); src = f
+    }
+    edges.push({ from: src.id, to: node.id, port })
+  }
+  persist()
+  nextTick(() => layoutTick.value++)
+}
+
 // --- rename ---
 const editingName = ref(null) // node id whose title is being edited
 function startRename(n) {
@@ -2028,6 +2064,52 @@ function deleteBlock(b) {
   const i = savedBlocks.value.findIndex((x) => x.id === b.id)
   if (i >= 0) { savedBlocks.value.splice(i, 1); persistBlocks() }
 }
+
+// --- built-in preset blocks: common routing patterns -----------------------
+// Structural templates (indices, not ids); slugs are filled from your enabled
+// effect/filter pools when stamped, so each preset comes out with real sketches.
+const CX = 230, RY = 170
+const PRESET_BLOCKS = [
+  { name: 'Blended pair',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'output', x: CX * 2, y: RY * 0.5 }],
+    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }] },
+  { name: 'Filtered effect',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'filter', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
+    edges: [{ from: 0, to: 1, port: 0 }, { from: 1, to: 2, port: 0 }] },
+  { name: 'Filtered pair',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'filter', x: CX * 2, y: RY * 0.5 }, { type: 'output', x: CX * 3, y: RY * 0.5 }],
+    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }, { from: 3, to: 4, port: 0 }] },
+  { name: 'Layered trio',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'effect', x: 0, y: RY * 2 }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'blend', x: CX * 2, y: RY }, { type: 'output', x: CX * 3, y: RY }],
+    edges: [{ from: 0, to: 3, port: 0 }, { from: 1, to: 3, port: 1 }, { from: 3, to: 4, port: 0 }, { from: 2, to: 4, port: 1 }, { from: 4, to: 5, port: 0 }] },
+  { name: 'Polygon-mapped',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'shape', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
+    edges: [{ from: 0, to: 1, port: 0 }, { from: 1, to: 2, port: 0 }] },
+  { name: 'Portal echo',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'portal', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
+    edges: [{ from: 0, to: 1, port: 0 }, { from: 1, to: 2, port: 0 }] },
+  { name: 'Audio-reactive blend',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'output', x: CX * 2, y: RY * 0.5 }, { type: 'input', x: 0, y: RY * 2, params: { source: 'audio.volume', scale: 1, offset: 0 } }],
+    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }],
+    links: [{ from: 4, srcPort: 0, node: 2, param: 'mix' }] },
+]
+const pk = (a) => a[Math.floor(Math.random() * a.length)]
+// Fill a structural template's effect/filter slugs from the current pools, then
+// stamp it into the graph like any block.
+function insertPreset(p) {
+  const pool = settings.filterToPool(effectOptions.value)
+  const bn = p.nodes.map((mn, i) => {
+    const params = { ...(mn.params || {}) }
+    if (mn.type === 'effect' && !params.slug) params.slug = pk(pool.length ? pool : effectOptions.value)?.slug ?? ''
+    if (mn.type === 'filter' && !params.slug) params.slug = pk(filterOptions.value)?.slug ?? ''
+    if (mn.type === 'blend' && !params.mode) { params.mode = pk(BLENDS); params.mix = +(0.5 + Math.random() * 0.5).toFixed(2) }
+    if (mn.type === 'portal' && !params.srcW) Object.assign(params, { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' })
+    if (mn.type === 'shape' && !params.points) Object.assign(params, { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0, invert: false })
+    return { id: i, type: mn.type, x: mn.x, y: mn.y, params, locked: mn.type === 'shape' }
+  })
+  insertBlock({ nodes: bn, edges: (p.edges || []).map((e) => ({ ...e })), links: (p.links || []).map((l) => ({ ...l })) })
+  showToast(`Added “${p.name}”`)
+}
 function startRenameBlock(b) { editBlockId.value = b.id; editBlockName.value = b.name }
 function commitRenameBlock() {
   const b = savedBlocks.value.find((x) => x.id === editBlockId.value)
@@ -2345,8 +2427,19 @@ onBeforeUnmount(() => {
             />
             <v-btn size="small" variant="tonal" :disabled="!selectedSet.size && selected == null" @click="saveBlock">Save</v-btn>
           </div>
-          <p class="text-caption text-medium-emphasis mb-1" style="font-size:11px">Click a block to stamp a copy into the graph.</p>
-          <v-list density="compact" max-height="300">
+          <p class="text-caption text-medium-emphasis mb-1" style="font-size:11px">Click a pattern or saved block to stamp it into the graph.</p>
+          <v-list density="compact" max-height="340">
+            <v-list-subheader>Common patterns</v-list-subheader>
+            <v-list-item
+              v-for="p in PRESET_BLOCKS"
+              :key="p.name"
+              @click="insertPreset(p)"
+            >
+              <template #prepend><v-icon icon="mdi-vector-polyline" size="16" class="mr-2" /></template>
+              <template #title><span>{{ p.name }} <span class="text-medium-emphasis" style="font-size:11px">· {{ p.nodes.length }}</span></span></template>
+            </v-list-item>
+            <v-divider class="my-1" />
+            <v-list-subheader>Your blocks</v-list-subheader>
             <v-list-item
               v-for="b in savedBlocks"
               :key="b.id"
@@ -2663,6 +2756,7 @@ onBeforeUnmount(() => {
           />
           <span v-else class="node-name" title="Double-click to rename">{{ nodeTitle(n) }}</span>
           <v-icon v-if="nodeSlow(n)" icon="mdi-alert" size="16" class="node-warn" :title="nodeSlowReason(n)" @pointerdown.stop />
+          <v-icon v-if="TYPES[n.type].ins > 0" icon="mdi-backup-restore" size="13" class="node-lock" title="Replace the whole branch feeding this node" @pointerdown.stop @click="rerollUpstream(n)" />
           <v-icon :icon="n.locked ? 'mdi-lock' : 'mdi-lock-open-variant-outline'" size="13" class="node-lock" :title="n.locked ? 'Locked — click to unlock' : 'Lock this node'" @pointerdown.stop @click="n.locked = !n.locked; persist()" />
           <v-icon v-if="!n.locked" icon="mdi-close" size="14" class="node-close" @pointerdown.stop @click="removeNode(n.id)" />
         </div>
