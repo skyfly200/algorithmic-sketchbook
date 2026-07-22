@@ -1,0 +1,7 @@
+{
+  "title": "Waterfall",
+  "description": "A live scrolling spectrogram off the microphone: each new row is the current FFT spectrum coloured by loudness, drifting across the screen so you read time as it flows. Scroll direction, log-frequency axis, resolution, gain, smoothing, mirror and palette are live. Click the mic to trace live audio — it idles on a synthetic spectrum until you do.",
+  "tags": ["audio", "fft", "spectrogram", "waterfall", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

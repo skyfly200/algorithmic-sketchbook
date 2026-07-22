@@ -54,7 +54,17 @@ const tourSteps = [
   {
     target: '[data-tour="help"]',
     title: 'That’s the tour',
-    body: 'Full details are in the Docs. Replay this walkthrough anytime from this ? button. Each studio view (Patch, Mixer, Autopilot) has its own quick tour too. Have fun.',
+    body: 'Full details are in the Docs. Replay this walkthrough anytime from this ? button. Each studio view (Patch, Mixer, Autopilot) has its own quick tour too. Handy keyboard shortcuts:',
+    shortcuts: [
+      { keys: 'Space', desc: 'Play / pause the current sketch' },
+      { keys: 'F', desc: 'Toggle fullscreen' },
+      { keys: '←  →', desc: 'Autopilot: previous / next scene' },
+      { keys: 'R', desc: 'Autopilot: reroll the whole show' },
+      { keys: 'S', desc: 'Autopilot: save the current look as a patch' },
+      { keys: 'M', desc: 'Autopilot: toggle the mic / audio reactivity' },
+      { keys: 'Ctrl+Z', desc: 'Patch: undo (Shift to redo)' },
+      { keys: 'Esc', desc: 'Close this tour / exit fullscreen' },
+    ],
   },
 ]
 

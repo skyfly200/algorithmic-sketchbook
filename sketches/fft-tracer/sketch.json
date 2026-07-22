@@ -1,7 +1,7 @@
 {
   "title": "FFT Tracer",
-  "description": "A live spectrum analyser and spectrogram off the microphone. The top traces the FFT magnitude spectrum as a glowing filled curve with falling peak-hold caps; the bottom is a scrolling waterfall spectrogram, each new row the current spectrum coloured by loudness and drifting down so you read time as it falls. Log-frequency axis, resolution, gain, smoothing, mirror, and hue are live. Click the mic to trace live audio — it idles on a synthetic spectrum until you do.",
-  "tags": ["audio", "fft", "spectrum", "spectrogram", "audio-reactive"],
+  "description": "A live spectrum analyser off the microphone. Trace the FFT magnitude spectrum as a glowing filled curve, or a classic bar-graph analyser, with falling peak-hold caps on top. Log-frequency axis, resolution, gain, smoothing, mirror and hue are live. Click the mic to trace live audio — it idles on a synthetic spectrum until you do. (The scrolling spectrogram is now its own Waterfall sketch.)",
+  "tags": ["audio", "fft", "spectrum", "bars", "audio-reactive"],
   "tech": [
     "canvas2d"
   ],

@@ -27,7 +27,7 @@ const settings = useSettingsStore()
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
   'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
-  'fog', 'mist', 'glow', 'nebula-gasses', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves',
+  'fog', 'mist', 'glow', 'nebula-gasses', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves', 'warp',
 ]
 const BLENDS = [
   'screen', 'lighten', 'overlay', 'soft-light', 'hard-light',
@@ -664,7 +664,7 @@ const tourSteps = [
   { title: 'Clean view', body: 'Close this panel (✕) for an unobstructed view — the corner button reopens it. Replay this tour anytime from the ? here.' },
 ]
 function startTour() { panelOpen.value = true; setTimeout(() => (tourActive.value = true), 80) }
-function finishTour() { settings.markSeen('autopilot') }
+function finishTour(payload) { settings.markSeen('autopilot'); if (payload?.disableAll) settings.setTutorials(false) }
 
 onMounted(() => {
   // opening mix: a base layer, usually a partner, maybe a filter — each

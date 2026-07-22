@@ -288,7 +288,7 @@ const tourSteps = [
   { title: 'Project it', body: 'Toggle the layers panel off and go fullscreen for a clean output. Replay this tour anytime from the ? button.' },
 ]
 function startTour() { showPanel.value = true; setTimeout(() => (tourActive.value = true), 80) }
-function finishTour() { settings.markSeen('mixer') }
+function finishTour(payload) { settings.markSeen('mixer'); if (payload?.disableAll) settings.setTutorials(false) }
 
 onMounted(() => {
   window.addEventListener('message', onMessage)

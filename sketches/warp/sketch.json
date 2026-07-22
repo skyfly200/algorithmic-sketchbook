@@ -1,0 +1,7 @@
+{
+  "title": "Warp",
+  "description": "A live warp filter: distort a camera feed, a dropped photo/video, the demo, or (in the Mixer/Patch/Autopilot) the layers below through animated displacement fields. Pick a pattern — Ripple, Swirl, Waves, Pinch, Bulge or Fisheye — and dial the amount, frequency and speed. Everything is live and mappable, so the music can pump the distortion.",
+  "tags": ["warp", "distortion", "filter", "ripple", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

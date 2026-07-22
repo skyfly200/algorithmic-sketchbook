@@ -1,9 +1,8 @@
 /**
- * FFT Tracer — a live spectrum analyser + spectrogram off the microphone. The
- * top half traces the FFT magnitude spectrum as a glowing filled curve with
- * falling peak-hold caps; the bottom half is a scrolling waterfall spectrogram,
- * each new row the current spectrum coloured by loudness, drifting downward so
- * you read time as it falls. Log-frequency axis by default.
+ * FFT Tracer — a live spectrum analyser off the microphone. Trace the FFT
+ * magnitude spectrum as a glowing filled curve, or a classic bar-graph
+ * analyser, with falling peak-hold caps on top. Log-frequency axis by default.
+ * (The scrolling spectrogram lives in its own "Waterfall" sketch now.)
  *
  * Click the 🎤 (bottom-right) to enable the mic. With no audio it idles on a
  * gentle synthetic spectrum so it never sits blank.
@@ -12,31 +11,26 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  bars: { value: 120, min: 24, max: 256, step: 1, label: 'Resolution' },
+  mode: { value: 'Bars', type: 'select', options: ['Bars', 'Curve'], label: 'Display' },
+  bars: { value: 96, min: 24, max: 256, step: 1, label: 'Resolution' },
   gain: { value: 1.3, min: 0.3, max: 4, step: 0.05, label: 'Gain' },
   smooth: { value: 0.55, min: 0, max: 0.95, step: 0.02, label: 'Smoothing' },
   log: { value: true, type: 'bool', label: 'Log frequency' },
   mirror: { value: false, type: 'bool', label: 'Mirror' },
+  peaks: { value: true, type: 'bool', label: 'Peak-hold caps' },
   hue: { value: +rt.random(0.5, 0.7).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
 })
 rt.onBeat(() => {}) // mounts the mic toggle; we read the spectrum directly
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
-const water = document.createElement('canvas')
-const wctx = water.getContext('2d')
 
-let W, H, splitY
+let W, H
 let mag = new Float32Array(256) // smoothed per-bar magnitude
 let peak = new Float32Array(256) // falling peak-hold
 function resize() {
   W = canvas.width = window.innerWidth * rt.pixelRatio
   H = canvas.height = window.innerHeight * rt.pixelRatio
-  splitY = Math.round(H * 0.52)
-  water.width = W
-  water.height = Math.max(1, H - splitY)
-  wctx.fillStyle = '#04060b'
-  wctx.fillRect(0, 0, water.width, water.height)
 }
 
 function hslArr(h, s, l) {
@@ -77,66 +71,70 @@ function sample(n, t) {
   }
 }
 
+// index into mag[]/peak[] for bar i honouring the mirror toggle
+function idx(i, n) {
+  const bi = params.mirror ? Math.abs((i / (n - 1)) * 2 - 1) : i / (n - 1)
+  return Math.min(n - 1, Math.round(bi * (n - 1)))
+}
+
 function render(t) {
   const n = Math.round(params.bars)
   sample(n, t)
   const [hr, hg, hb] = hslArr(params.hue, 0.85, 0.6)
 
-  // --- scroll the spectrogram down one row, paint the new spectrum on top.
-  wctx.drawImage(water, 0, 2)
-  const rowImg = wctx.createImageData(W, 2)
-  const rd = rowImg.data
-  for (let x = 0; x < W; x++) {
-    const fi = x / W
-    const bi = params.mirror ? Math.abs(fi * 2 - 1) : fi
-    const m = mag[Math.min(n - 1, (bi * n) | 0)]
-    const c = hslArr((params.hue + 0.55 - m * 0.55 + 1) % 1, 0.9, 0.12 + m * 0.5)
-    for (let r = 0; r < 2; r++) {
-      const o = (r * W + x) * 4
-      rd[o] = c[0]; rd[o + 1] = c[1]; rd[o + 2] = c[2]; rd[o + 3] = 255
+  // background with a soft vertical wash
+  const bg = ctx.createLinearGradient(0, 0, 0, H)
+  bg.addColorStop(0, '#05070d')
+  bg.addColorStop(1, '#020306')
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, W, H)
+
+  const baseY = H - 10 * rt.pixelRatio
+  const h0 = H - 40 * rt.pixelRatio
+  const bw = W / n
+
+  if (params.mode === 'Curve') {
+    ctx.beginPath()
+    ctx.moveTo(0, baseY)
+    for (let i = 0; i < n; i++) {
+      const m = mag[idx(i, n)]
+      ctx.lineTo(i * bw + bw / 2, baseY - m * h0)
+    }
+    ctx.lineTo(W, baseY)
+    ctx.closePath()
+    const grad = ctx.createLinearGradient(0, baseY - h0, 0, baseY)
+    grad.addColorStop(0, `rgba(${hr},${hg},${hb},0.95)`)
+    grad.addColorStop(1, `rgba(${hr},${hg},${hb},0.08)`)
+    ctx.fillStyle = grad
+    ctx.fill()
+    ctx.strokeStyle = `rgba(${Math.min(255, hr + 60)},${Math.min(255, hg + 60)},${Math.min(255, hb + 60)},0.9)`
+    ctx.lineWidth = 2 * rt.pixelRatio
+    ctx.stroke()
+  } else {
+    // Bars: each bin a vertical bar coloured by its own level, lit from below.
+    const gap = Math.max(1, bw * 0.12)
+    for (let i = 0; i < n; i++) {
+      const m = mag[idx(i, n)]
+      const bh = m * h0
+      const c = hslArr((params.hue + 0.05 - m * 0.35 + 1) % 1, 0.9, 0.35 + m * 0.35)
+      const g = ctx.createLinearGradient(0, baseY - bh, 0, baseY)
+      g.addColorStop(0, `rgb(${c[0]},${c[1]},${c[2]})`)
+      g.addColorStop(1, `rgba(${hr},${hg},${hb},0.15)`)
+      ctx.fillStyle = g
+      ctx.fillRect(i * bw + gap / 2, baseY - bh, bw - gap, bh)
     }
   }
-  wctx.putImageData(rowImg, 0, 0)
-
-  // --- compose ---
-  ctx.fillStyle = '#04060b'
-  ctx.fillRect(0, 0, W, splitY)
-  ctx.drawImage(water, 0, splitY)
-  // Faint separator line at the "now" edge of the waterfall.
-  ctx.fillStyle = `rgba(${hr},${hg},${hb},0.5)`
-  ctx.fillRect(0, splitY, W, 1 * rt.pixelRatio)
-
-  // --- spectrum curve (filled, glowing) in the top panel ---
-  const baseY = splitY - 4 * rt.pixelRatio
-  const h0 = splitY - 12 * rt.pixelRatio
-  const bw = W / n
-  ctx.beginPath()
-  ctx.moveTo(0, baseY)
-  for (let i = 0; i < n; i++) {
-    const bi = params.mirror ? Math.abs((i / (n - 1)) * 2 - 1) : i / (n - 1)
-    const m = mag[Math.min(n - 1, Math.round(bi * (n - 1)))]
-    ctx.lineTo(i * bw + bw / 2, baseY - m * h0)
-  }
-  ctx.lineTo(W, baseY)
-  ctx.closePath()
-  const grad = ctx.createLinearGradient(0, baseY - h0, 0, baseY)
-  grad.addColorStop(0, `rgba(${hr},${hg},${hb},0.95)`)
-  grad.addColorStop(1, `rgba(${hr},${hg},${hb},0.08)`)
-  ctx.fillStyle = grad
-  ctx.fill()
-  ctx.strokeStyle = `rgba(${Math.min(255, hr + 60)},${Math.min(255, hg + 60)},${Math.min(255, hb + 60)},0.9)`
-  ctx.lineWidth = 2 * rt.pixelRatio
-  ctx.stroke()
 
   // Peak-hold caps.
-  ctx.fillStyle = '#fff'
-  for (let i = 0; i < n; i++) {
-    const bi = params.mirror ? Math.abs((i / (n - 1)) * 2 - 1) : i / (n - 1)
-    const p = peak[Math.min(n - 1, Math.round(bi * (n - 1)))]
-    ctx.globalAlpha = 0.35 + 0.5 * p
-    ctx.fillRect(i * bw + 1, baseY - p * h0 - 2 * rt.pixelRatio, Math.max(1, bw - 2), 2 * rt.pixelRatio)
+  if (params.peaks) {
+    for (let i = 0; i < n; i++) {
+      const p = peak[idx(i, n)]
+      ctx.fillStyle = '#fff'
+      ctx.globalAlpha = 0.35 + 0.5 * p
+      ctx.fillRect(i * bw + 1, baseY - p * h0 - 2 * rt.pixelRatio, Math.max(1, bw - 2), 2.5 * rt.pixelRatio)
+    }
+    ctx.globalAlpha = 1
   }
-  ctx.globalAlpha = 1
 
   if (!rt.beat.state.active) {
     ctx.fillStyle = 'rgba(255,255,255,0.5)'
@@ -147,10 +145,8 @@ function render(t) {
   }
 }
 
-let lastNow = 0
 function frame(now) {
   rt.tick(now)
-  lastNow = now
   render(now * 0.001)
   requestAnimationFrame(frame)
 }

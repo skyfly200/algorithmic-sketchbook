@@ -1,8 +1,7 @@
 // Light Through Leaves — dappled canopy light over a live source: layers of
 // drifting "leaf" noise mask a warm sunlight field, so soft shadows and
 // bright light-pools sway across the scene as if wind were moving branches
-// overhead. The gaps flicker, the whole canopy breathes, and warm godray
-// shafts angle down through the brightest gaps.
+// overhead. The gaps flicker and the whole canopy breathes on the breeze.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
 
@@ -13,11 +12,9 @@ const params = rt.params({
   softness: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Shadow softness' },
   warmth: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Sun warmth' },
   contrast: { value: 0.7, min: 0, max: 1.5, step: 0.02, label: 'Light contrast' },
-  shafts: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'God rays' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })
 rt.mapInput('time.sin', 'wind', 0.5)
-rt.mapInput('audio.level', 'shafts', 0.3)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
@@ -42,16 +39,6 @@ function bakeLeaves(scale, seedOff) {
   return c2
 }
 const leafA = bakeLeaves(1, 0), leafB = bakeLeaves(1.6, 40)
-// Irregular god-ray definitions, baked once so the shafts aren't a regular
-// picket-fence of stripes. Each ray has its own base position, width, angle
-// jitter and brightness, and drifts on its own slow phase.
-const rays = Array.from({ length: 6 }, () => ({
-  base: rt.random(-0.42, 0.42), // fraction of width, off-centre
-  w: rt.random(0.05, 0.13), // ray width as fraction of width
-  bright: rt.random(0.5, 1),
-  phase: rt.random(0, Math.PI * 2),
-  drift: rt.random(0.2, 0.6),
-}))
 const mask = document.createElement('canvas')
 const mx = mask.getContext('2d')
 
@@ -117,40 +104,6 @@ function frame(now) {
   ctx.globalAlpha = 1
   ctx.filter = 'none'
   ctx.globalCompositeOperation = 'source-over'
-
-  // Angled god-ray shafts from the top — soft, irregularly spaced and tapered
-  // so they read as sunlight breaking through branches, not as parallel bars.
-  if (params.shafts > 0.01) {
-    ctx.save()
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.filter = `blur(${(6 + params.softness * 18) * rt.pixelRatio}px)`
-    ctx.translate(W * 0.5, 0)
-    ctx.rotate(0.22 + Math.sin(t * 0.25) * 0.06)
-    for (const r of rays) {
-      // slow lateral sway + a gentle brightness flicker per ray
-      const x = r.base * W + Math.sin(t * r.drift + r.phase) * W * 0.05
-      const w = r.w * W
-      const flick = 0.7 + 0.3 * Math.sin(t * (0.8 + r.drift) + r.phase * 2)
-      const a = params.shafts * 0.16 * r.bright * flick
-      // a soft-edged wedge that fades toward the bottom
-      const g = ctx.createLinearGradient(0, -H * 0.2, 0, H * 1.3)
-      g.addColorStop(0, `hsla(48, 92%, 72%, ${a})`)
-      g.addColorStop(0.55, `hsla(46, 88%, 66%, ${a * 0.4})`)
-      g.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.fillStyle = g
-      // widen toward the bottom (a real shaft spreads as it descends)
-      ctx.beginPath()
-      ctx.moveTo(x - w * 0.35, -H * 0.2)
-      ctx.lineTo(x + w * 0.35, -H * 0.2)
-      ctx.lineTo(x + w * 0.9, H * 1.3)
-      ctx.lineTo(x - w * 0.9, H * 1.3)
-      ctx.closePath()
-      ctx.fill()
-    }
-    ctx.restore()
-    ctx.filter = 'none'
-    ctx.globalCompositeOperation = 'source-over'
-  }
   requestAnimationFrame(frame)
 }
 window.addEventListener('resize', resize)

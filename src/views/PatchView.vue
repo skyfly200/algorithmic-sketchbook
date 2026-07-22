@@ -30,7 +30,7 @@ const settings = useSettingsStore()
 const FILTER_SLUGS = [
   'pointillism', 'camera-lens', 'rain-window', 'halftone',
   'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
-  'fog', 'mist', 'glow', 'nebula-gasses', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves',
+  'fog', 'mist', 'glow', 'nebula-gasses', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves', 'warp',
 ]
 // Only local, same-origin sketches can be captured for piping. Filters (and
 // Motion Extraction, which has a native node) are organized under the Filter
@@ -2013,7 +2013,7 @@ const tourSteps = [
   { target: '[data-tour="patch-output"]', title: 'Go live', body: 'Switch to output-only and fullscreen for a clean projection, pop the output to a second display, or export the patch to a file.' },
 ]
 function startTour() { tourActive.value = true }
-function finishTour() { settings.markSeen('patch') }
+function finishTour(payload) { settings.markSeen('patch'); if (payload?.disableAll) settings.setTutorials(false) }
 
 onMounted(async () => {
   document.addEventListener('fullscreenchange', onFsChange)
