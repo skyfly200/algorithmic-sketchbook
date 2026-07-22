@@ -1,0 +1,7 @@
+{
+  "title": "Moths to a Light",
+  "description": "Moths mobbing a lamp on a summer night. Each moth navigates by trying to hold the light at a fixed angle — the old celestial-compass trick that a nearby bulb turns into a doomed inward spiral — so they wheel, loop and dive at the glow, wings blurring, occasionally singeing off and looping back. Move the light with the pointer and they chase it; beats flare the lamp. Swarm size, attraction, erraticness, flutter, lamp glow and hue are live and mappable.",
+  "tags": ["air", "moths", "night", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}
