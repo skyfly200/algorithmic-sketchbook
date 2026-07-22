@@ -1,0 +1,7 @@
+{
+  "title": "Rubens Tube",
+  "description": "A standing-wave flame organ. In Tube mode a row of little gas flames along a pipe rise and fall with the pressure antinodes of a standing sound wave, so the wave's shape is drawn in fire; in Table mode (a pyro board) a 2D grid of jets shows the wave in plan. Drive it from the frequency and harmonic controls, or click the mic so live audio sculpts the flames. Frequency, harmonics, gas, flicker and palette are live and mappable.",
+  "tags": ["fire", "physics", "standing-wave", "audio-reactive", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

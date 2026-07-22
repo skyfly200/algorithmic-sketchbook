@@ -1,0 +1,7 @@
+{
+  "title": "Embers",
+  "description": "A night sky of drifting embers rising from an unseen fire — sparks lift on the updraft, swirl in turbulent air, flicker as they cool from white-hot to deep red, and wink out. Beats throw up a burst of fresh sparks and gusts of wind shear the whole column sideways. Spawn rate, updraft, turbulence, wind, glow and cooling are live and mappable.",
+  "tags": ["fire", "embers", "sparks", "particles", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

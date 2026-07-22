@@ -9,6 +9,7 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
 const params = rt.params({
+  mode: { value: 'Bonfire', type: 'select', options: ['Bonfire', 'Campfire', 'Torch', 'Candle'], label: 'Mode' },
   intensity: { value: 1, min: 0.3, max: 2, step: 0.05, label: 'Intensity' },
   cooling: { value: 1, min: 0.4, max: 2, step: 0.05, label: 'Cooling' },
   wind: { value: 0, min: -1, max: 1, step: 0.02, label: 'Wind' },
@@ -16,6 +17,38 @@ const params = rt.params({
   hue: { value: 20, min: -20, max: 60, step: 1, label: 'Hue shift' },
   embers: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Embers' },
 })
+// Per-mode shape of the flame base: a horizontal intensity profile across the
+// grid columns (0..1), an overall intensity/cooling/ember bias, and a sway.
+function modeProfile(x, t) {
+  const f = x / GW // 0..1 across the width
+  const m = params.mode
+  if (m === 'Candle') {
+    // a single slender tongue, gently swaying, low and calm
+    const cx = 0.5 + Math.sin(t * 1.1) * 0.015
+    const w = 0.02
+    return Math.exp(-((f - cx) ** 2) / (w * w)) * 0.85
+  }
+  if (m === 'Torch') {
+    // a fatter licking column with more turbulent sway
+    const cx = 0.5 + Math.sin(t * 2.2) * 0.05 + Math.sin(t * 5) * 0.02
+    const w = 0.06
+    return Math.exp(-((f - cx) ** 2) / (w * w)) * 1.05
+  }
+  if (m === 'Campfire') {
+    // a broad bed of coals with a few hotter tongues over the "logs"
+    const bed = f > 0.2 && f < 0.8 ? 0.7 : 0.2
+    const tongues = 0.4 * (Math.max(0, Math.sin(f * 22 + t * 3)) ** 3)
+    return Math.min(1, bed + tongues)
+  }
+  return 1 // Bonfire: full-width base
+}
+// Per-mode biases so each really feels different, not just narrower.
+const modeBias = {
+  Bonfire: { intensity: 1, ember: 1, cool: 1 },
+  Campfire: { intensity: 0.9, ember: 1.5, cool: 1.05 },
+  Torch: { intensity: 1.05, ember: 0.7, cool: 0.95 },
+  Candle: { intensity: 0.7, ember: 0.25, cool: 1.15 },
+}
 rt.mapInput('audio.level', 'intensity', 0.6)
 rt.mapInput('audio.pulse', 'height', 0.2)
 
@@ -60,13 +93,15 @@ function frame(now) {
   last = t
   flare = Math.max(0, flare - dt * 2)
 
-  // seed the bottom row with hot, flickering values
-  const base = (1 + flare) * params.intensity
+  // seed the bottom row with hot, flickering values, shaped by the mode
+  const bias = modeBias[params.mode] ?? modeBias.Bonfire
+  const base = (1 + flare) * params.intensity * bias.intensity
   for (let x = 0; x < GW; x++) {
-    heat[(GH - 1) * GW + x] = Math.min(1.4, base * (0.6 + rt.rng() * 0.8))
+    const prof = modeProfile(x, t)
+    heat[(GH - 1) * GW + x] = Math.min(1.4, base * prof * (0.6 + rt.rng() * 0.8))
   }
   // propagate upward with cooling + wind drift
-  const cool = 0.02 * params.cooling * (1.5 - params.height)
+  const cool = 0.02 * params.cooling * bias.cool * (1.5 - params.height)
   const windPix = Math.round(params.wind * 1.5)
   for (let y = 0; y < GH - 1; y++) {
     for (let x = 0; x < GW; x++) {
@@ -94,9 +129,12 @@ function frame(now) {
   ctx.drawImage(low, 0, 0, W, H)
   ctx.filter = 'none'
 
-  // embers rising from the flame tops
-  if (params.embers > 0.01) {
-    if (rt.rng() < params.embers) embers.push({ x: rt.random(W * 0.2, W * 0.8), y: H * 0.7, vy: -rt.random(40, 120) * rt.pixelRatio, life: 1, s: rt.random(1, 3) * rt.pixelRatio })
+  // embers rising from the flame tops — rate + spread depend on the mode
+  const emberRate = params.embers * bias.ember
+  if (emberRate > 0.01) {
+    // narrow modes (candle/torch) throw embers from a tight central column
+    const spread = params.mode === 'Candle' ? 0.03 : params.mode === 'Torch' ? 0.08 : 0.3
+    if (rt.rng() < emberRate) embers.push({ x: W * (0.5 + rt.random(-spread, spread)), y: H * 0.7, vy: -rt.random(40, 120) * rt.pixelRatio, life: 1, s: rt.random(1, 3) * rt.pixelRatio })
     for (let i = embers.length - 1; i >= 0; i--) {
       const e = embers[i]
       e.x += Math.sin(t * 3 + e.y * 0.01) * 20 * dt + params.wind * 30 * dt
