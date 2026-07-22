@@ -1,6 +1,8 @@
-// Rock Layers — banded sandstone country of the West: flat-topped mesas and
-// buttes cut from horizontal strata, receding ridge behind ridge into haze,
-// while the sun slowly wheels and the light warms from dawn to a red sunset.
+// Rock Layers — an extreme close-up of a sedimentary rock face, the camera
+// slowly panning across it. Horizontal strata are folded and warped into
+// organic, smoothly undulating bands that pinch and swell; fine cross-bedding
+// laminates the thicker beds. The whole face drifts continuously, as if you were
+// tracking sideways along a cliff, with a soft raking light for relief.
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
@@ -8,39 +10,51 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
 const params = rt.params({
-  ridges: { value: 4, min: 2, max: 7, step: 1, label: 'Ridges (depth)' },
-  strata: { value: 1, min: 0.4, max: 2.5, step: 0.05, label: 'Strata thickness' },
-  haze: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Haze' },
-  timeOfDay: { value: 0.3, min: 0, max: 1, step: 0.005, label: 'Time of day' },
-  daySpeed: { value: 0.3, min: 0, max: 3, step: 0.05, label: 'Day speed' },
-  rugged: { value: 1, min: 0.3, max: 2, step: 0.05, label: 'Ruggedness' },
+  strata: { value: 1, min: 0.4, max: 2.5, step: 0.05, label: 'Layer thickness' },
+  fold: { value: 1, min: 0, max: 2, step: 0.05, label: 'Folding' },
+  detail: { value: 1, min: 0, max: 2, step: 0.05, label: 'Cross-bedding' },
+  pan: { value: 0.5, min: -2, max: 2, step: 0.05, label: 'Pan speed' },
+  drift: { value: 0.12, min: -1, max: 1, step: 0.02, label: 'Vertical drift' },
+  light: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Light / warmth' },
 })
-rt.mapInput('audio.level', 'daySpeed', 0.3)
+rt.mapInput('audio.level', 'pan', 0.5)
 
-// Desert strata palette (bottom → top of a formation).
-const STRATA = [
-  [120, 42, 30], [150, 66, 40], [176, 92, 52], [196, 130, 78],
-  [210, 160, 110], [176, 92, 52], [150, 66, 40], [188, 110, 66],
-  [214, 150, 96], [160, 74, 44],
+// Sandstone / ironstone / siltstone palette — ochres, iron reds, creams, greys.
+const PALETTE = [
+  [178, 120, 78], [150, 92, 58], [200, 152, 106], [120, 70, 48], [214, 172, 122],
+  [166, 104, 66], [190, 132, 86], [132, 82, 62], [206, 158, 112], [152, 96, 70],
+  [184, 128, 92], [124, 86, 74], [196, 146, 98], [142, 90, 54],
 ]
 
 let W = 0, H = 0, PR = 1
-let ridges = []
+let layers = []
+let Htot = 0
+let folds = []
+let maxFold = 0
 function build() {
-  ridges = []
-  const n = Math.round(params.ridges)
-  for (let r = 0; r < n; r++) {
-    const buttes = []
-    const count = 2 + (rt.rng() * 3 | 0)
-    for (let i = 0; i < count; i++) {
-      buttes.push({
-        cx: rt.random(0.05, 0.95), w: rt.random(0.12, 0.34),
-        top: rt.random(0.35, 0.72), spire: rt.rng() < 0.3,
-        seed: rt.random(0, 100),
-      })
-    }
-    ridges.push({ buttes, baseY: 0.55 + (r / n) * 0.42 })
+  // shared large-scale folds applied to every boundary → parallel folded strata
+  folds = [
+    { a: 0.06 * H, k: (Math.PI * 2) / (1.7 * W), p: rt.random(0, 6.28) },
+    { a: 0.035 * H, k: (Math.PI * 2) / (0.85 * W), p: rt.random(0, 6.28) },
+    { a: 0.018 * H, k: (Math.PI * 2) / (0.42 * W), p: rt.random(0, 6.28) },
+  ]
+  maxFold = folds.reduce((s, f) => s + Math.abs(f.a), 0) * 2 + 0.05 * H
+  // a tall repeating stack of beds, tiled vertically so the face can drift forever
+  layers = []
+  let y = 0, idx = 0
+  const target = H * 2.4
+  while (y < target) {
+    const thick = rt.random(0.022, 0.06) * H * params.strata
+    const base = PALETTE[idx % PALETTE.length]
+    const v = rt.random(-14, 14)
+    const color = [base[0] + v, base[1] + v * 0.8, base[2] + v * 0.6]
+    layers.push({
+      top: y, thick, color,
+      wobA: rt.random(3, 11) * PR, wobK: (Math.PI * 2) / rt.random(0.3 * W, 0.9 * W), wobP: rt.random(0, 6.28),
+    })
+    y += thick; idx++
   }
+  Htot = y
 }
 function resize() {
   PR = rt.pixelRatio
@@ -49,98 +63,107 @@ function resize() {
   build()
 }
 
-// a mesa/butte silhouette path (flat top, near-vertical cliffs, talus flare)
-function buttePath(b, baseY) {
-  const cx = b.cx * W, halfW = (b.w * W) / 2
-  const topY = b.top * H
-  const bY = baseY * H
-  const notch = (t) => Math.sin(t * 9 + b.seed) * 4 * PR * params.rugged // eroded top edge
-  ctx.beginPath()
-  ctx.moveTo(cx - halfW * 1.25, bY) // talus base left
-  ctx.lineTo(cx - halfW, topY + (bY - topY) * 0.12)
-  if (b.spire) {
-    ctx.lineTo(cx - halfW * 0.3, topY)
-    ctx.lineTo(cx, topY - halfW * 0.6)
-    ctx.lineTo(cx + halfW * 0.3, topY)
-  } else {
-    const steps = 8
-    for (let k = 0; k <= steps; k++) {
-      const t = k / steps
-      ctx.lineTo(cx - halfW + t * halfW * 2, topY + notch(t))
-    }
-  }
-  ctx.lineTo(cx + halfW, topY + (bY - topY) * 0.12)
-  ctx.lineTo(cx + halfW * 1.25, bY)
-  ctx.closePath()
+function fold(wx) {
+  let s = 0
+  for (const f of folds) s += f.a * Math.sin(wx * f.k + f.p)
+  return s
+}
+// Screen-Y of a boundary with world top `topW` and its own small wobble, at
+// screen column x, given the camera offsets.
+function boundaryY(topW, wobA, wobK, wobP, x, camX, camY) {
+  const wx = x + camX
+  return topW - camY + fold(wx) + wobA * Math.sin(wx * wobK + wobP)
 }
 
+let last = 0, camX = 0, camY = 0, builtStrata = 1
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  const phase = (params.timeOfDay + t * params.daySpeed * 0.01) % 1
-  // day factor 0=night,1=noon; warmth toward dawn/dusk
-  const dayF = Math.max(0, Math.sin(phase * Math.PI))
-  const dusk = Math.pow(1 - Math.abs(phase - 0.5) * 2, 2) < 0.3 ? 1 : 0
-  const warm = 1 - dayF * 0.4 // more orange when low sun
-  const sunX = phase // 0..1 across the sky
+  const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016)
+  last = now
+  if (params.strata !== builtStrata) { builtStrata = params.strata; build() }
 
-  // sky
-  const g = ctx.createLinearGradient(0, 0, 0, H)
-  const topSky = [Math.round(60 + dayF * 40), Math.round(90 + dayF * 70), Math.round(150 + dayF * 60)]
-  const botSky = [Math.round(220 * warm + 30), Math.round(150 * warm + 40), Math.round(120 + dayF * 30)]
-  g.addColorStop(0, `rgb(${topSky.join(',')})`)
-  g.addColorStop(1, `rgb(${botSky.join(',')})`)
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
-  // sun
-  const sx = sunX * W, sy = H * (0.15 + (1 - dayF) * 0.4)
-  const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, H * 0.25)
-  sg.addColorStop(0, `rgba(255,${Math.round(220 * warm + 20)},${Math.round(160 * warm)},0.9)`)
-  sg.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = sg
-  ctx.fillRect(0, 0, W, H); ctx.globalCompositeOperation = 'source-over'
+  camX += params.pan * 42 * PR * dt
+  camY += params.drift * 30 * PR * dt
+  camY = ((camY % Htot) + Htot) % Htot // wrap into the tiled stack
 
-  // ridges, far → near
-  const n = ridges.length
-  for (let r = 0; r < n; r++) {
-    const ridge = ridges[r]
-    const dist = 1 - r / Math.max(1, n - 1) // 1 far … 0 near
-    const hazeAmt = params.haze * dist * 0.8
-    const bandH = 6 * PR * params.strata * (0.6 + (1 - dist) * 0.8)
-    // light side offset from the sun position
-    const lightDir = sunX < 0.5 ? -1 : 1
-    for (const b of ridge.buttes) {
-      ctx.save()
-      buttePath(b, ridge.baseY)
-      ctx.clip()
-      const topY = b.top * H, bY = ridge.baseY * H
-      let band = 0
-      for (let y = bY; y > topY - 30 * PR; y -= bandH) {
-        const col = STRATA[band % STRATA.length]
-        const wob = Math.sin(y * 0.02 + b.seed) * 2 * PR
-        // warm-shift by time of day + slight per-band lighting
-        const lr = Math.min(255, col[0] * (0.7 + warm * 0.5))
-        const lg = Math.min(255, col[1] * (0.7 + warm * 0.4))
-        const lb = Math.min(255, col[2] * (0.75 + dayF * 0.3))
-        ctx.fillStyle = `rgb(${lr | 0},${lg | 0},${lb | 0})`
-        ctx.fillRect(0, y - bandH + wob, W, bandH + 1)
-        band++
+  const step = Math.max(5, Math.floor(W / 180)) * PR
+  const warm = params.light
+  const clamp = (v) => v < 0 ? 0 : v > 255 ? 255 : v
+
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.clearRect(0, 0, W, H)
+
+  const kStart = Math.floor((camY - maxFold) / Htot) - 1
+  const kEnd = Math.ceil((camY + H + maxFold) / Htot) + 1
+  for (let k = kStart; k <= kEnd; k++) {
+    const off = k * Htot
+    for (let i = 0; i < layers.length; i++) {
+      const L = layers[i]
+      const next = layers[(i + 1) % layers.length]
+      const nextTop = (i + 1 < layers.length ? next.top : Htot) + off
+      const topW = L.top + off
+      // cull beds fully off-screen
+      if (topW - camY - maxFold > H || nextTop - camY + maxFold < 0) continue
+
+      // build the band: top boundary L→R, bottom boundary (next bed's top) R→L
+      ctx.beginPath()
+      for (let x = 0; x <= W + step; x += step) {
+        const y = boundaryY(topW, L.wobA, L.wobK, L.wobP, Math.min(x, W), camX, camY)
+        if (x === 0) ctx.moveTo(0, y); else ctx.lineTo(Math.min(x, W), y)
       }
-      // shade the lee cliff face
-      const cx = b.cx * W, halfW = (b.w * W) / 2
-      const shade = ctx.createLinearGradient(cx - halfW, 0, cx + halfW, 0)
-      const dark = 'rgba(20,8,4,0.45)', clear = 'rgba(20,8,4,0)'
-      shade.addColorStop(0, lightDir > 0 ? dark : clear)
-      shade.addColorStop(1, lightDir > 0 ? clear : dark)
-      ctx.fillStyle = shade; ctx.fillRect(cx - halfW, topY, halfW * 2, bY - topY)
-      ctx.restore()
-      // haze veil for distance
-      if (hazeAmt > 0.01) {
-        ctx.save(); buttePath(b, ridge.baseY); ctx.clip()
-        ctx.fillStyle = `rgba(${botSky[0]},${botSky[1]},${botSky[2]},${hazeAmt})`
-        ctx.fillRect(0, 0, W, H); ctx.restore()
+      for (let x = W; x >= -step; x -= step) {
+        const xx = Math.max(x, 0)
+        const y = boundaryY(nextTop, next.wobA, next.wobK, next.wobP, xx, camX, camY)
+        ctx.lineTo(xx, y)
+      }
+      ctx.closePath()
+
+      // warm/cool-graded fill; a little brighter toward the top of the bed
+      const cr = clamp(L.color[0] * (0.82 + warm * 0.36))
+      const cg = clamp(L.color[1] * (0.82 + warm * 0.24))
+      const cb = clamp(L.color[2] * (0.86 + (1 - warm) * 0.14))
+      ctx.fillStyle = `rgb(${cr | 0},${cg | 0},${cb | 0})`
+      ctx.fill()
+
+      // cross-bedding: thin darker laminations parallel to the top boundary
+      if (params.detail > 0.01 && L.thick > 0.03 * H) {
+        const lines = Math.min(3, Math.floor(L.thick / (0.02 * H)))
+        ctx.lineWidth = 1 * PR
+        ctx.strokeStyle = `rgba(${(cr * 0.55) | 0},${(cg * 0.5) | 0},${(cb * 0.45) | 0},${0.28 * params.detail})`
+        for (let li = 1; li <= lines; li++) {
+          const frac = li / (lines + 1)
+          ctx.beginPath()
+          for (let x = 0; x <= W + step; x += step) {
+            const xx = Math.min(x, W)
+            const yt = boundaryY(topW, L.wobA, L.wobK, L.wobP, xx, camX, camY)
+            const yb = boundaryY(nextTop, next.wobA, next.wobK, next.wobP, xx, camX, camY)
+            const y = yt + (yb - yt) * frac
+            if (x === 0) ctx.moveTo(0, y); else ctx.lineTo(xx, y)
+          }
+          ctx.stroke()
+        }
       }
     }
   }
+
+  // raking light + shadow: a soft diagonal highlight drifting across the face,
+  // plus a vignette, to give the flat bands some relief and depth.
+  const lx = (0.5 + 0.5 * Math.sin(camX * 0.002)) * W
+  const lg = ctx.createLinearGradient(lx - W * 0.5, 0, lx + W * 0.5, H)
+  ctx.globalCompositeOperation = 'overlay'
+  lg.addColorStop(0, 'rgba(0,0,0,0.28)')
+  lg.addColorStop(0.5, `rgba(255,240,210,${0.12 + warm * 0.12})`)
+  lg.addColorStop(1, 'rgba(0,0,0,0.34)')
+  ctx.fillStyle = lg
+  ctx.fillRect(0, 0, W, H)
+
+  ctx.globalCompositeOperation = 'source-over'
+  const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.7)
+  vg.addColorStop(0, 'rgba(0,0,0,0)')
+  vg.addColorStop(1, 'rgba(0,0,0,0.4)')
+  ctx.fillStyle = vg
+  ctx.fillRect(0, 0, W, H)
+
   requestAnimationFrame(frame)
 }
 window.addEventListener('resize', resize)

@@ -93,6 +93,7 @@ rebuildBand()
 // --- the ladybug -----------------------------------------------------------
 const bug = new THREE.Group()
 scene.add(bug)
+const legs = [] // hip pivots, animated in a tripod walking gait
 {
   // domed red shell, flat underside (a scaled half-ish sphere)
   const shellMat = new THREE.MeshStandardMaterial({ color: 0xd81f26, roughness: 0.32, metalness: 0.05 })
@@ -127,12 +128,30 @@ scene.add(bug)
     ant.position.set(dir * 0.1, 0.16, 0.92); ant.rotation.set(0.5, 0, dir * 0.3)
     bug.add(ant)
   }
-  // legs
+  // legs — each hangs from a hip pivot so it can swing fore/aft and lift in a
+  // walking gait. Alternate legs get opposite phase → an insect tripod stride.
   const legMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a })
+  let li = 0
   for (const dir of [-1, 1]) for (const lz of [-0.3, 0, 0.35]) {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.4, 6), legMat)
-    leg.position.set(dir * 0.42, -0.12, lz); leg.rotation.z = dir * 1.1
-    bug.add(leg)
+    const pivot = new THREE.Group()
+    pivot.position.set(dir * 0.3, -0.04, lz)
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.42, 6), legMat)
+    leg.position.set(dir * 0.18, -0.15, 0); leg.rotation.z = dir * 1.1
+    pivot.add(leg)
+    bug.add(pivot)
+    legs.push({ pivot, dir, phase: (li % 2) * Math.PI, restZ: dir * 1.1 })
+    li++
+  }
+}
+// Animate the tripod gait: rotate each hip pivot fore/aft (cos) and lift the
+// foot on the recovery half-stroke (max(0, sin)). Stride advances with speed,
+// so the legs march faster when the bug crawls faster and freeze when it stops.
+let walk = 0
+function stepLegs() {
+  for (const L of legs) {
+    const p = walk + L.phase
+    L.pivot.rotation.y = Math.cos(p) * 0.5
+    L.pivot.rotation.x = -Math.max(0, Math.sin(p)) * 0.5
   }
 }
 
@@ -154,7 +173,7 @@ function placeBug(u) {
   m.makeBasis(right, up, fwd)
   bug.quaternion.setFromRotationMatrix(m)
   surfacePoint(u, 0, _p)
-  const lift = 0.18 * params.bugSize
+  const lift = (0.18 + Math.sin(walk * 2) * 0.012) * params.bugSize // gait body bob
   bug.position.copy(_p).addScaledVector(up, lift)
   bug.scale.setScalar(params.bugSize)
 }
@@ -164,7 +183,9 @@ function frame(now) {
   rt.tick(now)
   if (params.track !== lastTrack || params.twist !== lastTwist) { lastTrack = params.track; lastTwist = params.twist; rebuildBand() }
   u = (u + params.speed * 0.006) % (Math.PI * 4) // 4π so the Möbius return reads
+  walk += params.speed * 0.16 // stride keeps pace with travel; freezes at speed 0
   placeBug(u)
+  stepLegs()
   bug.userData.shellMat.color.setHSL(((params.bodyHue % 360) / 360), 0.8, 0.42)
   controls.autoRotateSpeed = params.orbit
   controls.update()
