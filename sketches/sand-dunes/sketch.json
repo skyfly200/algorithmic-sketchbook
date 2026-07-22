@@ -1,0 +1,7 @@
+{
+  "title": "Sand Dunes",
+  "description": "A desert dune field that builds and marches itself. Slabs of sand saltate downwind and settle in the wind shadows, avalanching whenever a slope grows too steep — Werner's cellular dune model — so crescent barchans and long ridges emerge, crawl across the field, split and merge, evolving forever. Seen from above with raking sunlight. Wind strength and direction, hop length, avalanche, sand supply and sun angle are live and mappable.",
+  "tags": ["earth", "sand", "desert", "simulation", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

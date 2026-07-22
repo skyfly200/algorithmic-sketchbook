@@ -1,0 +1,7 @@
+{
+  "title": "Frost Growth",
+  "description": "Feathery ice creeping across a cold surface. Dendritic crystals nucleate along a leaf's veins, a rock's edges, a strand of barbed wire, a chain-link fence or the corners of a windowpane, then branch and fork outward in fern-like fronds until the whole surface is furred with frost. Warm the glass (move the pointer) to melt a clearing that re-freezes. Surface, growth speed, branchiness, feathering, thaw and palette are live and mappable.",
+  "tags": ["earth", "ice", "frost", "crystal", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

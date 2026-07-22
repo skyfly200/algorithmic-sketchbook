@@ -1,0 +1,7 @@
+{
+  "title": "Cymatics",
+  "description": "Chladni figures — sand on a vibrating plate. Thousands of grains get kicked hardest where the standing wave swings most (the antinodes) and barely move along the still nodal lines, so they migrate and pile up into the plate's resonant pattern. Sweep the frequency to morph between modes on a square or circular plate, or click the mic so the dominant pitch of live audio drives the plate directly. Frequency, drive amplitude, grain count, plate shape and palette are live and mappable.",
+  "tags": ["cymatics", "chladni", "physics", "audio-reactive", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}
