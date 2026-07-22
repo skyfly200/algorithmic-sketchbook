@@ -73,6 +73,13 @@ function persistSettings() {
 }
 function toggleEffect(slug) {
   settings.toggleEffect(slug, allEffects.value.map((s) => s.slug))
+  // If you just unchecked an effect that's currently on screen, don't yank it —
+  // queue it to be swapped out on the next move and never routed back in.
+  if (!settings.isEffectEnabled(slug)) {
+    if (liveLayers().some((l) => l.slug === slug)) { swapOutQueue.add(slug); say(`${titleOf(slug)} will swap out next`) }
+  } else {
+    swapOutQueue.delete(slug) // re-checked → allow it back
+  }
 }
 
 // --- perf-aware routing ------------------------------------------------------
@@ -95,6 +102,19 @@ const stack = reactive([])
 let nextId = 1
 const recent = [] // recently retired slugs — avoid immediate repeats
 const readyWins = new WeakSet()
+
+// Slugs the user unchecked while they were live: they're never swapped IN, and
+// the router swaps them OUT at the next opportunity rather than leaving them up.
+const swapOutQueue = reactive(new Set())
+// A user-planned next move: pick a live layer to swap and (optionally) preview
+// the incoming sketch's name before it actually happens.
+const plannedNext = ref(null) // { targetId, slug } | null
+// Cache each sketch's tweaked params/mappings by slug so back/forward and full
+// rerolls restore the options you set instead of resetting to defaults.
+const paramCache = {}
+// A short grace window after start / any (re)build during which the FPS
+// watchdog holds off — effects are still loading and would be culled unfairly.
+let settleUntil = 0
 
 // --- learned interest --------------------------------------------------------
 // Autopilot learns what you like from what you keep vs. skip: a layer you let
@@ -208,11 +228,13 @@ function saveAsPatch() {
 
 function pickSketch(pool, budgetLeft) {
   const inStack = new Set(stack.map((l) => l.slug))
-  const fresh = pool.filter((s) => !inStack.has(s.slug) && !recent.includes(s.slug))
+  // Never route back in a slug the user just unchecked while it was live.
+  const usable = pool.filter((s) => !swapOutQueue.has(s.slug))
+  const fresh = usable.filter((s) => !inStack.has(s.slug) && !recent.includes(s.slug))
   let cands = fresh.filter((s) => cost(s.slug) <= budgetLeft)
   if (!cands.length) {
     // nothing fresh fits — fall back to the cheapest few available
-    cands = pool
+    cands = usable
       .filter((s) => !inStack.has(s.slug))
       .sort((a, b) => cost(a.slug) - cost(b.slug))
       .slice(0, 5)
@@ -220,13 +242,14 @@ function pickSketch(pool, budgetLeft) {
   return weightedPick(cands)
 }
 
-function makeLayer(slug, kind, blend, opacity) {
+function makeLayer(slug, kind, blend, opacity, locked = false) {
   return {
     id: nextId++,
     slug,
     kind,
     blend,
     opacity,
+    locked,
     seed: ((Math.random() * 4294967296) >>> 0).toString(36),
     state: 'warming',
     replaces: null,
@@ -263,10 +286,15 @@ function retire(layer, after = 1600) {
 }
 
 // --- routing moves -----------------------------------------------------------
-function opReplace(target) {
+// A locked layer is never touched by the router (or the watchdog).
+function unlocked(list) { return list.filter((l) => !l.locked) }
+
+function opReplace(target, preferSlug) {
+  if (!target || target.locked) return false
   const freed = cost(target.slug)
-  const s = pickSketch(target.kind === 'filter' ? filterPool.value : effectPool.value,
-    perfBudget.value - stackCost() + freed)
+  const pool = target.kind === 'filter' ? filterPool.value : effectPool.value
+  let s = preferSlug ? pool.find((x) => x.slug === preferSlug) : null
+  if (!s) s = pickSketch(pool, perfBudget.value - stackCost() + freed)
   if (!s) return false
   const ti = stack.findIndex((x) => x.id === target.id)
   const isBase = target.kind === 'effect' && ti === stack.findIndex((x) => x.kind === 'effect')
@@ -284,10 +312,11 @@ function opAdd() {
   return true
 }
 function opRemove() {
-  const eff = effectsOf()
-  if (eff.length < 2) return false
-  retire(eff[eff.length - 1])
-  say(`− ${titleOf(eff[eff.length - 1].slug)}`)
+  const eff = unlocked(effectsOf())
+  if (effectsOf().length < 2 || !eff.length) return false
+  const victim = eff[eff.length - 1]
+  retire(victim)
+  say(`− ${titleOf(victim.slug)}`)
   return true
 }
 function opAddFilter() {
@@ -299,14 +328,14 @@ function opAddFilter() {
 }
 function opDropFilter() {
   const f = filterOf()
-  if (!f) return false
+  if (!f || f.locked) return false
   retire(f)
   say(`− filter ${titleOf(f.slug)}`)
   return true
 }
 function opRestyle() {
   const eff = effectsOf()
-  const nonBase = eff.slice(1)
+  const nonBase = unlocked(eff.slice(1))
   if (!nonBase.length) return false
   const l = pick(nonBase)
   l.blend = pick(BLENDS.filter((b) => b !== l.blend))
@@ -319,36 +348,97 @@ function warmingCount() {
   return stack.filter((l) => l.state === 'warming').length
 }
 
-// One routing move: weighted pick among whatever is currently possible.
+// A live layer whose slug the user unchecked — swap these out first.
+function queuedOut() {
+  return liveLayers().find((l) => !l.locked && swapOutQueue.has(l.slug))
+}
+
+// One routing move: honour a user-planned swap and any unchecked layers first,
+// otherwise a weighted pick among whatever is currently possible.
 function mutate() {
   if (warmingCount()) return // let the network settle first
-  const eff = effectsOf()
-  const filter = filterOf()
-  const budgetLeft = perfBudget.value - stackCost()
-  const moves = []
-  if (eff.length) moves.push([() => opReplace(pick(eff)), 5])
-  if (eff.length < 3 && budgetLeft >= 2) moves.push([opAdd, 2.2])
-  if (eff.length > 1) moves.push([opRemove, 1.4])
-  if (filter) {
-    moves.push([() => opReplace(filter), 2])
-    moves.push([opDropFilter, 0.8])
-  } else if (budgetLeft >= 1) {
-    moves.push([opAddFilter, 2])
+  let did = false
+
+  // 1) A layer the user picked to swap next.
+  if (plannedNext.value) {
+    const target = stack.find((l) => l.id === plannedNext.value.targetId && l.state === 'live')
+    if (target && !target.locked) did = opReplace(target, plannedNext.value.slug)
+    plannedNext.value = null
   }
-  if (eff.length > 1) moves.push([opRestyle, 1.6])
-  let total = moves.reduce((a, [, w]) => a + w, 0)
-  let r = Math.random() * total
-  for (const [fn, w] of moves) {
-    r -= w
-    if (r <= 0) {
-      if (!fn()) continue
-      break
+  // 2) An unchecked live layer — replace it (or drop if it's a spare effect).
+  if (!did) {
+    const q = queuedOut()
+    if (q) {
+      const spareEffect = q.kind === 'effect' && effectsOf().length > 1
+      did = spareEffect ? (retire(q), say(`− ${titleOf(q.slug)}`), true) : opReplace(q)
+      if (did) swapOutQueue.delete(q.slug)
+    }
+  }
+  // 3) Otherwise a weighted random move over unlocked targets.
+  if (!did) {
+    const eff = effectsOf()
+    const uEff = unlocked(eff)
+    const filter = filterOf()
+    const budgetLeft = perfBudget.value - stackCost()
+    const moves = []
+    if (uEff.length) moves.push([() => opReplace(pick(uEff)), 5])
+    if (eff.length < 3 && budgetLeft >= 2) moves.push([opAdd, 2.2])
+    if (unlocked(eff).length && eff.length > 1) moves.push([opRemove, 1.4])
+    if (filter) {
+      if (!filter.locked) moves.push([() => opReplace(filter), 2])
+      if (!filter.locked) moves.push([opDropFilter, 0.8])
+    } else if (budgetLeft >= 1) {
+      moves.push([opAddFilter, 2])
+    }
+    if (unlocked(eff.slice(1)).length) moves.push([opRestyle, 1.6])
+    let total = moves.reduce((a, [, w]) => a + w, 0)
+    let r = Math.random() * total
+    for (const [fn, w] of moves) {
+      r -= w
+      if (r <= 0) { if (!fn()) continue; break }
     }
   }
   redo.length = 0 // a fresh move starts a new branch — old redo is void
   snapshot()
   dwellLeft = dwell.value
 }
+
+// Full reroll: tear the whole mix down (respecting locks) and deal a fresh one.
+function reroll() {
+  for (const l of [...stack]) if (!l.locked) retire(l, 1600)
+  const keptCost = liveLayers().filter((l) => l.locked).reduce((a, l) => a + cost(l.slug), 0)
+  const hasBase = liveLayers().some((l) => l.kind === 'effect' && l.locked)
+  if (!hasBase) {
+    const base = pickSketch(effectPool.value, perfBudget.value - keptCost)
+    if (base) insertLayer(makeLayer(base.slug, 'effect', 'normal', 1))
+  }
+  if (chance(0.8)) opAdd()
+  if (!liveLayers().some((l) => l.kind === 'filter') && chance(0.5)) opAddFilter()
+  settleUntil = performance.now() + 4000
+  plannedNext.value = null
+  snapshot()
+  dwellLeft = dwell.value
+  say('rerolled')
+}
+
+// Plan the next swap for a specific layer, and preview the incoming sketch by
+// name so you can see the change before it lands.
+function planSwap(layer) {
+  if (!layer || layer.locked) return
+  const pool = layer.kind === 'filter' ? filterPool.value : effectPool.value
+  const s = pickSketch(pool, perfBudget.value) // a representative candidate
+  plannedNext.value = { targetId: layer.id, slug: s?.slug ?? null }
+  if (s) say(`next: ${titleOf(layer.slug)} → ${titleOf(s.slug)}`)
+}
+function toggleLock(layer) {
+  layer.locked = !layer.locked
+  if (layer.locked && plannedNext.value?.targetId === layer.id) plannedNext.value = null
+}
+const plannedTitle = computed(() => {
+  if (!plannedNext.value) return null
+  const t = stack.find((l) => l.id === plannedNext.value.targetId)
+  return t ? `${titleOf(t.slug)} → ${plannedNext.value.slug ? titleOf(plannedNext.value.slug) : '…'}` : null
+})
 
 // --- history (back/forward: a hard rebuild, user-initiated) -----------------
 const history = []
@@ -363,12 +453,13 @@ function logicalLayers() {
   return stack.filter((l) => l.state !== 'dying' && !replaced.has(l.id))
 }
 function snapshot() {
-  history.push(logicalLayers().map((l) => ({ slug: l.slug, kind: l.kind, blend: l.blend, opacity: l.opacity })))
+  history.push(logicalLayers().map((l) => ({ slug: l.slug, kind: l.kind, blend: l.blend, opacity: l.opacity, locked: l.locked })))
   if (history.length > 30) history.shift()
 }
 function rebuildTo(descriptors) {
   for (const l of [...stack]) retire(l, 1700)
-  for (const d of descriptors) insertLayer(makeLayer(d.slug, d.kind, d.blend, d.opacity))
+  for (const d of descriptors) insertLayer(makeLayer(d.slug, d.kind, d.blend, d.opacity, d.locked))
+  settleUntil = performance.now() + 4000
   dwellLeft = dwell.value
 }
 function back() {
@@ -418,7 +509,9 @@ let winStart = 0
 function watchdog() {
   if (fps.value < fpsFloor.value) lowStreak++
   else lowStreak = 0
-  if (!lowSkip.value || warmingCount()) return
+  // Hold off while effects are still loading (start / reroll / rebuild) — they
+  // spike the frame time before they settle and would be culled unfairly.
+  if (!lowSkip.value || warmingCount() || performance.now() < settleUntil) return
   const eff = effectsOf()
   const filter = filterOf()
   if (lowStreak >= 3 && (eff.length > 1 || filter)) {
@@ -555,29 +648,46 @@ function pruneControls() {
     if (!wins.has(layerControls[i].win)) layerControls.splice(i, 1)
   }
 }
+// which layer slug owns this window (for the param cache)
+function slugForWindow(win) {
+  for (const l of stack) if (frames.get(l.id)?.contentWindow === win) return l.slug
+  return null
+}
 function onMessage(e) {
   if (e.data?.type !== 'sketch:ready') return
   readyWins.add(e.source)
   const title = titleForWindow(e.source)
   if (!title) return
+  const slug = slugForWindow(e.source)
+  const cached = slug ? paramCache[slug] : null
   const entry = {
     win: e.source,
+    slug,
     title,
     schema: e.data.schema ?? {},
-    values: { ...e.data.values },
-    mappings: (e.data.mappings ?? []).map((m) => ({ ...m })),
+    values: { ...e.data.values, ...(cached?.values ?? {}) },
+    mappings: (cached?.mappings ?? e.data.mappings ?? []).map((m) => ({ ...m })),
     open: layerControls.length === 0,
   }
+  // Re-apply any options you'd set for this slug before (across back/forward
+  // and rerolls) so the effect keeps its look instead of resetting.
+  if (cached?.values) for (const [k, v] of Object.entries(cached.values)) e.source.postMessage({ type: 'sketch:set-param', name: k, value: v }, '*')
+  if (cached?.mappings) e.source.postMessage({ type: 'sketch:set-mappings', mappings: cached.mappings }, '*')
   const i = layerControls.findIndex((c) => c.win === e.source)
   if (i >= 0) layerControls.splice(i, 1, entry)
   else layerControls.push(entry)
 }
+function cacheParams(c) {
+  if (c.slug) paramCache[c.slug] = { values: { ...c.values }, mappings: c.mappings.map((m) => ({ ...m })) }
+}
 function setParam(c, name, value) {
   c.values[name] = value
   c.win.postMessage({ type: 'sketch:set-param', name, value }, '*')
+  cacheParams(c)
 }
 function syncMappings(c) {
   c.win.postMessage({ type: 'sketch:set-mappings', mappings: c.mappings }, '*')
+  cacheParams(c)
 }
 function addMapping(c) {
   const firstNumeric = Object.keys(c.schema).find((k) => typeof c.schema[k].min === 'number')
@@ -598,6 +708,11 @@ let raf = 0
 let lastSecond = 0
 let dwellLeft = 0
 const dwellShown = ref(0)
+// 0→1 fraction elapsed within the current dwell, for the countdown ring.
+const dwellProgress = computed(() => {
+  const d = Math.max(1, dwell.value)
+  return Math.min(1, Math.max(0, 1 - dwellShown.value / d))
+})
 function loop(now) {
   beat.update(now)
   const bs = beat.state
@@ -655,6 +770,22 @@ function onFsChange() {
   isFullscreen.value = !!fsElement()
 }
 
+// Keyboard shortcuts for transport, save and audio (ignored while typing in a
+// field). Mirrors the shortcuts advertised on the last tutorial slide.
+function onKey(e) {
+  if (tourActive.value) return
+  const tag = e.target?.tagName
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+  const k = e.key.toLowerCase()
+  if (e.key === ' ') { e.preventDefault(); playing.value = !playing.value }
+  else if (e.key === 'ArrowLeft') back()
+  else if (e.key === 'ArrowRight') forward()
+  else if (k === 'r') reroll()
+  else if (k === 's') saveAsPatch()
+  else if (k === 'm') toggleMic()
+  else return
+}
+
 // --- guided tour -------------------------------------------------------------
 const tourActive = ref(false)
 const tourSteps = [
@@ -675,7 +806,9 @@ onMounted(() => {
   if (chance(0.5)) opAddFilter()
   snapshot()
   dwellLeft = dwell.value
+  settleUntil = performance.now() + 5000 // let the opening mix finish loading
   window.addEventListener('message', onMessage)
+  window.addEventListener('keydown', onKey)
   document.addEventListener('fullscreenchange', onFsChange)
   document.addEventListener('webkitfullscreenchange', onFsChange)
   raf = requestAnimationFrame(loop)
@@ -684,6 +817,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
   window.removeEventListener('message', onMessage)
+  window.removeEventListener('keydown', onKey)
   document.removeEventListener('fullscreenchange', onFsChange)
   document.removeEventListener('webkitfullscreenchange', onFsChange)
   beat.stop()
@@ -736,21 +870,45 @@ onBeforeUnmount(() => {
 
         <!-- transport -->
         <div class="panel-transport" data-tour="ap-transport">
-          <v-btn icon="mdi-skip-previous" variant="text" size="small" title="Back to the previous routing" :disabled="history.length < 2" @click="back" />
-          <v-btn :icon="playing ? 'mdi-pause' : 'mdi-play'" variant="text" size="small" :title="playing ? 'Pause the tour' : 'Resume'" @click="playing = !playing" />
-          <v-btn icon="mdi-skip-next" variant="text" size="small" :title="redo.length ? 'Forward' : 'Next routing move now'" @click="forward" />
-          <span class="countdown">{{ playing ? dwellShown + 's' : 'paused' }}</span>
+          <v-btn icon="mdi-skip-previous" variant="text" size="small" title="Previous routing (←)" :disabled="history.length < 2" @click="back" />
+          <v-btn :icon="playing ? 'mdi-pause' : 'mdi-play'" variant="text" size="small" :title="playing ? 'Pause (Space)' : 'Resume (Space)'" @click="playing = !playing" />
+          <v-btn icon="mdi-skip-next" variant="text" size="small" :title="redo.length ? 'Forward (→)' : 'Next move now (→)'" @click="forward" />
+          <!-- countdown with a circular progress ring around the number -->
+          <span class="countdown-ring" :title="playing ? 'Time until the next change' : 'Paused'">
+            <svg viewBox="0 0 36 36">
+              <circle class="ring-bg" cx="18" cy="18" r="15.5" />
+              <circle class="ring-fg" cx="18" cy="18" r="15.5"
+                :stroke-dasharray="97.4"
+                :stroke-dashoffset="97.4 * (1 - dwellProgress)" />
+            </svg>
+            <span class="ring-num">{{ playing ? dwellShown : '‖' }}</span>
+          </span>
+          <v-btn icon="mdi-dice-5-outline" variant="text" size="small" title="Full reroll (R)" @click="reroll" />
           <v-btn
             :icon="micOn ? 'mdi-microphone' : 'mdi-microphone-off'"
             variant="text" size="small"
             :color="micOn ? 'primary' : undefined"
-            title="Mic — every layer's audio mappings react"
+            title="Mic — audio reactivity (M)"
             @click="toggleMic"
           />
-          <v-btn icon="mdi-content-save-outline" variant="text" size="small" title="Save the current mix as a Patch routing" @click="saveAsPatch" />
+          <v-btn icon="mdi-content-save-outline" variant="text" size="small" title="Save the current mix as a Patch (S)" @click="saveAsPatch" />
         </div>
 
         <div class="panel-scroll" data-tour="ap-settings">
+          <!-- current mix: lock layers, or target one to swap next (with a
+               preview of the incoming sketch's name) -->
+          <div class="panel-sub" style="margin-top:0;border-top:0;padding-top:0">Current mix</div>
+          <div v-if="plannedTitle" class="planned">next → {{ plannedTitle }}</div>
+          <div class="mix-list">
+            <div v-for="l in liveLayers()" :key="l.id" class="mix-item" :class="{ locked: l.locked, planned: plannedNext?.targetId === l.id }">
+              <span class="mix-kind" :title="l.kind">{{ l.kind === 'filter' ? '⧉' : '◆' }}</span>
+              <span class="mix-name">{{ titleOf(l.slug) }}</span>
+              <button class="mix-btn" :title="l.locked ? 'Unlock' : 'Lock — keep this layer'" @click="toggleLock(l)">{{ l.locked ? '🔒' : '🔓' }}</button>
+              <button class="mix-btn" :disabled="l.locked" title="Swap this layer next (preview)" @click="planSwap(l)">⇄</button>
+            </div>
+            <div v-if="!liveLayers().length" class="waiting">building the mix…</div>
+          </div>
+
           <!-- settings -->
           <div class="set-row">Seconds between changes: {{ dwell }}s</div>
           <v-slider v-model="dwell" density="compact" hide-details :min="6" :max="120" :step="1" @end="persistSettings" />
@@ -882,6 +1040,22 @@ onBeforeUnmount(() => {
 .fps { font: 12px ui-monospace, monospace; color: #8f8; }
 .fps.low { color: #f88; }
 .countdown { font: 12px ui-monospace, monospace; color: #9aa4c0; min-width: 48px; text-align: right; margin-right: auto; }
+/* Countdown with a circular progress ring drawn around the number. */
+.countdown-ring { position: relative; width: 30px; height: 30px; margin-right: auto; display: inline-flex; align-items: center; justify-content: center; }
+.countdown-ring svg { position: absolute; inset: 0; width: 30px; height: 30px; transform: rotate(-90deg); }
+.countdown-ring .ring-bg { fill: none; stroke: rgba(255,255,255,0.12); stroke-width: 3; }
+.countdown-ring .ring-fg { fill: none; stroke: #7c8cff; stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 0.9s linear; }
+.ring-num { font: 11px ui-monospace, monospace; color: #cdd3e0; }
+.planned { font: 11px system-ui, sans-serif; color: #ffcf9a; background: rgba(60,42,20,0.5); border: 1px solid rgba(255,190,120,0.3); border-radius: 6px; padding: 3px 8px; }
+.mix-list { display: flex; flex-direction: column; gap: 3px; margin-bottom: 4px; }
+.mix-item { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; background: rgba(255,255,255,0.04); border: 1px solid transparent; }
+.mix-item.locked { border-color: rgba(124,140,255,0.5); background: rgba(124,140,255,0.1); }
+.mix-item.planned { border-color: rgba(255,190,120,0.5); }
+.mix-kind { color: #7c8cff; font-size: 11px; width: 12px; text-align: center; }
+.mix-name { flex: 1; font: 11px system-ui, sans-serif; color: #dfe4f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mix-btn { background: transparent; border: 0; cursor: pointer; font-size: 12px; line-height: 1; padding: 2px; opacity: 0.85; }
+.mix-btn:hover { opacity: 1; }
+.mix-btn:disabled { opacity: 0.3; cursor: default; }
 .set-row { font: 12px system-ui, sans-serif; color: #cdd3e0; margin-top: 4px; }
 .eff-list { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow-y: auto; margin-top: 4px; }
 .panel .eff-item { display: flex; flex-direction: row; align-items: center; gap: 6px; font: 11px system-ui, sans-serif; color: #cdd3e0; }
