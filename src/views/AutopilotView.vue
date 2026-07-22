@@ -63,6 +63,7 @@ const fpsFloor = ref(savedSet.fpsFloor ?? 24)
 const perfBudget = ref(savedSet.perfBudget ?? 12)
 const resolution = ref(savedSet.resolution ?? 'high') // low | medium | high | native
 const showNotes = ref(savedSet.showNotes ?? true) // the change title-card in the corner
+const evolveOptions = ref(savedSet.evolveOptions ?? true) // auto-drift each layer's own params
 // How the show evolves over time. Each mode shapes which effects get strung
 // together, how many layers stack, and the cadence of change — see the helpers
 // further down. "Evolve" is the original one-move-at-a-time behaviour.
@@ -87,7 +88,7 @@ function persistSettings() {
   localStorage.setItem(SET_KEY, JSON.stringify({
     dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value, perfBudget: perfBudget.value,
     resolution: resolution.value, evolveMode: evolveMode.value, showNotes: showNotes.value,
-    sections: { ...sections },
+    evolveOptions: evolveOptions.value, sections: { ...sections },
   }))
 }
 function toggleEffect(slug) {
@@ -473,6 +474,8 @@ function mutate() {
       moves.push([opAddFilter, 2])
     }
     if (unlocked(eff.slice(1)).length) moves.push([opRestyle, 1.6])
+    // occasionally swap the whole unlocked branch at once (bigger scene change)
+    if (liveLayers().filter((l) => !l.locked).length >= 2) moves.push([opSwapBranch, evolveMode.value === 'Chaos' ? 1.8 : 0.9])
     let total = moves.reduce((a, [, w]) => a + w, 0)
     let r = Math.random() * total
     for (const [fn, w] of moves) {
@@ -501,6 +504,25 @@ function reroll() {
   snapshot()
   dwellLeft = effectiveDwell()
   say('rerolled')
+}
+
+// Replace a whole branch: retire every unlocked layer (effects + the filter it
+// caps) at once and grow a fresh sub-mix in their place — a bigger, more
+// dramatic change than nudging one layer, but still keeping any locked layers.
+function opSwapBranch() {
+  const un = liveLayers().filter((l) => !l.locked)
+  if (un.length < 2) return false
+  for (const l of un) retire(l)
+  const keptCost = liveLayers().filter((l) => l.locked).reduce((a, l) => a + cost(l.slug), 0)
+  if (!liveLayers().some((l) => l.kind === 'effect' && l.locked)) {
+    const base = pickSketch(effectPool.value, perfBudget.value - keptCost)
+    if (base) insertLayer(makeLayer(base.slug, 'effect', 'normal', 1))
+  }
+  if (chance(0.7)) opAdd()
+  if (!liveLayers().some((l) => l.kind === 'filter') && chance(0.5)) opAddFilter()
+  settleUntil = performance.now() + 4000
+  say('new branch')
+  return true
 }
 
 // Plan the next swap for a specific layer, and preview the incoming sketch by
@@ -809,6 +831,26 @@ function numericParams(c) {
   return Object.keys(c.schema).filter((k) => typeof c.schema[k].min === 'number')
 }
 
+// Autopilot slowly evolves each live layer's OWN options too, not just which
+// sketches are on: once a second it eases one numeric param of one layer toward
+// a fresh random target (a per-param goal it re-rolls on arrival), so the look
+// keeps morphing even between routing moves. Cached via setParam so it persists.
+function driftOptions() {
+  const cands = layerControls.filter((c) => numericParams(c).length)
+  if (!cands.length) return
+  const c = pick(cands)
+  const keys = numericParams(c)
+  const name = pick(keys)
+  const sp = c.schema[name]
+  const span = (sp.max - sp.min) || 1
+  if (!c._drift) c._drift = {}
+  const cur = +c.values[name]
+  let target = c._drift[name]
+  if (target == null || Math.abs(target - cur) < span * 0.04) c._drift[name] = target = sp.min + Math.random() * span
+  const next = cur + (target - cur) * 0.16
+  setParam(c, name, +next.toFixed(4))
+}
+
 // --- main loop --------------------------------------------------------------
 let raf = 0
 let lastSecond = 0
@@ -851,6 +893,7 @@ function loop(now) {
       dwellLeft--
       dwellShown.value = Math.max(0, dwellLeft)
       watchdog()
+      if (evolveOptions.value && !warmingCount()) driftOptions()
       // Beat-synced drives itself off beats while the mic is live; fall back to
       // the dwell clock when there's no audio to sync to.
       const beatDriven = evolveMode.value === 'Beat-synced' && micOn.value
@@ -1047,6 +1090,7 @@ onBeforeUnmount(() => {
               <v-btn value="high" size="x-small">High</v-btn>
               <v-btn value="native" size="x-small">Native</v-btn>
             </v-btn-toggle>
+            <v-checkbox v-model="evolveOptions" density="compact" hide-details label="Evolve each effect's options over time" @change="persistSettings" />
             <v-checkbox v-model="showNotes" density="compact" hide-details label="Show change title-card" @change="persistSettings" />
             <v-checkbox v-model="lowSkip" density="compact" hide-details label="Auto-thin the mix on low FPS" @change="persistSettings" />
             <div v-if="lowSkip" class="set-row">FPS floor: {{ fpsFloor }}</div>
