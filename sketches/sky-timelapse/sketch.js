@@ -15,6 +15,9 @@ const params = rt.params({
   wind: { value: 1, min: 0, max: 4, step: 0.05, label: 'Wind' },
   sun: { value: 1, min: 0.3, max: 2, step: 0.05, label: 'Sun size' },
   stars: { value: 0.8, min: 0, max: 1, step: 0.02, label: 'Stars' },
+  // Long-exposure star trails: the night sky wheels about the celestial pole
+  // and each star smears into an arc. 0 = crisp points, 1 = long streaks.
+  trails: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Star trails' },
 })
 rt.mapInput('audio.level', 'wind', 0.4)
 
@@ -74,13 +77,27 @@ const cloudB = bakeNoise(7)
 
 let W = 0, H = 0
 let starList = []
+// A persistent buffer the stars smear into as the sky wheels, composited over
+// the night sky — this is what produces the long-exposure trails.
+const trailCv = document.createElement('canvas')
+const trailCtx = trailCv.getContext('2d')
 function resize() {
   W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
   H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
+  trailCv.width = W; trailCv.height = H
+  trailCtx.clearRect(0, 0, W, H)
   starList = []
   const n = Math.round(220 * rt.detail)
-  for (let i = 0; i < n; i++) starList.push({ x: rt.rng(), y: rt.rng() * 0.7, r: rt.random(0.4, 1.5), tw: rt.random(0, 6.28), sp: rt.random(1.5, 3.5) })
+  for (let i = 0; i < n; i++) starList.push({
+    x: rt.rng(), y: rt.rng() * 0.85, r: rt.random(0.4, 1.6),
+    tw: rt.random(0, 6.28), sp: rt.random(1.5, 3.5),
+    hue: rt.random(200, 260), warm: rt.rng() < 0.25,
+  })
 }
+// Celestial pole (upper area) the stars appear to rotate around, and the
+// accumulated rotation of the night sky.
+const pole = { x: 0.78, y: 0.06 }
+let starRot = 0
 
 function drawClouds(img, ox, scale, alpha, tint) {
   const tile = Math.max(W, H) * scale
@@ -120,16 +137,33 @@ function frame(now) {
   const dayF = Math.max(0, Math.sin((phase - 0.0) * Math.PI * 2 - Math.PI / 2) * 0.5 + 0.5)
   const nightF = 1 - dayF
 
-  // stars
-  if (params.stars > 0.02 && nightF > 0.05) {
-    ctx.globalCompositeOperation = 'lighter'
-    for (const s of starList) {
-      const a = params.stars * nightF * (0.3 + 0.7 * Math.abs(Math.sin(s.tw + t * s.sp)))
-      ctx.fillStyle = `rgba(230,235,255,${a})`
-      ctx.beginPath(); ctx.arc(s.x * W, s.y * H, s.r * rt.pixelRatio, 0, 6.28); ctx.fill()
+  // stars wheel about the celestial pole, smearing into trails on a persistent
+  // buffer. Fade the buffer a touch each frame — a longer Trails setting fades
+  // slower (longer streaks); the buffer also clears out fast during daylight.
+  starRot += dt * params.speed * 0.06
+  const px = pole.x * W, py = pole.y * H
+  const c = Math.cos(starRot), s = Math.sin(starRot)
+  const trailFade = (1 - params.trails) * 0.12 + 0.006 + dayF * 0.25
+  trailCtx.globalCompositeOperation = 'destination-out'
+  trailCtx.fillStyle = `rgba(0,0,0,${Math.min(1, trailFade)})`
+  trailCtx.fillRect(0, 0, W, H)
+  if (params.stars > 0.02 && nightF > 0.02) {
+    trailCtx.globalCompositeOperation = 'lighter'
+    for (const st of starList) {
+      const dx = st.x * W - px, dy = st.y * H - py
+      const sx = px + dx * c - dy * s
+      const sy = py + dx * s + dy * c
+      const a = params.stars * nightF * (0.35 + 0.65 * Math.abs(Math.sin(st.tw + t * st.sp)))
+      const col = st.warm ? '255,220,190' : '225,232,255'
+      trailCtx.fillStyle = `rgba(${col},${a})`
+      trailCtx.beginPath(); trailCtx.arc(sx, sy, st.r * rt.pixelRatio, 0, 6.28); trailCtx.fill()
     }
-    ctx.globalCompositeOperation = 'source-over'
   }
+  trailCtx.globalCompositeOperation = 'source-over'
+  // composite the star layer over the sky
+  ctx.globalCompositeOperation = 'lighter'
+  ctx.drawImage(trailCv, 0, 0)
+  ctx.globalCompositeOperation = 'source-over'
 
   // sun / moon: travel a low arc across the sky. Angle from phase; the sun is
   // up ~0.25..0.75, the moon opposite.

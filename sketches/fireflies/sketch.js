@@ -14,6 +14,13 @@ const params = rt.params({
   glow: { value: 1, min: 0.3, max: 2.5, step: 0.05, label: 'Glow size' },
   blink: { value: 1, min: 0.2, max: 3, step: 0.05, label: 'Blink rate' },
   sync: { value: 0.35, min: 0, max: 1, step: 0.02, label: 'Sync' },
+  // Slowly breathe the coupling up and down so the swarm keeps falling into
+  // unison and drifting apart again, the way real firefly choruses wax and wane.
+  phaseDrift: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Phase drift' },
+  driftRate: { value: 0.5, min: 0.05, max: 2, step: 0.05, label: 'Drift rate' },
+  // Injects a breathing amount of randomness into each bug's blink + heading,
+  // so order dissolves into chaos and re-forms.
+  chaos: { value: 0.25, min: 0, max: 1, step: 0.02, label: 'Chaos' },
   hue: { value: 55, min: 0, max: 360, step: 1, label: 'Glow hue' },
   trail: { value: 0.4, min: 0, max: 0.95, step: 0.02, label: 'Trails' },
 })
@@ -87,12 +94,17 @@ function frame(now) {
 
   const rate = params.blink * 1.4
   globalPhase += dt * rate
-  const sync = params.sync
+  // Coupling breathes: base Sync modulated by a slow sine so the chorus falls
+  // in and out of unison over time (Phase drift controls how deep it breathes).
+  const breathe = 0.5 + 0.5 * Math.sin(t * params.driftRate * 0.5)
+  const sync = params.sync * (1 - params.phaseDrift) + params.sync * params.phaseDrift * breathe
+  // Chaos also breathes (offset phase) so disorder swells and subsides.
+  const chaosNow = params.chaos * (0.4 + 0.6 * (0.5 + 0.5 * Math.sin(t * params.driftRate * 0.5 + 2.1)))
 
   ctx.globalCompositeOperation = 'lighter'
   for (const f of flies) {
     // meander along the flow field, with a personal bias and depth-scaled speed
-    const heading = flow(f.x, f.y, t) + f.bias
+    const heading = flow(f.x, f.y, t) + f.bias + (chaosNow ? (rt.rng() - 0.5) * chaosNow * 3 : 0)
     const v = (18 + f.depth * 34) * params.speed * f.spd * rt.pixelRatio
     f.x += Math.cos(heading) * v * dt
     f.y += Math.sin(heading) * v * dt
@@ -117,6 +129,8 @@ function frame(now) {
       diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // wrap to -π..π
       f.phase += diff * sync * dt * 2.5
     }
+    // chaos scrambles each bug's blink timing, fighting the pull to unison
+    if (chaosNow) f.phase += (rt.rng() - 0.5) * chaosNow * dt * 9
     const s = Math.max(0, Math.sin(f.phase))
     // a sharp blink over a faint ever-present body glow, so the swarm never
     // fully vanishes between flashes (as real fireflies keep a dim ember)
