@@ -1,6 +1,6 @@
 {
   "title": "Clouds",
-  "description": "A living sky of clouds that form, drift and dissolve. Choose a cloud type — puffy fair-weather cumulus, flat grey stratus layers, high wispy cirrus, or a towering storm — or let it slowly evolve between them. Sunlight rakes across so cloud tops glow and undersides fall into shadow, and the whole field breathes as it moves on the wind. Type, cover, wind, evolution, sun angle and sky colour are live and mappable.",
+  "description": "A living sky of clouds that form, drift and dissolve. Choose a cloud type — puffy fair-weather cumulus, flat grey stratus, high wispy cirrus, a towering storm, or one of the rarer types: smooth stacked lenticular lenses, pouchy mammatus hanging beneath a storm, a dappled mackerel sky, or electric-blue noctilucent wisps — or let it slowly evolve between them. Sunlight rakes across so cloud tops glow and undersides fall into shadow, and the whole field breathes as it moves on the wind. Type, cover, wind, evolution, sun angle and sky colour are live and mappable.",
   "tags": ["air", "sky", "clouds", "atmosphere", "generative"],
   "tech": ["canvas2d"],
   "created": "2026-07-22"
