@@ -28,14 +28,23 @@ function bakeLeaves(scale, seedOff) {
   x.globalCompositeOperation = 'lighter'
   for (let i = 0; i < 90; i++) {
     const cx = rt.random(0, S), cy = rt.random(0, S), r = rt.random(6, 26) * scale
-    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r)
-    g.addColorStop(0, 'rgba(255,255,255,0.9)')
-    g.addColorStop(1, 'rgba(255,255,255,0)')
-    x.fillStyle = g
-    x.beginPath(); x.ellipse(cx, cy, r, r * rt.random(0.5, 1), rt.random(0, 6), 0, Math.PI * 2); x.fill()
+    const ry = r * rt.random(0.5, 1), rot = rt.random(0, 6)
+    // Draw each blob wrapped across all nine tile offsets so the texture tiles
+    // seamlessly — otherwise the 256px tile seams read as a visible grid in
+    // the dappled light.
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+      const px = cx + ox * S, py = cy + oy * S
+      const g = x.createRadialGradient(px, py, 0, px, py, r)
+      g.addColorStop(0, 'rgba(255,255,255,0.9)')
+      g.addColorStop(1, 'rgba(255,255,255,0)')
+      x.fillStyle = g
+      x.beginPath(); x.ellipse(px, py, r, ry, rot, 0, Math.PI * 2); x.fill()
+    }
   }
+  // Blur with a wrapped copy so the blur itself doesn't introduce a seam.
   const c2 = document.createElement('canvas'); c2.width = c2.height = S
-  const x2 = c2.getContext('2d'); x2.filter = 'blur(4px)'; x2.drawImage(c, 0, 0)
+  const x2 = c2.getContext('2d'); x2.filter = 'blur(4px)'
+  for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) x2.drawImage(c, ox * S, oy * S)
   return c2
 }
 const leafA = bakeLeaves(1, 0), leafB = bakeLeaves(1.6, 40)
