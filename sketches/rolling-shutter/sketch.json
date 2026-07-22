@@ -1,0 +1,7 @@
+{
+  "title": "Rolling Shutter",
+  "description": "The rolling-shutter (CMOS \"jello\") camera artifact as a live filter: a sensor reads out one scanline at a time from top to bottom, so each row of the image is sampled a moment later than the one above it. Pan or shake fast and verticals skew, the whole frame wobbles like jelly, and a bright flash paints only a band of the picture. Readout direction and speed, skew, jello wobble, motion smear and a partial-exposure flash band are live and mappable — works on a camera, a dropped photo/video, the demo, or the layers below.",
+  "tags": ["rolling-shutter", "jello", "distortion", "filter", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

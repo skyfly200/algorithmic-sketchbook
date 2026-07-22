@@ -1,0 +1,7 @@
+{
+  "title": "Honeycomb & Bees",
+  "description": "A living frame of honeycomb: waxen hexagonal cells, some capped, some brimming with glossy amber honey that catches the light, and worker bees crawling over the comb — wings shivering, antennae twitching — pausing at cells to tend them before ambling on. The pointer draws the bees over to investigate; beats set the whole colony bustling. Comb scale, honey fill, bee count, speed and warmth are live and mappable.",
+  "tags": ["bees", "honeycomb", "nature", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

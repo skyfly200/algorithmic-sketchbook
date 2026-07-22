@@ -1,0 +1,7 @@
+{
+  "title": "Murmuration",
+  "description": "A starling murmuration at dusk — thousands of birds flocking by three simple rules (separation, alignment, cohesion) fold into shifting ribbons and breathing density clouds against a fading sky. A wheeling predator (or your pointer) scatters the flock into a startle-wave that ripples out and re-forms. Flock size, the flocking weights, predator fear, speed and sky are live and mappable.",
+  "tags": ["birds", "flocking", "boids", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

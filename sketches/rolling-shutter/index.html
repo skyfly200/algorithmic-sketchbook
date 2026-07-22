@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rolling Shutter</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #05060a; }
+      canvas { display: block; width: 100vw; height: 100vh; }
+      #chooser { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #ddd; font: 15px system-ui, sans-serif; background: rgba(0, 0, 0, 0.55); }
+      #chooser button { font: inherit; color: #fff; cursor: pointer; padding: 10px 22px; border-radius: 999px; background: rgba(124, 140, 255, 0.25); border: 1px solid rgba(124, 140, 255, 0.7); }
+      #chooser button:hover { background: rgba(124, 140, 255, 0.45); }
+      #chooser p { max-width: 440px; text-align: center; opacity: 0.72; margin: 0 0 8px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <div id="chooser">
+      <p>The rolling-shutter (CMOS "jello") effect: each scanline is captured at a slightly different instant, so fast motion skews, wobbles and tears. Use a camera, drop in a photo or video, or watch the demo.</p>
+      <button id="use-camera">📷 Use my camera</button>
+      <button id="use-upload">📁 Upload a photo / video</button>
+      <button id="use-demo">▶ Use demo source</button>
+      <input id="file-input" type="file" accept="video/*,image/*" hidden />
+    </div>
+    <script type="module" src="./sketch.js"></script>
+  </body>
+</html>
