@@ -58,6 +58,10 @@ function vnoise1(x) {
   const a = hash1(x0), b = hash1(x0 + 1)
   return a + (b - a) * (fx * fx * (3 - 2 * fx))
 }
+function smooth01(e0, e1, x) {
+  let t = (x - e0) / (e1 - e0); t = t < 0 ? 0 : t > 1 ? 1 : t
+  return t * t * (3 - 2 * t)
+}
 
 let W = 0, H = 0, PR = 1
 const panel = document.createElement('canvas')
@@ -138,68 +142,101 @@ function buildPanel() {
     }
   }
 
-  const heightAmp = 0.7 * params.relief
   const ledgeScale = 0.6 * params.ledges
   const lutIdx = (c) => {
     let k = (c / bandTotal * LUTN) | 0
     return k < 0 ? 0 : k >= LUTN ? LUTN - 1 : k
   }
-  // ridged fracture field → thin dark cracks (joints + finer hairlines)
-  const ridge = (x, y, F, s) => Math.abs(vnoise((x / gw) * F + s, (y / gw) * F + s * 0.5, F) * 2 - 1)
+  // Worley/cellular fracture: F2-F1 near zero traces cell boundaries, giving a
+  // realistic branching polygonal joint network with natural Y-junctions. Cells
+  // are stretched vertically (aspect) so joints tend sub-vertical between beds.
+  // The grid wraps in X (cols) so cracks stay seamless across the tiling.
+  function worley(x, y, cell, aspect, s) {
+    const gx = x / cell, gy = y / (cell * aspect)
+    const xi = Math.floor(gx), yi = Math.floor(gy)
+    const cols = Math.max(1, Math.round(gw / cell))
+    let f1 = 1e9, f2 = 1e9
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+      const cxi = xi + ox, cyi = yi + oy
+      const cxm = ((cxi % cols) + cols) % cols
+      const fxp = cxi + hash2(cxm + s, cyi * 131 + s)
+      const fyp = cyi + hash2(cxm + s + 17, cyi * 131 + s + 91)
+      const dx = fxp - gx, dy = fyp - gy
+      const dd = dx * dx + dy * dy
+      if (dd < f1) { f2 = f1; f1 = dd } else if (dd < f2) { f2 = dd }
+    }
+    return Math.sqrt(f2) - Math.sqrt(f1)
+  }
+  const cellBig = Math.max(24, gh * 0.16)
+  const cellSmall = Math.max(12, gh * 0.07)
 
   const N = gw * gh
   const htA = new Float32Array(N)
   const cA = new Float32Array(N)
   const crA = new Float32Array(N)
+  const surfA = new Float32Array(N)
 
-  // PASS 1 — height field (incl. ledges & crack notches), strata coord, cracks
+  // PASS 1 — height field (bumpy macro form + detail + ledges − crack notches),
+  // strata coordinate (draped over the bumps), and the fracture field.
   for (let y = 0; y < gh; y++) {
     for (let x = 0; x < gw; x++) {
-      // fractal height
-      let base = 0, amp = 1, norm = 0, per = 8, sx = (x / gw) * 8, sy = (y / gw) * 8
-      for (let o = 0; o < 5; o++) { base += amp * vnoise(sx + seed, sy, per); norm += amp; amp *= 0.5; sx *= 2; sy *= 2; per *= 2 }
-      base /= norm
-      // domain-warped strata coordinate (irregular folds, no visible sine)
+      // macro bumps: a few low-frequency octaves → big rolling lumps & hollows
+      let macro = 0, ma = 1, mn = 0, mp = 2, mx = (x / gw) * 2, my = (y / gw) * 2
+      for (let o = 0; o < 3; o++) { macro += ma * vnoise(mx + seed, my, mp); mn += ma; ma *= 0.5; mx *= 2; my *= 2; mp *= 2 }
+      macro /= mn
+      // finer surface detail on top of the bumps
+      let det = 0, da = 1, dn = 0, dp = 14, dx2 = (x / gw) * 14, dy2 = (y / gw) * 14
+      for (let o = 0; o < 4; o++) { det += da * vnoise(dx2 + seed + 3, dy2, dp); dn += da; da *= 0.5; dx2 *= 2; dy2 *= 2; dp *= 2 }
+      det /= dn
+      const surface = macro * 0.72 + det * 0.28
+      // domain-warped strata coordinate (irregular folds), draped over the bumps
       let wsum = 0, wamp = 1, wn = 0, wper = 3, wx = (x / gw) * 3, wy = (y / gw) * 3
       for (let o = 0; o < 3; o++) { wsum += wamp * (vnoise(wx + seed + 50, wy + 50, wper) - 0.5); wn += wamp; wamp *= 0.55; wx *= 2; wy *= 2; wper *= 2 }
-      const warp2 = vnoise((x / gw) * 9 + seed + 9, (y / gw) * 9, 9) - 0.5
-      const c = y * cPerPx + baseOffset + (wsum / wn * 3.2 + warp2 * 0.8) * params.fold
-      // cracks
-      let cr = 0
-      const r1 = ridge(x, y, 5, seed + 1)
-      if (r1 < 0.04) cr = 1 - r1 / 0.04
-      const r2 = ridge(x, y, 12, seed + 2)
-      if (r2 < 0.028) cr = Math.max(cr, (1 - r2 / 0.028) * 0.75)
-      cr *= params.cracks
+      const c = y * cPerPx + baseOffset + (wsum / wn * 3.2) * params.fold + (macro - 0.5) * 5.0
+      // fracture network: chunky joints + finer cracks, gated into zones so the
+      // face isn't cracked everywhere, with slightly varying width.
+      const gate = smooth01(0.42, 0.62, macro) * 0.7 + 0.3
+      const wide = 0.03 + 0.02 * vnoise((x / gw) * 6 + seed + 4, (y / gw) * 6, 6)
+      let cr = (1 - smooth01(0, wide, worley(x, y, cellBig, 1.35, seed + 1))) * gate
+      const fine = (1 - smooth01(0, wide * 0.6, worley(x, y, cellSmall, 1.5, seed + 2))) * gate * 0.7
+      cr = Math.max(cr, fine) * params.cracks
       const i = y * gw + x
       cA[i] = c
       crA[i] = cr
-      htA[i] = base * heightAmp + ledgeLUT[lutIdx(c)] * ledgeScale - cr * 0.14
+      surfA[i] = surface
+      htA[i] = surface * (0.9 * params.relief) + ledgeLUT[lutIdx(c)] * ledgeScale - cr * 0.32
     }
   }
 
-  // PASS 2 — shade from normals, colour from strata + laminations + grain + cracks
+  // PASS 2 — dual-scale bump shading (macro form + fine texture), strata colour,
+  // laminations, grain and carved cracks.
   const img = pctx.createImageData(gw, gh)
   const d = img.data
   const warmR = 0.84 + params.light * 0.42, warmG = 0.84 + params.light * 0.24, warmB = 0.9 + (1 - params.light) * 0.12
-  const bump = 3.0 * params.relief
+  const st = Math.max(2, Math.round(gh * 0.006)) // wide stencil captures the big bumps
+  const bMacro = 2.4 * params.relief, bMicro = 1.4 * params.relief
+  const cl = (i) => i < 0 ? 0 : i >= N ? N - 1 : i
   for (let y = 0; y < gh; y++) {
+    const yu = y > st ? -st : 0, yd = y < gh - st ? st : 0
+    const i0 = y * gw
     for (let x = 0; x < gw; x++) {
-      const i = y * gw + x
-      const hL = x > 0 ? htA[i - 1] : htA[i], hR = x < gw - 1 ? htA[i + 1] : htA[i]
-      const hU = y > 0 ? htA[i - gw] : htA[i], hD = y < gh - 1 ? htA[i + gw] : htA[i]
-      let nx = (hL - hR) * bump, ny = (hU - hD) * bump, nz = 1
+      const i = i0 + x
+      const xl = x > st ? x - st : 0, xr = x < gw - st ? x + st : gw - 1
+      // macro slope from the wide stencil + fine slope from immediate neighbours
+      let nx = (htA[i0 + xl] - htA[i0 + xr]) * bMacro + (htA[cl(i - 1)] - htA[cl(i + 1)]) * bMicro
+      let ny = (htA[cl(i + yu * gw)] - htA[cl(i + yd * gw)]) * bMacro + (htA[cl(i - gw)] - htA[cl(i + gw)]) * bMicro
+      let nz = 1
       const inv = 1 / Math.hypot(nx, ny, nz); nx *= inv; ny *= inv; nz *= inv
       let sh = nx * lx + ny * ly + nz * lz; if (sh < 0) sh = 0
-      const lightF = 0.5 + 0.95 * sh
-      const ao = 0.72 + 0.28 * htA[i]
+      const lightF = 0.42 + 1.02 * sh
+      const ao = 0.6 + 0.4 * surfA[i] // recesses/hollows sit in shadow → reads 3D
 
       const c = cA[i]
       const k = (c / bandTotal * LUTN) | 0
       const kk = k < 0 ? 0 : k >= LUTN ? LUTN - 1 : k
       const lam = 1 + (vnoise1(c * 5 + 13) - 0.5) * 0.16 * params.strata // fine bedding laminae
       const grain = 0.95 + 0.1 * hash2(x * 3 + seed, y * 3) // micro speckle
-      const crackF = 1 - crA[i] * 0.72
+      const crackF = 1 - crA[i] * 0.8
 
       const f = lightF * ao * lam * grain * crackF
       let r = colorLUT[kk * 3] * f * warmR
