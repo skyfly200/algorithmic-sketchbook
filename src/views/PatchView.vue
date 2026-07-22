@@ -746,6 +746,26 @@ function resetView() {
   view.panX = 0
   view.panY = 0
 }
+// Frame the whole graph: fit every node into the board with a little margin.
+function fitToView() {
+  if (!nodes.length || !board.value) return resetView()
+  const br = board.value.getBoundingClientRect()
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const n of nodes) {
+    // node left/top are in un-scaled "space" coordinates; height varies with
+    // its open panels, so read the rendered element when we can.
+    const el = board.value.querySelector(`[data-node-id="${n.id}"]`)
+    const hgt = el ? el.offsetHeight : 200
+    minX = Math.min(minX, n.x); minY = Math.min(minY, n.y)
+    maxX = Math.max(maxX, n.x + NODE_W); maxY = Math.max(maxY, n.y + hgt)
+  }
+  const pad = 60
+  const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY)
+  const z = clamp(Math.min((br.width - pad * 2) / bw, (br.height - pad * 2) / bh), 0.25, 2.5)
+  view.zoom = z
+  view.panX = (br.width - bw * z) / 2 - minX * z
+  view.panY = (br.height - bh * z) / 2 - minY * z
+}
 // Two-finger pinch state (pointerId -> last client point).
 const pinch = new Map()
 function onBoardDown(e) {
@@ -2617,6 +2637,7 @@ onBeforeUnmount(() => {
       <div
         v-for="n in nodes"
         :key="n.id"
+        :data-node-id="n.id"
         class="node"
         :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked, 'node--slow': nodeSlow(n) }"
         :style="{ left: n.x + 'px', top: n.y + 'px', width: NODE_W + 'px' }"
@@ -2873,7 +2894,8 @@ onBeforeUnmount(() => {
       <v-btn icon="mdi-magnify-minus-outline" size="x-small" variant="text" title="Zoom out" @click="zoomStep(1 / 1.2)" />
       <span class="zoom-pct">{{ Math.round(view.zoom * 100) }}%</span>
       <v-btn icon="mdi-magnify-plus-outline" size="x-small" variant="text" title="Zoom in" @click="zoomStep(1.2)" />
-      <v-btn icon="mdi-fit-to-page-outline" size="x-small" variant="text" title="Reset view" @click="resetView" />
+      <v-btn icon="mdi-backup-restore" size="x-small" variant="text" title="Reset zoom to 100%" @click="resetView" />
+      <v-btn icon="mdi-fit-to-page-outline" size="x-small" variant="text" title="Zoom to fit — frame the whole graph" @click="fitToView" />
     </div>
 
     <div v-show="!outputOnly" class="hint">Drag a node's right port to another node's left port to wire it. Drag an Input node's ▣ output to any param's ▣ jack to modulate it. Click a wire to remove it.</div>
