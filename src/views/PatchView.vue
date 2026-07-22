@@ -1948,6 +1948,14 @@ function loadSaved() {
 }
 const savedRoutings = ref(loadSaved())
 const newName = ref('')
+// A transient success card (bottom-right) for saves/exports.
+const toast = ref('')
+let toastTimer = 0
+function showToast(msg) {
+  toast.value = msg
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => (toast.value = ''), 2800)
+}
 // Inline rename of a saved routing.
 const editRoutingId = ref(null)
 const editRoutingName = ref('')
@@ -1984,13 +1992,15 @@ function saveBlock() {
   }))
   const bedges = edges.filter((e) => set.has(e.from) && set.has(e.to)).map((e) => ({ ...e }))
   const blinks = links.filter((l) => set.has(l.from) && set.has(l.node)).map((l) => ({ ...l }))
+  const bname = newBlockName.value.trim() || `Block ${savedBlocks.value.length + 1}`
   savedBlocks.value.push({
     id: Date.now().toString(36),
-    name: newBlockName.value.trim() || `Block ${savedBlocks.value.length + 1}`,
+    name: bname,
     nodes: bnodes, edges: bedges, links: blinks,
   })
   newBlockName.value = ''
   persistBlocks()
+  showToast(`Saved block “${bname}”`)
 }
 // Insert (stamp) a saved block into the graph with fresh ids, offset so it
 // lands in view; selects the new nodes so you can immediately drag them.
@@ -2035,6 +2045,7 @@ function saveRouting() {
     effects: currentEffects(), // each effect sketch's own param values + mappings
   })
   persistSaved()
+  showToast(`Saved “${name}”`)
   newName.value = ''
 }
 function loadRouting(r) {
@@ -2381,14 +2392,6 @@ onBeforeUnmount(() => {
         :color="cameraOn ? 'primary' : undefined"
         title="Camera — request the webcam once; all Media nodes in camera mode share it"
         @click="toggleCamera"
-      />
-      <v-btn
-        v-if="cameraOn"
-        icon="mdi-camera-flip"
-        variant="text"
-        size="small"
-        title="Flip between the front and back camera"
-        @click="flipCamera"
       />
       <v-btn
         :icon="recording ? 'mdi-stop-circle' : 'mdi-record-circle-outline'"
@@ -2824,6 +2827,7 @@ onBeforeUnmount(() => {
               <input type="file" accept="image/*,video/*" multiple hidden @change="loadMediaFiles(n, $event)" />
             </label>
             <div v-if="n.params.mode === 'camera' && !cameraOn" class="media-hint">Camera is off — enable it with the webcam button in the toolbar.</div>
+            <button v-if="n.params.mode === 'camera' && cameraOn" class="load-btn" title="Flip between the front and back camera" @pointerdown.stop @click="flipCamera">🔄 Flip camera</button>
           </template>
           <template v-if="n.type === 'text'">
             <input class="text-in" type="text" :value="n.params.text" placeholder="type…" @input="n.params.text = $event.target.value; persist()" @pointerdown.stop />
@@ -2900,6 +2904,10 @@ onBeforeUnmount(() => {
 
     <div v-show="!outputOnly" class="hint">Drag a node's right port to another node's left port to wire it. Drag an Input node's ▣ output to any param's ▣ jack to modulate it. Click a wire to remove it.</div>
 
+    <transition name="toast-fade">
+      <div v-if="toast" class="save-toast"><v-icon icon="mdi-check-circle" size="16" class="mr-1" />{{ toast }}</div>
+    </transition>
+
     <TourOverlay v-model="tourActive" :steps="tourSteps" @finish="finishTour" />
   </div>
 </template>
@@ -2940,6 +2948,14 @@ onBeforeUnmount(() => {
   background: rgba(20,22,30,0.85); border-radius: 8px; padding: 2px 4px;
 }
 .zoom-pct { font: 11px system-ui, sans-serif; color: #cdd3e0; min-width: 38px; text-align: center; }
+.save-toast {
+  position: absolute; right: 16px; bottom: 16px; z-index: 40;
+  display: flex; align-items: center; padding: 9px 14px; border-radius: 10px;
+  background: rgba(16, 32, 22, 0.92); border: 1px solid rgba(80, 220, 140, 0.4);
+  color: #c8f5d8; font: 500 13px system-ui, sans-serif; box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+}
+.toast-fade-enter-active, .toast-fade-leave-active { transition: opacity 0.35s ease, transform 0.35s ease; }
+.toast-fade-enter-from, .toast-fade-leave-to { opacity: 0; transform: translateY(10px); }
 .wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 11; }
 .wire { pointer-events: stroke; cursor: pointer; opacity: 0.9; }
 .wire:hover { stroke-width: 4; }
