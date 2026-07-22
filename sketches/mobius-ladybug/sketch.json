@@ -1,0 +1,7 @@
+{
+  "title": "Ladybug on a Möbius Loop",
+  "description": "A ladybug crawls forever along a Möbius strip — a one-sided loop, so after a full lap it finds itself walking upside-down on the 'other' face, and only comes home after two. Switch the track to a Toroid (a torus) for an ordinary two-sided ring, and watch the bug orient itself to the twisting surface as it goes. Track, crawl speed, twist/thickness, bug size, camera orbit and colours are live and mappable.",
+  "tags": ["geometry", "topology", "3d", "generative", "audio-reactive"],
+  "tech": ["three.js", "webgl"],
+  "created": "2026-07-22"
+}

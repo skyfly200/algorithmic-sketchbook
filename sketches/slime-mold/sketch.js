@@ -76,10 +76,38 @@ function resize() {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
-  foods.push({ x: (e.clientX / window.innerWidth) * W, y: (e.clientY / window.innerHeight) * H, born: performance.now() })
+  foods.push({ x: (e.clientX / window.innerWidth) * W, y: (e.clientY / window.innerHeight) * H, born: performance.now(), ang: rt.random(0, Math.PI * 2) })
   if (foods.length > 12) foods.shift()
   if (hint) hint.style.opacity = '0'
 })
+
+// A single rolled-oat flake — a pale, ridged oval with a central groove — drawn
+// where you dropped food, shrinking as the colony consumes it.
+function drawOat(cctx, x, y, r, ang, life) {
+  cctx.save()
+  cctx.translate(x, y)
+  cctx.rotate(ang)
+  const w = r * (0.7 + life * 0.3)
+  // soft shadow
+  cctx.fillStyle = 'rgba(0,0,0,0.25)'
+  cctx.beginPath(); cctx.ellipse(1.5, 2, w * 1.05, w * 0.62, 0, 0, 6.28); cctx.fill()
+  // oat body
+  const g = cctx.createLinearGradient(0, -w * 0.6, 0, w * 0.6)
+  g.addColorStop(0, '#f3e6c4')
+  g.addColorStop(1, '#d9c294')
+  cctx.fillStyle = g
+  cctx.beginPath(); cctx.ellipse(0, 0, w, w * 0.6, 0, 0, 6.28); cctx.fill()
+  // central groove
+  cctx.strokeStyle = 'rgba(150,120,70,0.6)'; cctx.lineWidth = Math.max(1, w * 0.06)
+  cctx.beginPath(); cctx.moveTo(-w * 0.75, 0); cctx.lineTo(w * 0.75, 0); cctx.stroke()
+  // a few flat-roll ridges + flecks
+  cctx.strokeStyle = 'rgba(190,165,110,0.5)'; cctx.lineWidth = Math.max(0.5, w * 0.03)
+  for (let k = -2; k <= 2; k++) {
+    if (k === 0) continue
+    cctx.beginPath(); cctx.ellipse(0, k * w * 0.16, w * (1 - Math.abs(k) * 0.18), w * 0.06, 0, 0, 6.28); cctx.stroke()
+  }
+  cctx.restore()
+}
 
 // Bounded (non-wrapping) field: clamp sample coordinates so the trail doesn't
 // wrap around the dish edges.
@@ -194,6 +222,14 @@ function render() {
   sctx.putImageData(img, 0, 0)
   ctx.imageSmoothingEnabled = true
   ctx.drawImage(sim, 0, 0, canvas.width, canvas.height)
+  // the food: a single oat flake at each drop point, being eaten over time
+  const kx = canvas.width / W, ky = canvas.height / H
+  const oatR = Math.min(canvas.width, canvas.height) * 0.03
+  for (const f of foods) {
+    const life = Math.max(0, 1 - (performance.now() - f.born) / 14000)
+    if (life <= 0) continue
+    drawOat(ctx, f.x * kx, f.y * ky, oatR, f.ang ?? 0, life)
+  }
 }
 
 function frame(now) {
