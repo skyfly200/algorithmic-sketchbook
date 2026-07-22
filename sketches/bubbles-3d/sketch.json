@@ -1,0 +1,7 @@
+{
+  "title": "Soap Bubbles 3D",
+  "description": "Photoreal soap bubbles, shaded as lit spheres: a see-through core, a Fresnel-bright rim, swirling thin-film interference colours whose bands shift with the film's changing thickness, and crisp specular glares that slide across each bubble as the light slowly orbits — plus a soft reflected window-glare. Bubbles jostle, wobble on surface tension and occasionally pop. Bubble count, size, light orbit, film thickness, iridescence and wobble are live and mappable.",
+  "tags": ["bubbles", "soap", "iridescence", "3d", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

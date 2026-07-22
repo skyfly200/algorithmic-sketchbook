@@ -16,7 +16,29 @@ const params = rt.params({
   size: { value: 1, min: 0.4, max: 2.5, step: 0.05, label: 'Bubble size' },
   sheen: { value: 1, min: 0, max: 2, step: 0.05, label: 'Iridescence' },
   wobble: { value: 0.6, min: 0, max: 1.5, step: 0.05, label: 'Wobble' },
+  // Shaped-wand bubbles: blow them as flowers, stars or hearts, not just rings.
+  shape: { value: 'Round', type: 'select', options: ['Round', 'Flower', 'Star', 'Heart'], label: 'Bubble shape' },
 })
+
+// Unit outline point for a bubble shape at parameter a∈[0,2π). Returns [x,y]
+// on a roughly unit-radius curve; the caller scales + wobbles it.
+function shapePoint(a, shape, lobes) {
+  if (shape === 'Flower') {
+    const r = 0.78 + 0.22 * Math.cos(a * lobes)
+    return [Math.cos(a) * r, Math.sin(a) * r]
+  }
+  if (shape === 'Star') {
+    const p = (a % (Math.PI * 2 / 5)) / (Math.PI * 2 / 5)
+    const r = 0.55 + 0.45 * Math.abs(1 - 2 * p)
+    return [Math.cos(a) * r, Math.sin(a) * r]
+  }
+  if (shape === 'Heart') {
+    const hx = 16 * Math.pow(Math.sin(a), 3)
+    const hy = 13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a)
+    return [hx / 17, -hy / 17] // canvas y is down, so flip
+  }
+  return [Math.cos(a), Math.sin(a)]
+}
 rt.mapInput('audio.pulse', 'rate', 1.5)
 
 let W = 0, H = 0
@@ -88,10 +110,10 @@ function drawBubble(b, t) {
     const hue = (b.hue + k * 60 + t * 30) % 360
     ctx.strokeStyle = `hsla(${hue}, 95%, 65%, ${0.3 * params.sheen})`
     ctx.beginPath()
-    for (let a = 0; a <= Math.PI * 2 + 0.1; a += 0.2) {
+    for (let a = 0; a <= Math.PI * 2 + 0.06; a += 0.08) {
       const rr = R * (1 + wob * Math.sin(a * b.lobes + b.phase) + k * 0.008)
-      const x = Math.cos(a) * rr, y = Math.sin(a) * rr
-      a === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+      const [ux, uy] = shapePoint(a, params.shape, b.lobes)
+      a === 0 ? ctx.moveTo(ux * rr, uy * rr) : ctx.lineTo(ux * rr, uy * rr)
     }
     ctx.stroke()
   }
