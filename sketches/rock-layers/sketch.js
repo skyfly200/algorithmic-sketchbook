@@ -194,11 +194,20 @@ function buildPanel() {
       for (let o = 0; o < 3; o++) { wsum += wamp * (vnoise(wx + seed + 50, wy + 50, wper) - 0.5); wn += wamp; wamp *= 0.55; wx *= 2; wy *= 2; wper *= 2 }
       const c = y * cPerPx + baseOffset + (wsum / wn * 3.2) * params.fold + (macro - 0.5) * 5.0
       // fracture network: chunky joints + finer cracks, gated into zones so the
-      // face isn't cracked everywhere, with slightly varying width.
+      // face isn't cracked everywhere. The coordinates fed to the cellular field
+      // are domain-warped by two octaves of noise, so the polygonal joints bend
+      // and vary into organic, irregular cracks instead of a regular grid.
       const gate = smooth01(0.42, 0.62, macro) * 0.7 + 0.3
-      const wide = 0.03 + 0.02 * vnoise((x / gw) * 6 + seed + 4, (y / gw) * 6, 6)
-      let cr = (1 - smooth01(0, wide, worley(x, y, cellBig, 1.35, seed + 1))) * gate
-      const fine = (1 - smooth01(0, wide * 0.6, worley(x, y, cellSmall, 1.5, seed + 2))) * gate * 0.7
+      let wxo = 0, wyo = 0, wa2 = 1, wnn = 0, wpp = 4, wxx = (x / gw) * 4, wyy = (y / gw) * 4
+      for (let o = 0; o < 2; o++) {
+        wxo += wa2 * (vnoise(wxx + seed + 30, wyy + 10, wpp) - 0.5)
+        wyo += wa2 * (vnoise(wxx + seed + 60, wyy + 70, wpp) - 0.5)
+        wnn += wa2; wa2 *= 0.5; wxx *= 2; wyy *= 2; wpp *= 2
+      }
+      wxo = wxo / wnn * cellBig * 1.15; wyo = wyo / wnn * cellBig * 1.15
+      const wide = 0.02 + 0.03 * vnoise((x / gw) * 3 + seed + 4, (y / gw) * 3, 3) // hairline↔thick
+      let cr = (1 - smooth01(0, wide, worley(x + wxo, y + wyo, cellBig, 1.35, seed + 1))) * gate
+      const fine = (1 - smooth01(0, wide * 0.55, worley(x + wxo * 0.6, y + wyo * 0.6, cellSmall, 1.5, seed + 2))) * gate * 0.7
       cr = Math.max(cr, fine) * params.cracks
       const i = y * gw + x
       cA[i] = c
