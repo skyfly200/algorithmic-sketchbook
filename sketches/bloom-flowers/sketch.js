@@ -89,6 +89,7 @@ function makePetalGeom(o) {
   const lS = 24
   const pos = []
   const col = []
+  const uv = []
   const idx = []
   // spine: march along the petal length, curling backward toward the tip
   const spine = []
@@ -118,6 +119,7 @@ function makePetalGeom(o) {
       else c.lerpColors(mid, tip, (v - 0.45) / 0.55)
       const edge = Math.pow(Math.abs(u - 0.5) * 2, 3) * 0.18
       col.push(Math.min(1, c.r + edge), Math.min(1, c.g + edge), Math.min(1, c.b + edge))
+      uv.push(u, v)
     }
   }
   for (let j = 0; j < lS; j++) {
@@ -129,26 +131,66 @@ function makePetalGeom(o) {
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
   g.setIndex(idx)
   g.computeVertexNormals()
   return g
 }
 
-function petalMaterial() {
+// A shared petal-vein texture: a central midrib and finer laterals branching
+// toward the tip, baked once and used as a bump + subtle roughness map so the
+// petals read as real, veined tissue rather than smooth plastic.
+function makeVeinTexture() {
+  const S = 256
+  const c = document.createElement('canvas'); c.width = c.height = S
+  const x = c.getContext('2d')
+  x.fillStyle = '#808080'; x.fillRect(0, 0, S, S) // neutral (no bump)
+  x.lineCap = 'round'
+  // midrib up the centre (u = 0.5), fading toward the tip
+  x.strokeStyle = 'rgba(60,60,60,0.9)'; x.lineWidth = 3
+  x.beginPath(); x.moveTo(S * 0.5, S); x.lineTo(S * 0.5, S * 0.06); x.stroke()
+  // lateral veins branching off the midrib toward the edges
+  x.strokeStyle = 'rgba(80,80,80,0.7)'; x.lineWidth = 1.4
+  for (let k = 1; k <= 9; k++) {
+    const vy = S * (1 - k / 10) // up the length
+    for (const dir of [-1, 1]) {
+      x.beginPath()
+      x.moveTo(S * 0.5, vy)
+      x.quadraticCurveTo(S * (0.5 + dir * 0.22), vy - S * 0.03, S * (0.5 + dir * 0.42), vy - S * 0.09)
+      x.stroke()
+    }
+  }
+  const tex = new THREE.CanvasTexture(c)
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping
+  return tex
+}
+const veinTex = makeVeinTexture()
+
+function petalMaterial(hue = params.hue) {
   const m = new THREE.MeshPhysicalMaterial({
     vertexColors: true,
     side: THREE.DoubleSide,
-    roughness: 0.38,
+    // Real petals are matte-velvety, not lacquered: higher roughness, a strong
+    // fabric-like sheen, and only a whisper of clearcoat for the waxy surface.
+    roughness: 0.62,
     metalness: 0,
-    clearcoat: 0.7,
-    clearcoatRoughness: 0.3,
-    sheen: 0.5,
-    sheenRoughness: 0.55,
-    sheenColor: new THREE.Color(0xffd9ee),
-    iridescence: params.iridescence,
-    iridescenceIOR: 1.3,
+    clearcoat: 0.25,
+    clearcoatRoughness: 0.55,
+    sheen: 0.9,
+    sheenRoughness: 0.42,
+    sheenColor: new THREE.Color().setHSL(((hue + 20) % 360) / 360, 0.6, 0.7),
+    iridescence: params.iridescence * 0.5,
+    iridescenceIOR: 1.25,
+    // veining as micro-relief + slightly rougher along the veins
+    bumpMap: veinTex,
+    bumpScale: 0.04,
+    roughnessMap: veinTex,
+    // fake subsurface: petals are thin, so they glow faintly from within when
+    // backlit (cheaper than a full transmission pass, which would tank perf)
+    emissive: new THREE.Color().setHSL((hue % 360) / 360, 0.85, 0.5),
+    emissiveIntensity: 0.09,
   })
-  m.envMapIntensity = 0.55
+  m.envMapIntensity = 0.5
   return m
 }
 
@@ -173,7 +215,7 @@ function buildFlower(spec) {
   const head = new THREE.Group()
   const pivots = []
   const hue = (params.hue + spec.hueShift + 360) % 360
-  const mat = petalMaterial()
+  const mat = petalMaterial(hue)
   petalMats.push(mat)
 
   const layers = Math.round(params.layers)
@@ -349,7 +391,12 @@ renderer.setAnimationLoop((now) => {
     f.head.rotation.y += 0.0006 * (1 + pulse)
   }
 
-  for (const m of petalMats) m.iridescence = params.iridescence
+  // keep iridescence subtle so the petals stay velvety, and let beats pulse
+  // the inner glow so the flower seems to breathe light
+  for (const m of petalMats) {
+    m.iridescence = params.iridescence * 0.5
+    m.emissiveIntensity = 0.09 + pulse * 0.14
+  }
   rimA.intensity = 26 + pulse * 40
   rimB.intensity = 22 + pulse * 26
 
