@@ -1,9 +1,15 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { traitsOf, elementMeta, energyMeta } from '../registry/traits'
 
 const props = defineProps({
   sketch: { type: Object, required: true },
 })
+
+// Derived "vibe" traits: element (fire/water/earth/air) + calm/energetic.
+const traits = computed(() => traitsOf(props.sketch))
+const element = computed(() => elementMeta(traits.value.element))
+const energy = computed(() => energyMeta(traits.value.energy))
 
 // Deterministic gradient per slug — the last-resort fallback when a sketch
 // can't be previewed live and has no thumbnail.
@@ -188,9 +194,20 @@ onBeforeUnmount(() => {
         v-if="sketch.perf"
         class="perf-bubble"
         :class="`perf-${sketch.perf >= 70 ? 'green' : sketch.perf >= 40 ? 'yellow' : 'red'}`"
-        :title="`Performance ${sketch.perf}/100 — measured frame rate vs a 60fps target (npm run perf)`"
+        :title="`Performance ${sketch.perf}/100 — measured frame rate vs a 60fps target (npm run perf). ${traits.speed === 'fast' ? 'Fast' : 'Slow'}.`"
       >
+        <span class="perf-bars" aria-hidden="true">
+          <i :class="{ on: sketch.perf >= 20 }" />
+          <i :class="{ on: sketch.perf >= 45 }" />
+          <i :class="{ on: sketch.perf >= 70 }" />
+        </span>
         {{ sketch.perf }}
+      </div>
+
+      <!-- vibe badges: element + energy -->
+      <div class="trait-badges">
+        <span v-if="element" class="trait-badge" :title="`Element: ${element.label}`">{{ element.emoji }}</span>
+        <span v-if="energy" class="trait-badge" :title="`Feel: ${energy.label}`">{{ energy.emoji }}</span>
       </div>
     </div>
 
@@ -275,6 +292,23 @@ onBeforeUnmount(() => {
 .perf-green { background: #4ade80; }
 .perf-yellow { background: #facc15; }
 .perf-red { background: #f87171; }
+/* little speed meter inside the perf bubble */
+.perf-bars { display: inline-flex; align-items: flex-end; gap: 1px; height: 11px; margin-right: 3px; }
+.perf-bars i { width: 2.5px; background: rgba(11, 13, 16, 0.35); border-radius: 1px; }
+.perf-bars i:nth-child(1) { height: 5px; }
+.perf-bars i:nth-child(2) { height: 8px; }
+.perf-bars i:nth-child(3) { height: 11px; }
+.perf-bars i.on { background: #0b0d10; }
+/* element + energy badges, bottom-right of the preview */
+.trait-badges {
+  position: absolute; bottom: 8px; right: 8px; z-index: 2;
+  display: flex; gap: 4px;
+}
+.trait-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 999px; font-size: 13px;
+  background: rgba(10, 12, 18, 0.72); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
 .description {
   display: -webkit-box;
   -webkit-line-clamp: 3;

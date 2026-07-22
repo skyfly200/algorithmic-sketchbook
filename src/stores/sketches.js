@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { allSketches } from '../registry'
+import { traitsOf } from '../registry/traits'
 
 // Curated theme filters. Raw tags+tech produced ~50 chips (most on a single
 // project); instead each chip is a theme backed by a set of keywords matched
@@ -28,6 +29,9 @@ export const useSketchStore = defineStore('sketches', {
     sketches: allSketches,
     search: '',
     selectedCategories: [],
+    selectedElements: [], // fire | water | earth | air
+    selectedEnergy: [], // calm | energetic
+    selectedSpeed: [], // fast | slow
     typeFilter: 'all', // 'all' | 'local' | 'external'
   }),
 
@@ -52,6 +56,14 @@ export const useSketchStore = defineStore('sketches', {
           !state.selectedCategories.some((c) => matchesCategory(s, c))
         )
           return false
+        // Trait filters (element / energy / speed) — each is a union within the
+        // group; the groups AND together.
+        if (state.selectedElements.length || state.selectedEnergy.length || state.selectedSpeed.length) {
+          const t = traitsOf(s)
+          if (state.selectedElements.length && !state.selectedElements.includes(t.element)) return false
+          if (state.selectedEnergy.length && !state.selectedEnergy.includes(t.energy)) return false
+          if (state.selectedSpeed.length && !state.selectedSpeed.includes(t.speed)) return false
+        }
         if (q) {
           const haystack = [s.title, s.description, ...s.tags, ...s.tech].join(' ').toLowerCase()
           if (!haystack.includes(q)) return false
@@ -68,6 +80,11 @@ export const useSketchStore = defineStore('sketches', {
     toggleCategory(label) {
       const i = this.selectedCategories.indexOf(label)
       i === -1 ? this.selectedCategories.push(label) : this.selectedCategories.splice(i, 1)
+    },
+    toggleTrait(group, key) {
+      const arr = this[group]
+      const i = arr.indexOf(key)
+      i === -1 ? arr.push(key) : arr.splice(i, 1)
     },
   },
 })
