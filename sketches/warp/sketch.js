@@ -17,6 +17,11 @@ const params = rt.params({
   amount: { value: 0.5, min: 0, max: 1.5, step: 0.02, label: 'Amount' },
   frequency: { value: 0.5, min: 0.1, max: 2, step: 0.02, label: 'Frequency' },
   speed: { value: 1, min: 0, max: 4, step: 0.05, label: 'Speed' },
+  // Crop-to-fill: overscan the warped mesh so distortions that pull the image
+  // inward (pinch, fisheye, big ripples) never reveal the background at the
+  // edges — the output always fills the frame.
+  fill: { value: true, type: 'bool', label: 'Crop to fill' },
+  fillZoom: { value: 1.2, min: 1, max: 2, step: 0.02, label: 'Fill overscan' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })
 // Beats and loudness pump the warp by default.
@@ -122,6 +127,12 @@ function warpPoint(u, v, amt, fq, ph) {
       nu = 0.5 + cx * k
       nv = 0.5 + cy * k
     }
+  }
+  // Crop-to-fill: overscan about the centre so inward warps still cover the frame.
+  if (params.fill) {
+    const z = params.fillZoom
+    nu = 0.5 + (nu - 0.5) * z
+    nv = 0.5 + (nv - 0.5) * z
   }
   return [nu * W, nv * H]
 }

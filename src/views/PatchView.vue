@@ -129,6 +129,47 @@ const PARAM_RANGES = {
   shape: { feather: [0, 0.5] },
 }
 const TEXT_FONTS = ['sans-serif', 'serif', 'monospace', 'system-ui', 'cursive']
+// Portal destination shapes + aspect-ratio presets (for lock-proportions).
+const PORTAL_SHAPES = ['rectangle', 'ellipse', 'triangle', 'diamond', 'hexagon', 'star', 'heart']
+const ASPECTS = { '1:1': 1, '4:3': 4 / 3, '3:2': 3 / 2, '16:9': 16 / 9, '2:1': 2, '9:16': 9 / 16, '3:4': 3 / 4 }
+// Build a path for a portal shape inscribed in the rect (x,y,w,h).
+function portalShapePath(ctx, shape, x, y, w, h) {
+  const cx = x + w / 2, cy = y + h / 2, rx = w / 2, ry = h / 2
+  ctx.beginPath()
+  if (shape === 'ellipse') {
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
+  } else if (shape === 'triangle') {
+    ctx.moveTo(cx, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x, y + h); ctx.closePath()
+  } else if (shape === 'diamond') {
+    ctx.moveTo(cx, y); ctx.lineTo(x + w, cy); ctx.lineTo(cx, y + h); ctx.lineTo(x, cy); ctx.closePath()
+  } else if (shape === 'hexagon') {
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI / 6 + (i * Math.PI) / 3
+      const px = cx + Math.cos(a) * rx, py = cy + Math.sin(a) * ry
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)
+    }
+    ctx.closePath()
+  } else if (shape === 'star') {
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5
+      const r = i % 2 ? 0.42 : 1
+      const px = cx + Math.cos(a) * rx * r, py = cy + Math.sin(a) * ry * r
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)
+    }
+    ctx.closePath()
+  } else if (shape === 'heart') {
+    for (let i = 0; i <= 40; i++) {
+      const t = (i / 40) * Math.PI * 2
+      const hx = 16 * Math.pow(Math.sin(t), 3)
+      const hy = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)
+      const px = cx + (hx / 17) * rx, py = cy - (hy / 17) * ry
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)
+    }
+    ctx.closePath()
+  } else {
+    ctx.rect(x, y, w, h)
+  }
+}
 const BLENDS = [
   'screen', 'add', 'lighten', 'darken', 'multiply', 'overlay', 'soft-light',
   'hard-light', 'color-dodge', 'color-burn', 'difference', 'exclusion',
@@ -263,7 +304,7 @@ function addNode(type) {
                     : type === 'text'
                       ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, rotate: 0, italic: false, glow: 0.4, bg: false }
                       : type === 'portal'
-                        ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true }
+                        ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }
                         : type === 'shape'
                           ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0, invert: false }
                           : {},
@@ -1197,17 +1238,27 @@ function evalNode(node) {
     if (input) octx.drawImage(input, 0, 0, W, H)
     const p = node.params
     const sx = p.srcX * W, sy = p.srcY * H, sw = p.srcW * W, sh = p.srcH * H
+    const dx = p.dstX * W, dy = p.dstY * H
+    let dw = p.dstW * W
+    let dh = p.dstH * H
+    // Lock proportions: derive the destination height from its width so the
+    // portal keeps a chosen aspect ratio (in real pixels).
+    if (p.lockAspect) dh = dw / (ASPECTS[p.aspect] ?? 1)
     // remap the source region into the destination region, optionally
     // recursively so the portal shows a portal showing a portal…
     const times = Math.max(1, Math.round(p.recurse ?? 1))
     for (let k = 0; k < times; k++) {
-      const dx = p.dstX * W, dy = p.dstY * H, dw = p.dstW * W, dh = p.dstH * H
+      octx.save()
+      portalShapePath(octx, p.shape ?? 'rectangle', dx, dy, dw, dh)
+      octx.clip()
       octx.drawImage(s.out, sx, sy, sw, sh, dx, dy, dw, dh)
+      octx.restore()
     }
     if (p.border) {
       octx.strokeStyle = 'rgba(138,208,255,0.8)'
       octx.lineWidth = Math.max(1, W * 0.003)
-      octx.strokeRect(p.dstX * W, p.dstY * H, p.dstW * W, p.dstH * H)
+      portalShapePath(octx, p.shape ?? 'rectangle', dx, dy, dw, dh)
+      octx.stroke()
     }
   } else if (node.type === 'mask') {
     const content = inputCanvas(node, 0)
@@ -1889,6 +1940,70 @@ function commitRenameRouting() {
 function persistSaved() {
   localStorage.setItem(SAVED_KEY, JSON.stringify(savedRoutings.value))
 }
+
+// --- blocks: reusable named subgraphs saved from a selection ----------------
+// A block captures the selected nodes (with their params), the wiring between
+// them, and any control links between them. It can be re-inserted (duplicated)
+// as many times as you like, so you build a mini-rig once and stamp it out.
+const BLOCK_KEY = 'sketchbook-patch-blocks'
+const savedBlocks = ref((() => { try { return JSON.parse(localStorage.getItem(BLOCK_KEY)) || [] } catch { return [] } })())
+const newBlockName = ref('')
+const editBlockId = ref(null)
+const editBlockName = ref('')
+function persistBlocks() { localStorage.setItem(BLOCK_KEY, JSON.stringify(savedBlocks.value)) }
+function saveBlock() {
+  const ids = selectedSet.size ? [...selectedSet] : (selected.value != null ? [selected.value] : [])
+  if (!ids.length) return
+  const set = new Set(ids)
+  const members = ids.map((id) => nodeById(id)).filter(Boolean)
+  const minX = Math.min(...members.map((n) => n.x))
+  const minY = Math.min(...members.map((n) => n.y))
+  const bnodes = members.map((n) => ({
+    id: n.id, type: n.type, x: n.x - minX, y: n.y - minY, name: n.name,
+    locked: n.locked, params: JSON.parse(JSON.stringify(n.params)),
+  }))
+  const bedges = edges.filter((e) => set.has(e.from) && set.has(e.to)).map((e) => ({ ...e }))
+  const blinks = links.filter((l) => set.has(l.from) && set.has(l.node)).map((l) => ({ ...l }))
+  savedBlocks.value.push({
+    id: Date.now().toString(36),
+    name: newBlockName.value.trim() || `Block ${savedBlocks.value.length + 1}`,
+    nodes: bnodes, edges: bedges, links: blinks,
+  })
+  newBlockName.value = ''
+  persistBlocks()
+}
+// Insert (stamp) a saved block into the graph with fresh ids, offset so it
+// lands in view; selects the new nodes so you can immediately drag them.
+function insertBlock(b) {
+  const idMap = new Map()
+  const ox = 90, oy = 80
+  const created = []
+  for (const mn of b.nodes) {
+    const id = nextId++
+    idMap.set(mn.id, id)
+    const n = reactive({
+      id, type: mn.type, x: mn.x + ox, y: mn.y + oy, name: mn.name,
+      locked: mn.locked, params: JSON.parse(JSON.stringify(mn.params)),
+    })
+    nodes.push(n); st(id); created.push(id)
+  }
+  for (const e of b.edges) edges.push({ from: idMap.get(e.from), to: idMap.get(e.to), port: e.port })
+  for (const l of b.links) links.push({ from: idMap.get(l.from), srcPort: l.srcPort, node: idMap.get(l.node), param: l.param })
+  clearSelection()
+  for (const id of created) selectedSet.add(id)
+  persist()
+  nextTick(() => layoutTick.value++)
+}
+function deleteBlock(b) {
+  const i = savedBlocks.value.findIndex((x) => x.id === b.id)
+  if (i >= 0) { savedBlocks.value.splice(i, 1); persistBlocks() }
+}
+function startRenameBlock(b) { editBlockId.value = b.id; editBlockName.value = b.name }
+function commitRenameBlock() {
+  const b = savedBlocks.value.find((x) => x.id === editBlockId.value)
+  if (b) { const n = editBlockName.value.trim(); if (n) { b.name = n; persistBlocks() } }
+  editBlockId.value = null
+}
 function saveRouting() {
   const name = newName.value.trim() || `Routing ${savedRoutings.value.length + 1}`
   savedRoutings.value.push({
@@ -2183,6 +2298,53 @@ onBeforeUnmount(() => {
         </v-card>
       </v-menu>
 
+      <!-- Blocks: reusable named subgraphs stamped from a selection -->
+      <v-menu :close-on-content-click="false">
+        <template #activator="{ props }">
+          <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-view-grid-plus-outline">Blocks</v-btn>
+        </template>
+        <v-card class="pa-2" min-width="260">
+          <div class="d-flex ga-1 mb-2">
+            <v-text-field
+              v-model="newBlockName"
+              density="compact"
+              hide-details
+              :placeholder="selectedSet.size ? `Name this block (${selectedSet.size} nodes)` : 'Select nodes first'"
+              @keyup.enter="saveBlock"
+            />
+            <v-btn size="small" variant="tonal" :disabled="!selectedSet.size && selected == null" @click="saveBlock">Save</v-btn>
+          </div>
+          <p class="text-caption text-medium-emphasis mb-1" style="font-size:11px">Click a block to stamp a copy into the graph.</p>
+          <v-list density="compact" max-height="300">
+            <v-list-item
+              v-for="b in savedBlocks"
+              :key="b.id"
+              @click="editBlockId === b.id ? null : insertBlock(b)"
+            >
+              <template #title>
+                <input
+                  v-if="editBlockId === b.id"
+                  class="routing-rename"
+                  :value="editBlockName"
+                  autofocus
+                  @click.stop
+                  @input="editBlockName = $event.target.value"
+                  @keyup.enter="commitRenameBlock"
+                  @blur="commitRenameBlock"
+                />
+                <span v-else>{{ b.name }} <span class="text-medium-emphasis" style="font-size:11px">· {{ b.nodes.length }}</span></span>
+              </template>
+              <template #append>
+                <v-icon icon="mdi-content-copy" size="16" class="mr-2" title="Duplicate into the graph" @click.stop="insertBlock(b)" />
+                <v-icon icon="mdi-pencil" size="16" class="mr-2" title="Rename" @click.stop="startRenameBlock(b)" />
+                <v-icon icon="mdi-delete" size="16" @click.stop="deleteBlock(b)" />
+              </template>
+            </v-list-item>
+            <v-list-item v-if="!savedBlocks.length" title="No saved blocks yet" disabled />
+          </v-list>
+        </v-card>
+      </v-menu>
+
       <v-spacer />
       <v-btn
         :icon="micOn ? 'mdi-microphone' : 'mdi-microphone-off'"
@@ -2248,6 +2410,30 @@ onBeforeUnmount(() => {
       </v-menu>
       <v-btn icon="mdi-content-paste" variant="text" size="small" title="Paste node (Ctrl/Cmd+V)" :disabled="!clipboard" @click="pasteClipboard" />
       <v-btn
+        data-tour="patch-mask"
+        icon="mdi-vector-square-edit"
+        variant="text" size="small"
+        :color="maskEdit ? 'primary' : undefined"
+        :title="shapeNodes.length ? 'Edit masks — drag the polygon points on the output' : 'Add a Polygon Mask first, then edit its points here'"
+        @click="maskEdit = !maskEdit"
+      />
+      <v-btn
+        data-tour="patch-show"
+        icon="mdi-movie-open-play-outline"
+        variant="text" size="small"
+        :color="showOpen ? 'primary' : undefined"
+        title="Show — plan cues and run them manually or on a timeline"
+        @click="showOpen = !showOpen"
+      />
+      <v-btn
+        :icon="renderPaused ? 'mdi-motion-play-outline' : 'mdi-motion-pause-outline'"
+        variant="text" size="small"
+        :color="renderPaused ? 'warning' : undefined"
+        :title="renderPaused ? 'Resume the visuals' : 'Freeze the visuals (keeps the editor snappy while you tweak)'"
+        @click="toggleRenderPaused"
+      />
+      <!-- pop-out output group, sat next to Output-only -->
+      <v-btn
         icon="mdi-monitor-shimmer"
         variant="text"
         size="small"
@@ -2272,29 +2458,6 @@ onBeforeUnmount(() => {
         color="primary"
         title="Apply — push the current board look to the held output"
         @click="applyToOutput"
-      />
-      <v-btn
-        data-tour="patch-mask"
-        icon="mdi-vector-square-edit"
-        variant="text" size="small"
-        :color="maskEdit ? 'primary' : undefined"
-        :title="shapeNodes.length ? 'Edit masks — drag the polygon points on the output' : 'Add a Polygon Mask first, then edit its points here'"
-        @click="maskEdit = !maskEdit"
-      />
-      <v-btn
-        data-tour="patch-show"
-        icon="mdi-movie-open-play-outline"
-        variant="text" size="small"
-        :color="showOpen ? 'primary' : undefined"
-        title="Show — plan cues and run them manually or on a timeline"
-        @click="showOpen = !showOpen"
-      />
-      <v-btn
-        :icon="renderPaused ? 'mdi-motion-play-outline' : 'mdi-motion-pause-outline'"
-        variant="text" size="small"
-        :color="renderPaused ? 'warning' : undefined"
-        :title="renderPaused ? 'Resume the visuals' : 'Freeze the visuals (keeps the editor snappy while you tweak)'"
-        @click="toggleRenderPaused"
       />
       <v-btn data-tour="patch-output" icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-help-circle-outline" variant="text" size="small" title="Replay the walkthrough" @click="startTour" />
@@ -2672,6 +2835,17 @@ onBeforeUnmount(() => {
                 <input type="range" min="0" max="1" step="0.01" :value="n.params[pk]" @input="n.params[pk] = +$event.target.value; persist()" @pointerdown.stop />
               </label>
             </div>
+            <label>shape
+              <select v-model="n.params.shape" @change="persist" @pointerdown.stop>
+                <option v-for="sh in PORTAL_SHAPES" :key="sh" :value="sh">{{ sh }}</option>
+              </select>
+            </label>
+            <label class="chk"><input type="checkbox" v-model="n.params.lockAspect" @change="persist" @pointerdown.stop /> lock proportions</label>
+            <label v-if="n.params.lockAspect">aspect
+              <select v-model="n.params.aspect" @change="persist" @pointerdown.stop>
+                <option v-for="a in Object.keys(ASPECTS)" :key="a" :value="a">{{ a }}</option>
+              </select>
+            </label>
             <label>recurse <input type="range" min="1" max="8" step="1" v-model.number="n.params.recurse" @change="persist" @pointerdown.stop /></label>
             <label class="chk"><input type="checkbox" v-model="n.params.border" @change="persist" @pointerdown.stop /> outline</label>
           </template>
