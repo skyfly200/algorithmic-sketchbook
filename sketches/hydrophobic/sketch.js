@@ -114,7 +114,6 @@ function frame(now) {
 
   const { gx, gy } = gravity(now)
   const fr = Math.pow(1 - params.adhesion, dt) // rolling drag; low = hydrophobic
-  const rest = 0.42 // edge bounciness
 
   for (const d of drops) {
     // Bigger beads have more inertia but the same gravitational acceleration.
@@ -123,27 +122,12 @@ function frame(now) {
     d.x += d.vx * dt
     d.y += d.vy * dt
     if (d.wob > 0.001) d.wob *= Math.pow(0.9, dt) // surface-tension jiggle decays
-
-    // Edge collisions.
-    if (d.x < d.r) {
-      d.x = d.r
-      d.vx = -d.vx * rest
-      d.wob = Math.max(d.wob, Math.abs(d.vx) * 0.04)
-    } else if (d.x > W - d.r) {
-      d.x = W - d.r
-      d.vx = -d.vx * rest
-      d.wob = Math.max(d.wob, Math.abs(d.vx) * 0.04)
-    }
-    if (d.y < d.r) {
-      d.y = d.r
-      d.vy = -d.vy * rest
-      d.wob = Math.max(d.wob, Math.abs(d.vy) * 0.04)
-    } else if (d.y > H - d.r) {
-      d.y = H - d.r
-      d.vy = -d.vy * rest
-      d.wob = Math.max(d.wob, Math.abs(d.vy) * 0.04)
-    }
   }
+
+  // Superhydrophobic beads roll clean off the edge of the surface rather than
+  // piling up against a wall — drop anything fully past the border. New beads
+  // keep condensing in, so the surface stays alive.
+  drops = drops.filter((d) => d.x > -d.r && d.x < W + d.r && d.y > -d.r && d.y < H + d.r)
 
   // Coalescence: overlapping beads merge (volume ∝ r³, momentum conserved).
   for (let i = 0; i < drops.length; i++) {

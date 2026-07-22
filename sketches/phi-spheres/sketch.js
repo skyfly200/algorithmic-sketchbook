@@ -22,6 +22,8 @@ const params = rt.params({
   spin: { value: 0.15, min: 0, max: 2, step: 0.01, label: 'Auto-spin (in-plane)' },
   orbit: { value: +rt.random(0.3, 1.2).toFixed(2), min: 0, max: 6, step: 0.05, label: 'Camera orbit speed' },
   sphereSize: { value: 1, min: 0.4, max: 2, step: 0.05, label: 'Sphere size' },
+  mode: { value: 'Animate In/Out', type: 'select', options: ['Animate In/Out', 'Wave', 'Random Displacement'], label: 'Mode' },
+  warmth: { value: 1, min: 0, max: 2, step: 0.05, label: 'Warm/cool split' },
 })
 // Default music → animation mappings (remix or add more in the controls panel).
 // These also mount the mic toggle so the piece reacts to sound.
@@ -50,7 +52,7 @@ const r = 0.5
 const q = 75
 const o = 0.145
 
-let mode = 'Animate In/Out'
+let mode = params.mode // tracks the select param so we can react on change
 let frameCount = 0
 let growing = true
 
@@ -92,12 +94,17 @@ function resetInOut() {
   growing = true
 }
 
-// Lights
-const light = new THREE.DirectionalLight(0xffffff, 1)
-light.position.set(0, 1, 1).normalize()
-light.castShadow = true
-scene.add(light)
-scene.add(new THREE.AmbientLight(0xffffff, 0.2))
+// Lights — warm from one side, cool from the other, so the spiral is lit
+// with opposing colour temperatures (the `warmth` param widens/narrows the
+// split). A soft neutral ambient keeps the shadow side from going black.
+const warmLight = new THREE.DirectionalLight(0xffb066, 1.1) // sunset-warm, +x
+warmLight.position.set(1, 0.6, 0.9).normalize()
+warmLight.castShadow = true
+scene.add(warmLight)
+const coolLight = new THREE.DirectionalLight(0x66aaff, 1.0) // moon-cool, -x
+coolLight.position.set(-1, -0.4, 0.7).normalize()
+scene.add(coolLight)
+scene.add(new THREE.AmbientLight(0x556077, 0.25))
 
 // Controls
 const controls = new OrbitControls(camera, renderer.domElement)
@@ -108,24 +115,14 @@ controls.rotateSpeed = 0.5
 // mapped onto it (beat.volume by default). Dragging still works and blends in.
 controls.autoRotate = true
 
-// Mode buttons
-const modesEl = document.getElementById('modes')
-const buttons = {}
+// Mode is a `select` param (in the controls panel) instead of on-screen
+// buttons. Switch behaviour whenever it changes.
 function setMode(next) {
   mode = next
-  for (const key in buttons) buttons[key].classList.toggle('active', key === next)
   if (next === 'Animate In/Out') resetInOut()
   else ensureFull()
   if (next !== 'Animate In/Out') frameCount = 0
 }
-for (const label of ['Animate In/Out', 'Wave', 'Random Displacement']) {
-  const btn = document.createElement('button')
-  btn.textContent = label
-  btn.onclick = () => setMode(label)
-  buttons[label] = btn
-  modesEl.appendChild(btn)
-}
-buttons['Animate In/Out'].classList.add('active')
 
 function resize() {
   renderer.setSize(window.innerWidth, window.innerHeight)
@@ -137,6 +134,13 @@ renderer.setAnimationLoop(() => {
   // rt.tick() folds live input (beat/mouse/time) into the params below, so
   // reading params.waveAmp etc. already includes any mapped music reactivity.
   rt.tick(performance.now())
+
+  // React when the Mode select changes in the controls panel.
+  if (params.mode !== mode) setMode(params.mode)
+
+  // Warm/cool split: push the two lights apart (and brighten) with `warmth`.
+  warmLight.intensity = 0.5 + params.warmth * 0.7
+  coolLight.intensity = 0.4 + params.warmth * 0.6
 
   if (mode !== 'Animate In/Out') frameCount += params.waveSpeed
 

@@ -9,9 +9,14 @@ import { createRuntime } from '../_lib/runtime.js'
 const rt = createRuntime()
 const params = rt.params({
   ring: { value: 96, min: 24, max: 160, step: 1, label: 'Ring teeth (R)' },
-  gear: { value: 60, min: 8, max: 150, step: 1, label: 'Gear teeth (r)' },
+  // Coprime with the ring by default → an extremely long period, so the curve
+  // never settles into one static rosette but keeps weaving new petals.
+  gear: { value: 59, min: 8, max: 150, step: 1, label: 'Gear teeth (r)' },
   pen: { value: 0.8, min: 0.1, max: 1, step: 0.01, label: 'Pen offset' },
   speed: { value: 1.5, min: 0.1, max: 12, step: 0.1, label: 'Draw speed' },
+  // Evolve continuously precesses the pen offset so successive laps never
+  // trace exactly over each other — the figure is always changing.
+  evolve: { value: 0.3, min: 0, max: 1, step: 0.02, label: 'Evolve' },
   hue: { value: +rt.random(0, 1).toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
   spin: { value: 0.15, min: 0, max: 1.5, step: 0.02, label: 'Palette drift' },
   fade: { value: 0.005, min: 0, max: 0.06, step: 0.002, label: 'Trail fade' },
@@ -43,12 +48,15 @@ let prev = null
 let lastR = 0
 let lastr = 0
 let px = 0 // pen offset baked at restart
+let pxEff = 0 // effective pen offset, slowly drifting so the figure evolves
+let penPhase = 0 // accumulates the evolve drift
 let hueBase = 0
 
 function restart() {
   lastR = Math.round(params.ring)
   lastr = Math.max(1, Math.round(params.gear))
   px = params.pen
+  pxEff = px
   theta = 0
   prev = null
   period = (Math.PI * 2 * lastr) / gcd(lastR, lastr) // laps until the curve closes
@@ -60,11 +68,11 @@ restart()
 function point(th) {
   const R = lastR
   const r = lastr
-  const d = px * r
+  const d = pxEff * r
   const k = R - r
   const x = k * Math.cos(th) + d * Math.cos((k / r) * th)
   const y = k * Math.sin(th) - d * Math.sin((k / r) * th)
-  const norm = R + d || 1
+  const norm = R + Math.abs(d) || 1
   return [W / 2 + (x / norm) * scale, H / 2 + (y / norm) * scale]
 }
 
@@ -83,6 +91,10 @@ function frame(now) {
   }
 
   hueBase = (hueBase + params.spin * dt * 0.1) % 1
+  // Precess the pen offset a little each frame so the rosette keeps evolving
+  // rather than retracing itself. Stays within the pen range around `px`.
+  penPhase += dt * params.evolve * 0.6
+  pxEff = Math.min(1, Math.max(0.1, px + Math.sin(penPhase) * 0.18 * params.evolve))
   const dth = 0.03
   const steps = Math.max(4, Math.round(params.speed * 26 * rt.detail)) // segments this frame
   actx.lineWidth = 1.6 * rt.pixelRatio
