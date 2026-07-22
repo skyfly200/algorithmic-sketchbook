@@ -16,9 +16,13 @@ const params = rt.params({
   sensorDist: { value: 9, min: 3, max: 24, step: 0.5, label: 'Sensor distance' },
   sensorAngle: { value: 32, min: 8, max: 70, step: 1, label: 'Sensor angle°' },
   turn: { value: 38, min: 5, max: 80, step: 1, label: 'Turn°' },
-  wiggle: { value: 0.18, min: 0, max: 1, step: 0.02, label: 'Wander (chaos)' },
+  wiggle: { value: 0.14, min: 0, max: 1, step: 0.02, label: 'Wander (chaos)' },
   deposit: { value: 1, min: 0.2, max: 2, step: 0.05, label: 'Trail deposit' },
-  decay: { value: 0.09, min: 0.02, max: 0.3, step: 0.005, label: 'Evaporation' },
+  decay: { value: 0.06, min: 0.02, max: 0.3, step: 0.005, label: 'Evaporation' },
+  // Outward foraging drive: how hard the colony pushes its frontier out from
+  // the inoculation point, so it advances as a lobed fan trailing a vein net
+  // (like a real Physarum spreading across a dish) rather than milling in place.
+  spread: { value: 0.5, min: 0, max: 1.5, step: 0.05, label: 'Foraging drive' },
   hue: { value: 0.25, min: 0, max: 1, step: 0.01, label: 'Hue' },
 })
 // Music: beats surge the crawl, loudness thickens the trails.
@@ -32,6 +36,7 @@ const hint = document.getElementById('hint')
 let W, H, trail, tmp, img, sim, sctx
 let agents = null // Float32Array packed [x, y, heading] * N
 let nAgents = 0
+let srcX = 0, srcY = 0 // the inoculation point the colony grows out from
 const foods = [] // { x, y, born } in grid coords, emit trail so the colony seeks them
 
 function wantAgents() { return Math.min(120000, Math.round(W * H * 0.14 * params.density * rt.detail)) }
@@ -51,14 +56,18 @@ function build() {
 function seedAgents() {
   nAgents = wantAgents()
   agents = new Float32Array(nAgents * 3)
-  const cx = W / 2, cy = H / 2, r0 = Math.min(W, H) * 0.18
-  for (let i = 0; i < nAgents; i++) {
-    const a = rt.random(0, Math.PI * 2)
-    const r = Math.sqrt(rt.rng()) * r0
-    agents[i * 3] = cx + Math.cos(a) * r
-    agents[i * 3 + 1] = cy + Math.sin(a) * r
-    agents[i * 3 + 2] = a
-  }
+  srcX = W / 2; srcY = H / 2
+  for (let i = 0; i < nAgents; i++) respawn(i * 3)
+}
+// (Re)seat an agent at the inoculation point, facing outward — used to launch
+// the colony and to recycle explorers that reach the dish edge, so a steady
+// stream keeps feeding veins out from the source.
+function respawn(o) {
+  const a = rt.random(0, Math.PI * 2)
+  const r = Math.sqrt(rt.rng()) * Math.min(W, H) * 0.06
+  agents[o] = srcX + Math.cos(a) * r
+  agents[o + 1] = srcY + Math.sin(a) * r
+  agents[o + 2] = a // face outward
 }
 function resize() {
   canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
@@ -72,10 +81,11 @@ canvas.addEventListener('pointerdown', (e) => {
   if (hint) hint.style.opacity = '0'
 })
 
-const wrap = (v, n) => (v < 0 ? v + n : v >= n ? v - n : v)
+// Bounded (non-wrapping) field: clamp sample coordinates so the trail doesn't
+// wrap around the dish edges.
 function sample(x, y) {
-  const xi = Math.floor(wrap(x, W))
-  const yi = Math.floor(wrap(y, H))
+  const xi = x < 0 ? 0 : x >= W ? W - 1 : x | 0
+  const yi = y < 0 ? 0 : y >= H ? H - 1 : y | 0
   return trail[yi * W + xi]
 }
 
@@ -86,6 +96,7 @@ function step() {
   const sp = params.speed
   const dep = params.deposit * 0.6
   const wig = params.wiggle
+  const drive = params.spread
   for (let i = 0; i < nAgents; i++) {
     const o = i * 3
     let x = agents[o], y = agents[o + 1], h = agents[o + 2]
@@ -97,8 +108,22 @@ function step() {
     else if (l < r) h += TA
     else if (r < l) h -= TA
     h += (rt.rng() - 0.5) * wig // a little wander keeps it organic + evolving
-    x = wrap(x + Math.cos(h) * sp, W)
-    y = wrap(y + Math.sin(h) * sp, H)
+    // Foraging drive: nudge the heading outward from the source, but only where
+    // the trail is still faint (the frontier) — established veins hold their
+    // shape, so the fan advances while the network behind it stays put.
+    if (drive > 0) {
+      const here = trail[(y | 0) * W + (x | 0)]
+      const w = drive * 0.08 * Math.max(0, 1 - here * 0.7)
+      if (w > 0.0005) {
+        let d = Math.atan2(y - srcY, x - srcX) - h
+        d = Math.atan2(Math.sin(d), Math.cos(d))
+        h += d * w
+      }
+    }
+    x += Math.cos(h) * sp
+    y += Math.sin(h) * sp
+    // reached the dish edge → recycle back to the source to keep feeding veins
+    if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) { respawn(o); continue }
     agents[o] = x; agents[o + 1] = y; agents[o + 2] = h
     trail[(y | 0) * W + (x | 0)] += dep
   }
