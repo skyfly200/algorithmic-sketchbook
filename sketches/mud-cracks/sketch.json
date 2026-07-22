@@ -1,0 +1,7 @@
+{
+  "title": "Mud Cracks",
+  "description": "A drying mud flat that cracks into polygonal tiles. A cellular fracture network (with finer secondary cracks inside the big plates) opens progressively as the ground dries: cracks widen and deepen, tiles curl up at their edges and cast shadow into the gaps, and the mud shifts from a dark wet brown to a pale dusty tan. Drag the pointer to wet the surface and watch the cracks heal, then re-open as it dries again. Dryness, drying speed, tile size, crack width, edge curl, fine cracks and mud hue are live and mappable.",
+  "tags": ["earth", "texture", "cracks", "drying", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}
