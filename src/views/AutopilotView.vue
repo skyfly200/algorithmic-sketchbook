@@ -62,6 +62,7 @@ const lowSkip = ref(savedSet.lowSkip ?? true)
 const fpsFloor = ref(savedSet.fpsFloor ?? 24)
 const perfBudget = ref(savedSet.perfBudget ?? 12)
 const resolution = ref(savedSet.resolution ?? 'high') // low | medium | high | native
+const showNotes = ref(savedSet.showNotes ?? true) // the change title-card in the corner
 // How the show evolves over time. Each mode shapes which effects get strung
 // together, how many layers stack, and the cadence of change — see the helpers
 // further down. "Evolve" is the original one-move-at-a-time behaviour.
@@ -82,7 +83,7 @@ const panelOpen = ref(false)
 function persistSettings() {
   localStorage.setItem(SET_KEY, JSON.stringify({
     dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value, perfBudget: perfBudget.value,
-    resolution: resolution.value, evolveMode: evolveMode.value,
+    resolution: resolution.value, evolveMode: evolveMode.value, showNotes: showNotes.value,
   }))
 }
 function toggleEffect(slug) {
@@ -172,9 +173,10 @@ const frames = new Map() // layer id -> iframe element
 const note = ref('')
 let noteTimer = 0
 function say(text) {
+  if (!showNotes.value) return
   note.value = text
   clearTimeout(noteTimer)
-  noteTimer = setTimeout(() => (note.value = ''), 2600)
+  noteTimer = setTimeout(() => (note.value = ''), 3400)
 }
 
 function liveLayers() {
@@ -384,7 +386,7 @@ function opAdd() {
   const s = pickSketch(effectPool.value, perfBudget.value - stackCost())
   if (!s) return false
   insertLayer(makeLayer(s.slug, 'effect', pick(BLENDS), +(0.55 + Math.random() * 0.45).toFixed(2)))
-  say(`+ ${titleOf(s.slug)}`)
+  say(`adding ${titleOf(s.slug)}`)
   return true
 }
 function opRemove() {
@@ -392,21 +394,21 @@ function opRemove() {
   if (effectsOf().length < 2 || !eff.length) return false
   const victim = eff[eff.length - 1]
   retire(victim)
-  say(`− ${titleOf(victim.slug)}`)
+  say(`removing ${titleOf(victim.slug)}`)
   return true
 }
 function opAddFilter() {
   const s = pickSketch(filterPool.value, perfBudget.value - stackCost())
   if (!s) return false
   insertLayer(makeLayer(s.slug, 'filter', 'normal', 1))
-  say(`filter: ${titleOf(s.slug)}`)
+  say(`adding filter ${titleOf(s.slug)}`)
   return true
 }
 function opDropFilter() {
   const f = filterOf()
   if (!f || f.locked) return false
   retire(f)
-  say(`− filter ${titleOf(f.slug)}`)
+  say(`removing filter ${titleOf(f.slug)}`)
   return true
 }
 function opRestyle() {
@@ -446,7 +448,7 @@ function mutate() {
     const q = queuedOut()
     if (q) {
       const spareEffect = q.kind === 'effect' && effectsOf().length > 1
-      did = spareEffect ? (retire(q), say(`− ${titleOf(q.slug)}`), true) : opReplace(q)
+      did = spareEffect ? (retire(q), say(`removing ${titleOf(q.slug)}`), true) : opReplace(q)
       if (did) swapOutQueue.delete(q.slug)
     }
   }
@@ -931,7 +933,12 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <div v-if="note" class="skip-note">{{ note }}</div>
+    <transition name="card-fade">
+      <div v-if="note" class="change-card">
+        <span class="change-label">now playing</span>
+        <span class="change-text">{{ note }}</span>
+      </div>
+    </transition>
 
     <!-- the only thing over the render: one faint corner button that opens the
          panel; it brightens on hover and stays tappable on touch -->
@@ -1014,6 +1021,7 @@ onBeforeUnmount(() => {
             <v-btn value="high" size="x-small">High</v-btn>
             <v-btn value="native" size="x-small">Native</v-btn>
           </v-btn-toggle>
+          <v-checkbox v-model="showNotes" density="compact" hide-details label="Show change title-card" @change="persistSettings" />
           <v-checkbox v-model="lowSkip" density="compact" hide-details label="Auto-thin the mix on low FPS" @change="persistSettings" />
           <div v-if="lowSkip" class="set-row">FPS floor: {{ fpsFloor }}</div>
           <v-slider v-if="lowSkip" v-model="fpsFloor" density="compact" hide-details :min="10" :max="50" :step="1" @end="persistSettings" />
@@ -1089,12 +1097,25 @@ onBeforeUnmount(() => {
   position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
   transition: opacity 1.5s ease;
 }
-.skip-note {
-  position: absolute; left: 50%; top: 64px; transform: translateX(-50%); z-index: 10;
-  padding: 6px 14px; border-radius: 999px; pointer-events: none;
-  font: 13px system-ui, sans-serif; color: #ffcf9a;
-  background: rgba(30, 22, 12, 0.85); border: 1px solid rgba(255, 190, 120, 0.4);
+/* The change notice: a title card that slides in at the bottom-right. */
+.change-card {
+  position: absolute; right: 16px; bottom: 16px; z-index: 10; pointer-events: none;
+  display: flex; flex-direction: column; gap: 1px; max-width: 46vw;
+  padding: 8px 14px; border-radius: 10px;
+  background: rgba(14, 16, 24, 0.82); border: 1px solid rgba(255, 190, 120, 0.28);
+  border-left: 3px solid rgba(255, 190, 120, 0.9);
+  backdrop-filter: blur(6px); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
+.change-label {
+  font: 600 9px system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+  color: #b98a58;
+}
+.change-text {
+  font: 500 15px system-ui, sans-serif; color: #ffe6c8;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.card-fade-enter-active, .card-fade-leave-active { transition: opacity 0.4s ease, transform 0.4s ease; }
+.card-fade-enter-from, .card-fade-leave-to { opacity: 0; transform: translateY(10px); }
 /* The lone affordance over the render: a faint corner button that brightens
    on hover and stays tappable on touch. Everything else lives in the panel. */
 .panel-toggle {
