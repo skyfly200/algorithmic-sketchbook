@@ -11,12 +11,14 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
 const params = rt.params({
-  zoom: { value: 1.02, min: 0.9, max: 1.15, step: 0.002, label: 'Zoom' },
+  zoom: { value: 1.05, min: 0.9, max: 1.15, step: 0.002, label: 'Zoom' },
   rotate: { value: 2, min: -20, max: 20, step: 0.2, label: 'Rotate °/frame' },
   driftX: { value: 0, min: -8, max: 8, step: 0.1, label: 'Drift X' },
   driftY: { value: 0, min: -8, max: 8, step: 0.1, label: 'Drift Y' },
-  decay: { value: 0.12, min: 0, max: 0.6, step: 0.01, label: 'Decay' },
-  sourceMix: { value: 0.55, min: 0.05, max: 1, step: 0.02, label: 'Source amount' },
+  // Higher decay + a touch of zoom by default so the additive feedback doesn't
+  // pin to white; drop them for longer, brighter trails.
+  decay: { value: 0.28, min: 0, max: 0.6, step: 0.01, label: 'Decay' },
+  sourceMix: { value: 0.4, min: 0.05, max: 1, step: 0.02, label: 'Source amount' },
   hueCycle: { value: 0.3, min: 0, max: 2, step: 0.02, label: 'Hue cycle' },
   mirror2: { value: false, type: 'bool', label: 'Kaleidoscope mirror' },
   mirror: { value: false, type: 'bool', label: 'Mirror source (selfie)' },

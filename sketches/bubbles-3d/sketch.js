@@ -73,21 +73,23 @@ function drawBubble(b, t, lx, ly) {
   ctx.fillStyle = body
   ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill()
 
-  // 2) thin-film interference: bands whose hue depends on radius (path length)
-  //    and drift with the film thickness → swirling soap-film colour
+  // 2) thin-film interference: a single centred radial sweep whose hue cycles
+  //    with radius (the film's path length) and drifts as the film thins — the
+  //    colour intensifies toward the rim where the film is thinnest. Centred so
+  //    it hugs the sphere instead of forming off-axis concentric rings.
   ctx.globalCompositeOperation = 'lighter'
-  const bands = 7
-  const drift = t * 0.5 + b.filmPhase
-  for (let k = 0; k < bands; k++) {
-    const rf = (k + 0.5) / bands
-    const hue = ((rf * 720 * params.film + drift * 60 + Math.sin(rf * 6 + drift) * 40) % 360 + 360) % 360
-    const g = ctx.createRadialGradient(-R * 0.15, -R * 0.15, R * Math.max(0, rf - 0.14), -R * 0.15, -R * 0.15, R * (rf + 0.02))
-    g.addColorStop(0, hsl(hue, 90, 62, 0))
-    g.addColorStop(0.5, hsl(hue, 90, 62, 0.16 * params.iridescence))
-    g.addColorStop(1, hsl(hue, 90, 62, 0))
-    ctx.fillStyle = g
-    ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill()
+  const drift = t * 0.4 + b.filmPhase
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R)
+  const stops = 9
+  for (let k = 0; k <= stops; k++) {
+    const rf = k / stops
+    const hue = ((rf * 360 * params.film + drift * 90) % 360 + 360) % 360
+    // fade in from the core, peak near the rim (thin film), soft at the very edge
+    const edge = Math.sin(rf * Math.PI) * (0.4 + rf * 0.6)
+    g.addColorStop(rf, hsl(hue, 85, 64, 0.18 * params.iridescence * edge))
   }
+  ctx.fillStyle = g
+  ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill()
 
   // 3) primary specular glare — a hot spot where the light hits the sphere,
   //    positioned by the (orbiting) light direction so it slides as light moves

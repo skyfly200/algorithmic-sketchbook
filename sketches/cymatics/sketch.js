@@ -28,7 +28,7 @@ function want() { return Math.min(60000, Math.round(14000 * params.grains * rt.d
 function seed() {
   nG = want()
   grains = new Float32Array(nG * 2)
-  for (let i = 0; i < nG; i++) { grains[i * 2] = rt.rng(); grains[i * 2 + 1] = rt.rng() }
+  for (let i = 0; i < nG; i++) { const [u, v] = randInPlate(); grains[i * 2] = u; grains[i * 2 + 1] = v }
 }
 function resize() {
   PR = rt.pixelRatio
@@ -71,10 +71,27 @@ function inPlate(u, v) {
   if (params.plate === 'Circle') return Math.hypot(u - 0.5, v - 0.5) <= 0.5
   return u >= 0 && u <= 1 && v >= 0 && v <= 1
 }
+// A fresh random point guaranteed to sit on the plate (used to clear any sand
+// that has wandered off, e.g. into a circular plate's corners).
+function randInPlate() {
+  if (params.plate === 'Circle') {
+    const a = rt.random(0, Math.PI * 2), r = 0.5 * Math.sqrt(rt.rng())
+    return [0.5 + Math.cos(a) * r, 0.5 + Math.sin(a) * r]
+  }
+  return [rt.rng(), rt.rng()]
+}
+let lastPlate = 'Square'
 
 function frame(now) {
   rt.tick(now)
   if (nG !== want()) seed()
+  // Switching plate shape can leave grains off the new plate — sweep them back on.
+  if (params.plate !== lastPlate) {
+    lastPlate = params.plate
+    for (let i = 0; i < nG; i++) {
+      if (!inPlate(grains[i * 2], grains[i * 2 + 1])) { const [u, v] = randInPlate(); grains[i * 2] = u; grains[i * 2 + 1] = v }
+    }
+  }
   const f = driveFreq()
   const m = 1 + Math.floor(f)
   const n = 1 + Math.floor(f * 1.37 + 0.5)
@@ -100,7 +117,8 @@ function frame(now) {
     const kick = A * amt * step
     u += (rt.rng() - 0.5) * kick
     v += (rt.rng() - 0.5) * kick
-    if (!inPlate(u, v)) { u = grains[i * 2]; v = grains[i * 2 + 1] } // reflect back
+    // grains are seeded on the plate, so the previous position is always valid
+    if (!inPlate(u, v)) { u = grains[i * 2]; v = grains[i * 2 + 1] }
     grains[i * 2] = u; grains[i * 2 + 1] = v
     const px = ox + u * S, py = oy + v * S
     ctx.globalAlpha = 0.5 + (1 - Math.min(1, A)) * 0.5
