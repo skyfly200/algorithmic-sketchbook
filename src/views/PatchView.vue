@@ -2120,14 +2120,15 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
         <v-spacer />
         <v-btn data-tour="patch-random" icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
+        <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
         <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
         <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
       </div>
       <div class="toolbar-row">
-      <!-- save / load named routings -->
+      <!-- Save: name + store the current graph as a routing -->
       <v-menu :close-on-content-click="false">
         <template #activator="{ props }">
-          <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-content-save-outline">Routings</v-btn>
+          <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-content-save-outline">Save</v-btn>
         </template>
         <v-card class="pa-2" min-width="250">
           <div class="d-flex ga-1 mb-2">
@@ -2140,11 +2141,19 @@ onBeforeUnmount(() => {
             />
             <v-btn size="small" variant="tonal" @click="saveRouting">Save</v-btn>
           </div>
-          <div class="d-flex ga-1 mb-2">
+          <div class="d-flex ga-1">
             <v-btn size="small" variant="text" prepend-icon="mdi-download" @click="exportPatch">Export .json</v-btn>
             <v-btn size="small" variant="text" prepend-icon="mdi-upload" @click="importPatch">Import file</v-btn>
           </div>
-          <v-list density="compact" max-height="260">
+        </v-card>
+      </v-menu>
+      <!-- Load: pick a saved routing -->
+      <v-menu :close-on-content-click="false">
+        <template #activator="{ props }">
+          <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-folder-open-outline">Load</v-btn>
+        </template>
+        <v-card class="pa-2" min-width="250">
+          <v-list density="compact" max-height="320">
             <v-list-item
               v-for="r in savedRoutings"
               :key="r.id"
@@ -2288,7 +2297,6 @@ onBeforeUnmount(() => {
         @click="toggleRenderPaused"
       />
       <v-btn data-tour="patch-output" icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
-      <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
       <v-btn icon="mdi-help-circle-outline" variant="text" size="small" title="Replay the walkthrough" @click="startTour" />
       <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
       </div>
@@ -2447,7 +2455,7 @@ onBeforeUnmount(() => {
         v-for="n in nodes"
         :key="n.id"
         class="node"
-        :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked }"
+        :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked, 'node--slow': nodeSlow(n) }"
         :style="{ left: n.x + 'px', top: n.y + 'px', width: NODE_W + 'px' }"
       >
         <div
@@ -2467,7 +2475,7 @@ onBeforeUnmount(() => {
             @blur="commitRename(n, $event.target.value)"
           />
           <span v-else class="node-name" title="Double-click to rename">{{ nodeTitle(n) }}</span>
-          <v-icon v-if="nodeSlow(n)" icon="mdi-alert" size="13" class="node-warn" :title="nodeSlowReason(n)" @pointerdown.stop />
+          <v-icon v-if="nodeSlow(n)" icon="mdi-alert" size="16" class="node-warn" :title="nodeSlowReason(n)" @pointerdown.stop />
           <v-icon :icon="n.locked ? 'mdi-lock' : 'mdi-lock-open-variant-outline'" size="13" class="node-lock" :title="n.locked ? 'Locked — click to unlock' : 'Lock this node'" @pointerdown.stop @click="n.locked = !n.locked; persist()" />
           <v-icon v-if="!n.locked" icon="mdi-close" size="14" class="node-close" @pointerdown.stop @click="removeNode(n.id)" />
         </div>
@@ -2757,7 +2765,11 @@ onBeforeUnmount(() => {
   border: 0; border-radius: 3px; padding: 1px 4px; font: 600 12px system-ui; color: #06070a;
 }
 .node-close { cursor: pointer; color: rgba(0,0,0,0.6); }
-.node-warn { color: #7a3a00; margin-right: 2px; filter: drop-shadow(0 0 3px rgba(255,180,60,0.9)); cursor: help; }
+.node-warn { color: #ffd23f; margin-right: 2px; filter: drop-shadow(0 0 4px rgba(255,60,60,0.95)); cursor: help; }
+/* A slow node gets a prominent red outline + pulsing warning so it's obvious. */
+.node--slow { outline: 2px solid #ff4d4d; outline-offset: 0; box-shadow: 0 0 0 2px rgba(255,77,77,0.35), 0 6px 20px rgba(0,0,0,0.4); }
+.node--slow .node-warn { animation: warnPulse 1.4s ease-in-out infinite; }
+@keyframes warnPulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
 .node-lock { cursor: pointer; color: rgba(0,0,0,0.55); margin-right: 2px; }
 .node-lock:hover { color: rgba(0,0,0,0.85); }
 /* A locked node resists moving/removal and its params can't be edited. */
