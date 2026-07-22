@@ -13,6 +13,9 @@ const ctx = canvas.getContext('2d')
 const params = rt.params({
   style: { value: 'Watercolour', type: 'select', options: ['Watercolour', 'Oil', 'Charcoal', 'Ink', 'Pastel'], label: 'Medium' },
   brush: { value: 1, min: 0.4, max: 3, step: 0.05, label: 'Brush size' },
+  sizeVary: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Brush size variation' },
+  lengthVary: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Stroke length variation' },
+  texture: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Bristle texture' },
   density: { value: 1, min: 0.3, max: 2.5, step: 0.05, label: 'Density' },
   length: { value: 1, min: 0.3, max: 2.5, step: 0.05, label: 'Stroke length' },
   edges: { value: 0.6, min: 0, max: 1.5, step: 0.05, label: 'Edge strength' },
@@ -63,6 +66,32 @@ function styleBg() {
   return null // watercolour/oil/pastel start from the paper
 }
 
+const clampC = (v) => v < 0 ? 0 : v > 255 ? 255 : v
+// A textured brush stroke in local space (already translated + rotated so the
+// stroke runs along +x). Instead of one perfect line it is: a slightly bowed
+// body, a shorter brighter core (so the ends taper), a couple of offset bristle
+// streaks with jittered colour/alpha (paint pickup), and an occasional
+// dry-brush dash break — so no two strokes read the same.
+function texturedStroke(len, lw, r, g, b, a, tex) {
+  const bow = (Math.random() * 2 - 1) * lw * (0.5 + tex * 1.2)
+  const body = (l, off, w) => { ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(-l / 2, off); ctx.quadraticCurveTo(0, off + bow, l / 2, off); ctx.stroke() }
+  if (tex > 0.02 && Math.random() < tex * 0.45) ctx.setLineDash([lw * (1 + Math.random() * 2.5), lw * (0.3 + Math.random() * 1.2) * tex])
+  ctx.strokeStyle = `rgba(${r | 0},${g | 0},${b | 0},${a * 0.55})`
+  body(len, 0, lw)
+  ctx.strokeStyle = `rgba(${r | 0},${g | 0},${b | 0},${a})`
+  body(len * 0.7, 0, lw * 0.6) // brighter core → tapered, less uniform ends
+  ctx.setLineDash([])
+  if (tex > 0.05) {
+    const n = lw > 4 * PR ? 2 : 1
+    for (let k = 0; k < n; k++) {
+      const off = (Math.random() * 2 - 1) * lw * 0.42
+      const jit = (Math.random() * 2 - 1) * 34 * tex
+      ctx.strokeStyle = `rgba(${clampC(r + jit) | 0},${clampC(g + jit) | 0},${clampC(b + jit) | 0},${a * (0.3 + Math.random() * 0.4)})`
+      body(len * (0.55 + Math.random() * 0.45), off, lw * (0.1 + Math.random() * 0.18))
+    }
+  }
+}
+
 let last = 0
 function frame(now) {
   rt.tick(now)
@@ -106,14 +135,18 @@ function frame(now) {
     const j = i * 4
     let r = fdata[j], g = fdata[j + 1], b = fdata[j + 2]
 
+    // per-stroke size & length variation → no two brushes the same
+    const svar = 1 + (Math.random() * 2 - 1) * params.sizeVary * 0.8
+    const lvar = 1 + (Math.random() * 2 - 1) * params.lengthVary
     const x = gx * sx + (Math.random() - 0.5) * base
     const y = gy * sy + (Math.random() - 0.5) * base
-    const len = base * (1.4 + grad * 2) * params.length
-    const wdt = base * 0.5
+    const len = Math.max(base * 0.4, base * (1.2 + grad * 2) * params.length * lvar)
+    const wdt = base * 0.5 * svar
+    const tex = params.texture
 
     ctx.save()
     ctx.translate(x, y)
-    ctx.rotate(ang)
+    ctx.rotate(ang + (Math.random() - 0.5) * 0.4 * tex) // wobble the heading a touch
 
     if (style === 'Charcoal' || style === 'Ink') {
       const dark = 1 - lum[i]
@@ -121,13 +154,10 @@ function frame(now) {
         // only draw where there's an edge or deep shadow → linework
         const on = grad * 3 * params.edges + Math.max(0, dark - 0.55) * 1.5
         if (on < 0.12) { ctx.restore(); continue }
-        ctx.strokeStyle = `rgba(20,18,24,${Math.min(0.9, on)})`
-        ctx.lineWidth = wdt * 0.5
+        texturedStroke(len, wdt * 0.5, 20, 18, 24, Math.min(0.9, on), tex)
       } else {
-        ctx.strokeStyle = `rgba(30,28,32,${Math.min(0.7, dark * 0.7 + grad * params.edges)})`
-        ctx.lineWidth = wdt
+        texturedStroke(len, wdt, 30, 28, 32, Math.min(0.7, dark * 0.7 + grad * params.edges), tex)
       }
-      ctx.beginPath(); ctx.moveTo(-len / 2, 0); ctx.lineTo(len / 2, 0); ctx.stroke()
       ctx.restore(); continue
     }
 
@@ -136,15 +166,7 @@ function frame(now) {
     if (style === 'Watercolour') { a = 0.22; lw = wdt * 1.6; r = r * 0.7 + 255 * 0.3; g = g * 0.7 + 255 * 0.3; b = b * 0.7 + 255 * 0.3 }
     else if (style === 'Pastel') { a = 0.5; lw = wdt * 1.2; r = r * 0.75 + 235 * 0.25; g = g * 0.75 + 230 * 0.25; b = b * 0.75 + 225 * 0.25 }
     else { a = 0.92; lw = wdt } // Oil: opaque impasto
-    ctx.strokeStyle = `rgba(${r | 0},${g | 0},${b | 0},${a})`
-    ctx.lineWidth = lw
-    ctx.beginPath(); ctx.moveTo(-len / 2, 0); ctx.lineTo(len / 2, 0); ctx.stroke()
-    // oil gets a bright impasto highlight edge
-    if (style === 'Oil') {
-      ctx.strokeStyle = `rgba(${Math.min(255, r + 50)},${Math.min(255, g + 50)},${Math.min(255, b + 50)},0.25)`
-      ctx.lineWidth = lw * 0.4
-      ctx.beginPath(); ctx.moveTo(-len / 2, -lw * 0.25); ctx.lineTo(len / 2, -lw * 0.25); ctx.stroke()
-    }
+    texturedStroke(len, lw, r, g, b, a, tex)
     ctx.restore()
   }
 
