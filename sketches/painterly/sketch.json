@@ -1,0 +1,7 @@
+{
+  "title": "Painterly",
+  "description": "Repaint a live image by hand. Thousands of little brush strokes are laid down following the picture's contours (perpendicular to its gradients), turning a camera feed, a dropped photo/video, the demo, or the layers below into a painting. Choose a medium — loose translucent Watercolour on paper, thick impasto Oil, smudged Charcoal, high-contrast Ink linework, or soft chalky Pastel — and dial brush size, density, stroke length and edge strength. Everything is live and mappable.",
+  "tags": ["painting", "watercolor", "oil", "filter", "stylize"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

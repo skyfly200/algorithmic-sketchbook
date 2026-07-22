@@ -16,6 +16,8 @@ import { createSource, clamp } from '../_lib/source.js'
 const rt = createRuntime()
 const params = rt.params({
   focalPlane: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Focal plane' },
+  autoScan: { value: false, type: 'bool', label: 'Auto-scan focus' },
+  scanSpeed: { value: 1, min: 0.2, max: 3, step: 0.05, label: 'Auto-scan speed' },
   focusDepth: { value: 0.3, min: 0.03, max: 1, step: 0.01, label: 'Focus depth' },
   aperture: { value: +rt.random(0.35, 0.8).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Aperture (blur)' },
   radial: { value: rt.rng() < 0.35, type: 'bool', label: 'Radial focus (portrait)' },
@@ -124,6 +126,18 @@ function avgBrightness() {
   }
 }
 
+// Auto-scan: a camera hunting for focus — pull to a new focal plane, ease in
+// (with a little settling wobble), hold, then rack to another.
+let scanCur = 0.5, scanTarget = 0.5, scanNext = 0, lastT = 0
+function autoFocal(t) {
+  const dt = Math.min(0.05, lastT ? t - lastT : 0.016)
+  lastT = t
+  if (t > scanNext) { scanTarget = rt.random(0.15, 0.85); scanNext = t + rt.random(2.4, 5) / Math.max(0.2, params.scanSpeed) }
+  scanCur += (scanTarget - scanCur) * Math.min(1, dt * 2.4 * params.scanSpeed)
+  // a faint focus-breathing wobble as it settles
+  return Math.max(0, Math.min(1, scanCur + Math.sin(t * 6) * 0.01 * Math.abs(scanTarget - scanCur)))
+}
+
 function frame(now) {
   rt.tick(now)
   const t = now * 0.001
@@ -133,6 +147,7 @@ function frame(now) {
     return
   }
 
+  const fp = params.autoScan ? autoFocal(t) : params.focalPlane
   const mirror = params.mirror
   const bright = avgBrightness()
 
@@ -158,7 +173,7 @@ function frame(now) {
     const depth = params.focusDepth
     if (params.radial) {
       const cx = W / 2
-      const cy = params.focalPlane * H
+      const cy = fp * H
       const rIn = depth * 0.5 * Math.min(W, H)
       const rOut = rIn + depth * 0.9 * Math.min(W, H) + 1
       const g = blurCtx.createRadialGradient(cx, cy, rIn, cx, cy, rOut)
@@ -166,7 +181,7 @@ function frame(now) {
       g.addColorStop(1, 'rgba(0,0,0,1)')
       blurCtx.fillStyle = g
     } else {
-      const c = params.focalPlane
+      const c = fp
       const hw = depth * 0.5
       const g = blurCtx.createLinearGradient(0, 0, 0, H)
       g.addColorStop(0, 'rgba(0,0,0,1)')
