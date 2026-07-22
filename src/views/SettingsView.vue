@@ -13,7 +13,7 @@ const settings = useSettingsStore()
 const FILTER_SLUGS = new Set([
   'pointillism', 'camera-lens', 'rain-window', 'halftone', 'channel-offset', 'delay',
   'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope', 'fog', 'mist', 'glow', 'nebula-gasses',
-  'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves', 'warp', 'rolling-shutter',
+  'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves', 'warp', 'rolling-shutter', 'feedback', 'interlace',
 ])
 const effects = computed(() =>
   store.sketches.filter((s) => s.type === 'local' && s.embed && !FILTER_SLUGS.has(s.slug) && s.slug !== 'bright-waves-logo'),

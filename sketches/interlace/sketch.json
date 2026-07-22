@@ -1,0 +1,7 @@
+{
+  "title": "Interlace",
+  "description": "Interlaced-video artifacts as a live filter. A real interlaced signal captures the even and odd scanlines a field apart in time, so anything moving combs into feathered teeth along its edges. Blends the two time-offset fields, adds a horizontal field shear to exaggerate the comb, scanline darkening, and a de-interlace bob. Field size, comb shear, scanlines and field order are live and mappable — works on a camera, a dropped photo/video, the demo, or the layers below.",
+  "tags": ["interlace", "video", "retro", "filter", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}

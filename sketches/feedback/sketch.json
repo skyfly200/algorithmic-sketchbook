@@ -1,0 +1,7 @@
+{
+  "title": "Feedback",
+  "description": "Video feedback — the runaway echo you get pointing a camera at its own screen. Each frame is composited over a zoomed, rotated, drifting and fading copy of the previous one, so the image tunnels inward, spirals, and trails into infinite echoes. Zoom, rotation, drift, decay, hue-cycling and a kaleidoscopic mirror are live and mappable — works on a camera, a dropped photo/video, the demo, or the layers below.",
+  "tags": ["feedback", "trails", "psychedelic", "filter", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-22"
+}
