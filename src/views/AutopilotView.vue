@@ -21,6 +21,7 @@ import TourOverlay from '../components/TourOverlay.vue'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import perfScores from '../registry/perf.json'
+import { traitsOf } from '../registry/traits'
 
 const store = useSketchStore()
 const settings = useSettingsStore()
@@ -61,6 +62,19 @@ const lowSkip = ref(savedSet.lowSkip ?? true)
 const fpsFloor = ref(savedSet.fpsFloor ?? 24)
 const perfBudget = ref(savedSet.perfBudget ?? 12)
 const resolution = ref(savedSet.resolution ?? 'high') // low | medium | high | native
+// How the show evolves over time. Each mode shapes which effects get strung
+// together, how many layers stack, and the cadence of change — see the helpers
+// further down. "Evolve" is the original one-move-at-a-time behaviour.
+const evolveMode = ref(savedSet.evolveMode ?? 'Evolve')
+const EVOLVE_MODES = ['Evolve', 'Curated', 'Energy arc', 'Calm ambient', 'Beat-synced', 'Chaos']
+const MODE_BLURB = {
+  'Evolve': 'One move at a time — the original steady, ever-changing drift.',
+  'Curated': 'Strings together effects that share an element for a coherent look.',
+  'Energy arc': 'Builds energy to a peak (busier, more energetic) then releases to calm.',
+  'Calm ambient': 'Few layers, gentle calm effects, slow changes.',
+  'Beat-synced': 'Changes land on the music — needs the mic on to sync.',
+  'Chaos': 'Fast, dense, high-churn — throws everything at the wall.',
+}
 const playing = ref(true)
 // The rendered view stays clean: every control lives inside one panel opened
 // from a single, unobtrusive corner button — nothing else overlays the visuals.
@@ -68,7 +82,7 @@ const panelOpen = ref(false)
 function persistSettings() {
   localStorage.setItem(SET_KEY, JSON.stringify({
     dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value, perfBudget: perfBudget.value,
-    resolution: resolution.value,
+    resolution: resolution.value, evolveMode: evolveMode.value,
   }))
 }
 function toggleEffect(slug) {
@@ -226,6 +240,67 @@ function saveAsPatch() {
   say('saved as a patch')
 }
 
+// --- evolution-mode intelligence -------------------------------------------
+// A build/release phase in [0,1] that rises then falls, driving "Energy arc".
+function arcPhase() { return 0.5 + 0.5 * Math.sin(performance.now() * 0.00008) }
+// The dominant element among the current live effects (for coherent stringing).
+function dominantElement() {
+  const counts = {}
+  for (const l of effectsOf()) { const e = traitsOf({ slug: l.slug, tags: [] }).element; if (e) counts[e] = (counts[e] || 0) + 1 }
+  let best = null, n = 0
+  for (const k in counts) if (counts[k] > n) { n = counts[k]; best = k }
+  return best
+}
+// Score a candidate sketch for the current mode: higher = a better next pick.
+// This is the "intelligence" that strings a compelling show together.
+function modeScore(s) {
+  const t = traitsOf({ slug: s.slug, tags: [] })
+  const mode = evolveMode.value
+  if (mode === 'Curated') {
+    // favour effects that cohere with the mix's dominant element, and lean
+    // toward calmer companions so the composite stays legible
+    const dom = dominantElement()
+    let sc = 1
+    if (dom && t.element === dom) sc += 1.5
+    if (t.energy === 'calm') sc += 0.4
+    return sc
+  }
+  if (mode === 'Energy arc') {
+    // on the build, want energetic; on the release, want calm
+    const build = arcPhase()
+    return t.energy === 'energetic' ? 0.3 + build * 1.6 : 0.3 + (1 - build) * 1.6
+  }
+  if (mode === 'Calm ambient') return t.energy === 'calm' ? 2 : 0.25
+  if (mode === 'Beat-synced' || mode === 'Chaos') return t.energy === 'energetic' ? 1.6 : 0.6
+  return 1 // Evolve: neutral
+}
+// Weighted pick that folds the mode score into the learned-interest weight.
+function modePick(arr) {
+  if (!arr.length) return undefined
+  let total = 0
+  const w = arr.map((s) => { const x = weightOf(s.slug) * modeScore(s); total += x; return x })
+  let r = Math.random() * total
+  for (let i = 0; i < arr.length; i++) { r -= w[i]; if (r <= 0) return arr[i] }
+  return arr[arr.length - 1]
+}
+// Per-mode target ceiling on how many effect layers stack.
+function maxLayersForMode() {
+  const m = evolveMode.value
+  if (m === 'Calm ambient') return 2
+  if (m === 'Chaos') return 3
+  if (m === 'Energy arc') return arcPhase() > 0.6 ? 3 : 2
+  return 3
+}
+// Per-mode seconds between changes: Chaos churns fast, Calm lingers, the arc
+// quickens toward its energy peak. Beat-synced ignores this (beats drive it).
+function effectiveDwell() {
+  const m = evolveMode.value, base = dwell.value
+  if (m === 'Chaos') return Math.max(4, base * 0.4)
+  if (m === 'Calm ambient') return base * 1.4
+  if (m === 'Energy arc') return Math.max(5, base * (1.4 - arcPhase() * 0.9))
+  return base
+}
+
 function pickSketch(pool, budgetLeft) {
   const inStack = new Set(stack.map((l) => l.slug))
   // Never route back in a slug the user just unchecked while it was live.
@@ -239,7 +314,8 @@ function pickSketch(pool, budgetLeft) {
       .sort((a, b) => cost(a.slug) - cost(b.slug))
       .slice(0, 5)
   }
-  return weightedPick(cands)
+  // modePick folds the current evolution mode's intelligence into the weighting.
+  return modePick(cands)
 }
 
 function makeLayer(slug, kind, blend, opacity, locked = false) {
@@ -382,7 +458,7 @@ function mutate() {
     const budgetLeft = perfBudget.value - stackCost()
     const moves = []
     if (uEff.length) moves.push([() => opReplace(pick(uEff)), 5])
-    if (eff.length < 3 && budgetLeft >= 2) moves.push([opAdd, 2.2])
+    if (eff.length < maxLayersForMode() && budgetLeft >= 2) moves.push([opAdd, evolveMode.value === 'Chaos' ? 3.5 : 2.2])
     if (unlocked(eff).length && eff.length > 1) moves.push([opRemove, 1.4])
     if (filter) {
       if (!filter.locked) moves.push([() => opReplace(filter), 2])
@@ -400,7 +476,7 @@ function mutate() {
   }
   redo.length = 0 // a fresh move starts a new branch — old redo is void
   snapshot()
-  dwellLeft = dwell.value
+  dwellLeft = effectiveDwell()
 }
 
 // Full reroll: tear the whole mix down (respecting locks) and deal a fresh one.
@@ -417,7 +493,7 @@ function reroll() {
   settleUntil = performance.now() + 4000
   plannedNext.value = null
   snapshot()
-  dwellLeft = dwell.value
+  dwellLeft = effectiveDwell()
   say('rerolled')
 }
 
@@ -460,7 +536,7 @@ function rebuildTo(descriptors) {
   for (const l of [...stack]) retire(l, 1700)
   for (const d of descriptors) insertLayer(makeLayer(d.slug, d.kind, d.blend, d.opacity, d.locked))
   settleUntil = performance.now() + 4000
-  dwellLeft = dwell.value
+  dwellLeft = effectiveDwell()
 }
 function back() {
   if (history.length < 2) return
@@ -540,7 +616,16 @@ function watchdog() {
 const beat = createBeatDetector()
 const micOn = ref(false)
 let pendingBeat = false
-beat.onBeat(() => (pendingBeat = true))
+let beatCount = 0
+beat.onBeat(() => {
+  pendingBeat = true
+  // Beat-synced mode advances the show on musical phrases (~every 8 beats)
+  // instead of a fixed clock, so changes land on the music.
+  if (evolveMode.value === 'Beat-synced' && playing.value && !warmingCount() && ++beatCount >= 8) {
+    beatCount = 0
+    mutate()
+  }
+})
 async function toggleMic() {
   if (micOn.value) {
     beat.stop()
@@ -745,7 +830,10 @@ function loop(now) {
       dwellLeft--
       dwellShown.value = Math.max(0, dwellLeft)
       watchdog()
-      if (dwellLeft <= 0) mutate()
+      // Beat-synced drives itself off beats while the mic is live; fall back to
+      // the dwell clock when there's no audio to sync to.
+      const beatDriven = evolveMode.value === 'Beat-synced' && micOn.value
+      if (dwellLeft <= 0 && !beatDriven) mutate()
     }
   }
   raf = requestAnimationFrame(loop)
@@ -805,7 +893,7 @@ onMounted(() => {
   if (chance(0.8)) opAdd()
   if (chance(0.5)) opAddFilter()
   snapshot()
-  dwellLeft = dwell.value
+  dwellLeft = effectiveDwell()
   settleUntil = performance.now() + 5000 // let the opening mix finish loading
   window.addEventListener('message', onMessage)
   window.addEventListener('keydown', onKey)
@@ -910,6 +998,11 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- settings -->
+          <div class="set-row">Evolution mode</div>
+          <select class="mode-select" :value="evolveMode" @change="evolveMode = $event.target.value; persistSettings()">
+            <option v-for="m in EVOLVE_MODES" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <p class="set-sub mb-2">{{ MODE_BLURB[evolveMode] }}</p>
           <div class="set-row">Seconds between changes: {{ dwell }}s</div>
           <v-slider v-model="dwell" density="compact" hide-details :min="6" :max="120" :step="1" @end="persistSettings" />
           <div class="set-row">Perf budget: {{ perfBudget }} (bigger = richer mixes)</div>
@@ -1075,6 +1168,8 @@ onBeforeUnmount(() => {
 .act-btn:hover { border-color: #7c8cff; }
 /* Resolution toggle: stretch the four buttons to fill the panel so "Native"
    never spills past the edge. */
+.mode-select { width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #3a4056; border-radius: 6px; font: 12px system-ui, sans-serif; padding: 5px 8px; margin-top: 2px; }
+.set-sub { font: 11px system-ui, sans-serif; color: #8a90a0; margin: 2px 0 0; }
 .res-toggle { display: flex; width: 100%; height: 30px; }
 .res-toggle :deep(.v-btn) { flex: 1 1 0; min-width: 0; padding: 0; letter-spacing: 0; }
 .map-head { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font: 600 10px system-ui; color: #9aa4c0; text-transform: uppercase; }
