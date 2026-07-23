@@ -38,12 +38,12 @@ function load() {
 }
 
 const layers = ref(
-  load() ?? [
+  (settings.persistEditors ? load() : null) ?? [
     { slug: 'plasma-shader', blend: 'normal', opacity: 1, on: true },
     { slug: 'interference-rings', blend: 'screen', opacity: 0.85, on: true },
   ],
 )
-watch(layers, () => localStorage.setItem(STORE_KEY, JSON.stringify(layers.value)), { deep: true })
+watch(layers, () => { if (settings.persistEditors) localStorage.setItem(STORE_KEY, JSON.stringify(layers.value)) }, { deep: true })
 
 const showPanel = ref(true)
 const stage = ref(null)

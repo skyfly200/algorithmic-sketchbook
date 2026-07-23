@@ -208,7 +208,7 @@ function normalizeNodes(list) {
   }
   return list
 }
-const saved = loadGraph()
+const saved = settings.persistEditors ? loadGraph() : null
 let nextId = 1
 const nodes = reactive(normalizeNodes(saved?.nodes) ?? [])
 const edges = reactive(saved?.edges ?? [])
@@ -224,7 +224,7 @@ const snapshot = () => JSON.stringify({ nodes, edges, links })
 let lastSnap = snapshot()
 
 function persist() {
-  localStorage.setItem(STORE_KEY, JSON.stringify({ nodes, edges, links }))
+  if (settings.persistEditors) localStorage.setItem(STORE_KEY, JSON.stringify({ nodes, edges, links }))
   if (restoring) return
   const s = snapshot()
   if (s !== lastSnap) {
@@ -246,7 +246,7 @@ function applySnap(s) {
   const ids = new Set(nodes.map((n) => n.id))
   for (const id of [...rtState.keys()]) if (!ids.has(id)) rtState.delete(id)
   for (const n of nodes) st(n.id)
-  localStorage.setItem(STORE_KEY, s)
+  if (settings.persistEditors) localStorage.setItem(STORE_KEY, s)
   lastSnap = s
   restoring = false
   nextTick(() => layoutTick.value++)

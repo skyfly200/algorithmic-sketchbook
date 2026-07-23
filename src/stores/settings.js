@@ -8,6 +8,16 @@ function load() {
   try { return JSON.parse(localStorage.getItem(KEY)) || {} } catch { return {} }
 }
 
+// The transient "working state" of the editors — the current Patch graph, Mixer
+// layers, Autopilot mix settings, and per-editor view prefs. These are what the
+// "Remember editor state" toggle governs and what "Clear session memory" wipes.
+// Deliberately excludes your saved library (routings, blocks, scenes, viewer
+// settings) so clearing the session never throws away named/saved work.
+export const SESSION_KEYS = [
+  'sketchbook-patch', 'sketchbook-patch-res', 'sketchbook-patch-fps', 'sketchbook-patch-show',
+  'sketchbook-mixer', 'sketchbook-autopilot', 'sketchbook-autopilot-interest',
+]
+
 export const useSettingsStore = defineStore('settings', {
   state: () => {
     const s = load()
@@ -15,6 +25,7 @@ export const useSettingsStore = defineStore('settings', {
       tutorials: s.tutorials ?? true, // master on/off for all guided tours
       seen: s.seen ?? {}, // { app: true, patch: true, ... } — which tours have auto-run
       effectPool: s.effectPool ?? [], // enabled effect slugs; [] means "all effects"
+      persistEditors: s.persistEditors ?? true, // remember editor working state across refreshes
     }
   },
   getters: {
@@ -23,7 +34,13 @@ export const useSettingsStore = defineStore('settings', {
   },
   actions: {
     persist() {
-      localStorage.setItem(KEY, JSON.stringify({ tutorials: this.tutorials, seen: this.seen, effectPool: this.effectPool }))
+      localStorage.setItem(KEY, JSON.stringify({ tutorials: this.tutorials, seen: this.seen, effectPool: this.effectPool, persistEditors: this.persistEditors }))
+    },
+    setPersistEditors(on) { this.persistEditors = !!on; this.persist() },
+    // Wipe the editors' working state (but not the saved library). The editors
+    // read their state at mount, so a reload gives them a clean slate.
+    clearSession() {
+      for (const k of SESSION_KEYS) localStorage.removeItem(k)
     },
     setTutorials(on) { this.tutorials = !!on; this.persist() },
     hasSeen(view) { return !!this.seen[view] },

@@ -20,6 +20,11 @@ const enabledCount = computed(() => effects.value.filter((s) => settings.isEffec
 function replayAppTour() {
   router.push({ name: 'gallery' })
 }
+function clearSessionMemory() {
+  if (!window.confirm('Clear the working state of the Patch, Mixer and Autopilot editors? Your saved routings, blocks and scenes are kept. The app will reload.')) return
+  settings.clearSession()
+  window.location.reload()
+}
 </script>
 
 <template>
@@ -60,6 +65,41 @@ function replayAppTour() {
             Go to gallery to replay
           </v-btn>
         </div>
+      </v-card-text>
+    </v-card>
+
+    <!-- Session & memory -->
+    <v-card class="mb-6" variant="tonal">
+      <v-card-title class="text-subtitle-1">
+        <v-icon icon="mdi-content-save-cog-outline" size="small" class="mr-2" />Session &amp; memory
+      </v-card-title>
+      <v-card-text>
+        <v-switch
+          :model-value="settings.persistEditors"
+          color="primary"
+          density="comfortable"
+          hide-details
+          label="Remember editor state across refreshes"
+          @update:model-value="settings.setPersistEditors($event)"
+        />
+        <p class="text-caption text-medium-emphasis mt-1 mb-3">
+          When on, the Patch graph, Mixer layers and Autopilot mix are saved in your browser and restored
+          when you come back. Turn off to start each editor fresh every visit. Your saved routings, blocks
+          and scenes are always kept regardless of this setting.
+        </p>
+        <v-btn
+          size="small"
+          variant="tonal"
+          color="error"
+          prepend-icon="mdi-broom"
+          @click="clearSessionMemory"
+        >
+          Clear session memory
+        </v-btn>
+        <p class="text-caption text-medium-emphasis mt-2 mb-0">
+          Wipes the current Patch / Mixer / Autopilot working state and reloads. Saved routings, blocks and
+          scenes are not affected.
+        </p>
       </v-card-text>
     </v-card>
 

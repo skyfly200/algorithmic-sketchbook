@@ -47,6 +47,7 @@ const filterPool = computed(() =>
 // --- settings (persisted) ---------------------------------------------------
 const SET_KEY = 'sketchbook-autopilot'
 const savedSet = (() => {
+  if (!settings.persistEditors) return {}
   try {
     return JSON.parse(localStorage.getItem(SET_KEY)) ?? {}
   } catch {
@@ -81,6 +82,7 @@ const panelOpen = ref(false)
 const sections = reactive(savedSet.sections ?? { mix: true, settings: true, effects: false, layers: true })
 function toggleSection(k) { sections[k] = !sections[k]; persistSettings() }
 function persistSettings() {
+  if (!settings.persistEditors) return
   localStorage.setItem(SET_KEY, JSON.stringify({
     dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value, perfBudget: perfBudget.value,
     resolution: resolution.value, evolveMode: evolveMode.value, showNotes: showNotes.value,
@@ -138,6 +140,7 @@ let settleUntil = 0
 // favours the higher-weighted sketches. Persisted, so the taste carries over.
 const INTEREST_KEY = 'sketchbook-autopilot-interest'
 const interest = (() => {
+  if (!settings.persistEditors) return {}
   try {
     return JSON.parse(localStorage.getItem(INTEREST_KEY)) ?? {}
   } catch {
@@ -156,6 +159,7 @@ function noteEngagement(slug, liveMs) {
   else return
   interest[slug] = Math.min(4, Math.max(0.2, +w.toFixed(3)))
   clearTimeout(interestSaveTimer)
+  if (!settings.persistEditors) return
   interestSaveTimer = setTimeout(() => localStorage.setItem(INTEREST_KEY, JSON.stringify(interest)), 500)
 }
 // Weighted random pick, biased by learned interest.
