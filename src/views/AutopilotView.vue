@@ -85,6 +85,11 @@ const evolveOptions = ref(savedSet.evolveOptions ?? true) // auto-drift each lay
 const useCamera = ref(savedSet.useCamera ?? true)
 const useMedia = ref(savedSet.useMedia ?? true)
 const useAudioMap = ref(savedSet.useAudioMap ?? true)
+// Smooth changes: route every committed change through a final blend step — a
+// frozen snapshot of the outgoing composite laid over the top and cross-faded
+// out — so even hard swaps (feed switch, restyle, a whole new branch) dissolve
+// instead of cutting. Like a crossfade on the master out.
+const smoothChanges = ref(savedSet.smoothChanges ?? true)
 // How the show evolves over time. Each mode shapes which effects get strung
 // together, how many layers stack, and the cadence of change — see the helpers
 // further down. "Evolve" is the original one-move-at-a-time behaviour.
@@ -112,6 +117,7 @@ function persistSettings() {
     resolution: resolution.value, evolveMode: evolveMode.value, showNotes: showNotes.value,
     evolveOptions: evolveOptions.value, sections: { ...sections },
     useCamera: useCamera.value, useMedia: useMedia.value, useAudioMap: useAudioMap.value,
+    smoothChanges: smoothChanges.value,
   }))
 }
 function toggleEffect(slug) {
@@ -497,6 +503,7 @@ function queuedOut() {
 // otherwise a weighted pick among whatever is currently possible.
 function mutate() {
   if (warmingCount()) return // let the network settle first
+  const pre = smoothChanges.value && captureComposite() // freeze the outgoing look first
   let did = false
 
   // 1) A layer the user picked to swap next.
@@ -540,16 +547,18 @@ function mutate() {
     let r = Math.random() * total
     for (const [fn, w] of moves) {
       r -= w
-      if (r <= 0) { if (!fn()) continue; break }
+      if (r <= 0) { if (!fn()) continue; did = true; break }
     }
   }
   redo.length = 0 // a fresh move starts a new branch — old redo is void
   snapshot()
   dwellLeft = effectiveDwell(); dwellTotal.value = dwellLeft
+  if (did && pre) triggerDissolve() // cross-fade the frozen frame out over the change
 }
 
 // Full reroll: tear the whole mix down (respecting locks) and deal a fresh one.
 function reroll() {
+  const pre = smoothChanges.value && captureComposite()
   for (const l of [...stack]) if (!l.locked) retire(l, 1600)
   const keptCost = liveLayers().filter((l) => l.locked).reduce((a, l) => a + cost(l.slug), 0)
   const hasBase = liveLayers().some((l) => l.kind === 'effect' && l.locked)
@@ -564,6 +573,7 @@ function reroll() {
   snapshot()
   dwellLeft = effectiveDwell(); dwellTotal.value = dwellLeft
   say('rerolled')
+  if (pre) triggerDissolve()
 }
 
 // Replace a whole branch: retire every unlocked layer (effects + the filter it
@@ -641,6 +651,7 @@ function snapshot() {
   if (history.length > 30) history.shift()
 }
 function rebuildTo(descriptors) {
+  const pre = smoothChanges.value && captureComposite()
   for (const l of [...stack]) retire(l, 1700)
   for (const d of descriptors) {
     const l = makeLayer(d.slug, d.kind, d.blend, d.opacity, d.locked)
@@ -649,6 +660,7 @@ function rebuildTo(descriptors) {
   }
   settleUntil = performance.now() + 4000
   dwellLeft = effectiveDwell(); dwellTotal.value = dwellLeft
+  if (pre) triggerDissolve()
 }
 function back() {
   if (history.length < 2) return
@@ -957,6 +969,52 @@ function updateOcclusion() {
   }
 }
 
+// --- smooth changes: a final blend step across the whole composite ----------
+// The optional "final blend" that smooths every change: when a change commits
+// we freeze the outgoing on-screen composite onto a top canvas and cross-fade
+// it out, so even the hard swaps (feed switch, restyle, a whole new branch)
+// dissolve instead of cutting — a crossfade on the master output. The snapshot
+// is rebuilt from each live layer's canvas (skipping ones the occlusion pass
+// culled, and laying a filter's own output over source-over since that's what
+// actually shows), so it matches the screen at the instant of the change.
+const dissolveEl = ref(null)
+const dissolveShow = ref(false)
+function captureComposite() {
+  const el = dissolveEl.value
+  if (!el) return false
+  const vw = window.innerWidth || 1280
+  const vh = window.innerHeight || 720
+  const W = Math.min(1280, vw)
+  const H = Math.max(1, Math.round(W * (vh / vw)))
+  if (el.width !== W) el.width = W
+  if (el.height !== H) el.height = H
+  const c = el.getContext('2d')
+  c.setTransform(1, 0, 0, 1, 0, 0)
+  c.globalAlpha = 1
+  c.globalCompositeOperation = 'source-over'
+  c.clearRect(0, 0, W, H)
+  let drew = false
+  for (const L of stack) {
+    if (L.state !== 'live' || L.occluded) continue
+    let cv = null
+    try { cv = frames.get(L.id)?.contentDocument?.querySelector('canvas') } catch { cv = null }
+    if (!cv || !cv.width) continue
+    c.globalAlpha = L.opacity ?? 1
+    // a filter's canvas already *is* the composited look, so lay it over source-over
+    c.globalCompositeOperation = !drew || L.kind === 'filter' ? 'source-over' : canvasBlend(L.blend)
+    try { coverDraw(c, cv, cv.width, cv.height, W, H); drew = true } catch {}
+  }
+  c.globalAlpha = 1
+  c.globalCompositeOperation = 'source-over'
+  return drew
+}
+// Snap the frozen snapshot to fully opaque with no transition, then drop it to
+// 0 on the next frames so the CSS transition dissolves it away over the change.
+function triggerDissolve() {
+  dissolveShow.value = true
+  requestAnimationFrame(() => requestAnimationFrame(() => { dissolveShow.value = false }))
+}
+
 // --- per-layer params + mappings (same protocol as the viewer) -------------
 const layerControls = reactive([]) // [{ id, win, title, schema, values, mappings, open }]
 let controlSeq = 1
@@ -1221,6 +1279,10 @@ onBeforeUnmount(() => {
       />
     </div>
 
+    <!-- the final blend step: a frozen snapshot of the outgoing mix, cross-faded
+         out over each change so nothing hard-cuts (opt-in via "Smooth changes") -->
+    <canvas ref="dissolveEl" class="dissolve" :class="{ show: dissolveShow }" />
+
     <transition name="card-fade">
       <div v-if="note" class="change-card">
         <span class="change-label">now</span>
@@ -1322,6 +1384,7 @@ onBeforeUnmount(() => {
             </v-btn-toggle>
             <v-checkbox v-model="evolveOptions" density="compact" hide-details label="Evolve each effect's options over time" @change="persistSettings" />
             <v-checkbox v-model="showNotes" density="compact" hide-details label="Show change title-card" @change="persistSettings" />
+            <v-checkbox v-model="smoothChanges" density="compact" hide-details label="Smooth changes (blend between)" @change="persistSettings" />
             <v-checkbox v-model="lowSkip" density="compact" hide-details label="Auto-thin the mix on low FPS" @change="persistSettings" />
             <div v-if="lowSkip" class="set-row">FPS floor: {{ fpsFloor }}</div>
             <v-slider v-if="lowSkip" v-model="fpsFloor" density="compact" hide-details :min="10" :max="50" :step="1" @end="persistSettings" />
@@ -1416,6 +1479,14 @@ onBeforeUnmount(() => {
   position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
   transition: opacity 1.5s ease;
 }
+/* The final blend step: a frozen frame of the outgoing mix, snapped opaque then
+   cross-faded out so every change dissolves instead of cutting. */
+.dissolve {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  z-index: 4; pointer-events: none;
+  opacity: 0; transition: opacity 0.9s ease;
+}
+.dissolve.show { opacity: 1; transition: none; }
 /* The change notice: a title card that slides in at the bottom-right. */
 .change-card {
   position: absolute; right: 16px; bottom: 16px; z-index: 10; pointer-events: none;
