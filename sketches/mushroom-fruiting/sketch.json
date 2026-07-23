@@ -1,0 +1,7 @@
+{
+  "title": "Mushroom Fruiting",
+  "description": "A fungal colony seen in cross-section. Mycelium spreads through the substrate as a branching web of fine hyphae; where the web thickens, pins emerge and fruit — the stem elongates and the cap swells from a button to a domed then flattened cap, gills darken underneath, and mature caps drop drifting spores. Caps then age (flattening, curling, darkening; ink caps deliquesce into black drips) and wither back into the litter, while new flushes keep coming. Toadstools, porcini, ink caps and oyster shelves, or a mix. Click to inoculate a fresh flush; beats trigger a colony-wide flush. Growth speed, fruiting density, size, species, spore release, mycelium spread and substrate damp are live and mappable.",
+  "tags": ["earth", "biology", "fungi", "growth", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-23"
+}

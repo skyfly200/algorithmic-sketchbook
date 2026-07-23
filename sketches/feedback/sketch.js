@@ -11,7 +11,7 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
 const params = rt.params({
-  zoom: { value: 1.05, min: 0.9, max: 1.15, step: 0.002, label: 'Zoom' },
+  zoom: { value: 1.05, min: 0.8, max: 1.5, step: 0.002, label: 'Zoom' },
   rotate: { value: 2, min: -20, max: 20, step: 0.2, label: 'Rotate °/frame' },
   driftX: { value: 0, min: -8, max: 8, step: 0.1, label: 'Drift X' },
   driftY: { value: 0, min: -8, max: 8, step: 0.1, label: 'Drift Y' },
