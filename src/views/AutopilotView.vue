@@ -59,7 +59,7 @@ const savedSet = (() => {
 })()
 const dwell = ref(savedSet.dwell ?? 25) // seconds between routing moves
 const lowSkip = ref(savedSet.lowSkip ?? true)
-const fpsFloor = ref(savedSet.fpsFloor ?? 24)
+const fpsFloor = ref(savedSet.fpsFloor ?? 15)
 const perfBudget = ref(savedSet.perfBudget ?? 12)
 const resolution = ref(savedSet.resolution ?? 'high') // low | medium | high | native
 const showNotes = ref(savedSet.showNotes ?? true) // the change title-card in the corner
@@ -499,7 +499,7 @@ function mutate() {
   }
   redo.length = 0 // a fresh move starts a new branch — old redo is void
   snapshot()
-  dwellLeft = effectiveDwell()
+  dwellLeft = effectiveDwell(); dwellTotal.value = dwellLeft
 }
 
 // Full reroll: tear the whole mix down (respecting locks) and deal a fresh one.
@@ -516,7 +516,7 @@ function reroll() {
   settleUntil = performance.now() + 4000
   plannedNext.value = null
   snapshot()
-  dwellLeft = effectiveDwell()
+  dwellLeft = effectiveDwell(); dwellTotal.value = dwellLeft
   say('rerolled')
 }
 
@@ -598,7 +598,7 @@ function rebuildTo(descriptors) {
   for (const l of [...stack]) retire(l, 1700)
   for (const d of descriptors) insertLayer(makeLayer(d.slug, d.kind, d.blend, d.opacity, d.locked))
   settleUntil = performance.now() + 4000
-  dwellLeft = effectiveDwell()
+  dwellLeft = effectiveDwell(); dwellTotal.value = dwellLeft
 }
 function back() {
   if (history.length < 2) return
@@ -890,9 +890,12 @@ let raf = 0
 let lastSecond = 0
 let dwellLeft = 0
 const dwellShown = ref(0)
+// The actual length of the current dwell (effectiveDwell() varies by mode), so
+// the countdown ring fills in step with the number it wraps.
+const dwellTotal = ref(1)
 // 0→1 fraction elapsed within the current dwell, for the countdown ring.
 const dwellProgress = computed(() => {
-  const d = Math.max(1, dwell.value)
+  const d = Math.max(1, dwellTotal.value)
   return Math.min(1, Math.max(0, 1 - dwellShown.value / d))
 })
 function loop(now) {
@@ -991,7 +994,7 @@ onMounted(() => {
   if (chance(0.8)) opAdd()
   if (chance(0.5)) opAddFilter()
   snapshot()
-  dwellLeft = effectiveDwell()
+  dwellLeft = effectiveDwell(); dwellTotal.value = dwellLeft
   settleUntil = performance.now() + 5000 // let the opening mix finish loading
   window.addEventListener('message', onMessage)
   window.addEventListener('keydown', onKey)
