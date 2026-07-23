@@ -58,6 +58,19 @@ const savedSet = (() => {
   }
 })()
 const dwell = ref(savedSet.dwell ?? 25) // seconds between routing moves
+// Dwell stops: fine (5 s) steps down low, growing to coarse (30 s) steps up
+// high — a log-ish spread so you can dial anything from a snappy 5 s to a
+// languid 6-minute hold. The slider rides an index into this so the spacing is
+// even on screen while the seconds ramp up.
+const DWELL_STOPS = [5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 90, 110, 130, 150, 180, 210, 240, 270, 300, 330, 360]
+const dwellIdx = computed({
+  get() {
+    let best = 0, bd = Infinity
+    DWELL_STOPS.forEach((s, i) => { const d = Math.abs(s - dwell.value); if (d < bd) { bd = d; best = i } })
+    return best
+  },
+  set(i) { dwell.value = DWELL_STOPS[Math.max(0, Math.min(DWELL_STOPS.length - 1, Math.round(i)))] },
+})
 const lowSkip = ref(savedSet.lowSkip ?? true)
 const fpsFloor = ref(savedSet.fpsFloor ?? 15)
 const perfBudget = ref(savedSet.perfBudget ?? 12)
@@ -1118,7 +1131,7 @@ onBeforeUnmount(() => {
             </select>
             <p class="set-sub mb-2">{{ MODE_BLURB[evolveMode] }}</p>
             <div class="set-row">Seconds between changes: {{ dwell }}s</div>
-            <v-slider v-model="dwell" density="compact" hide-details :min="6" :max="120" :step="1" @end="persistSettings" />
+            <v-slider v-model="dwellIdx" density="compact" hide-details :min="0" :max="DWELL_STOPS.length - 1" :step="1" :ticks="true" @end="persistSettings" />
             <div class="set-row">Perf budget: {{ perfBudget }} (bigger = richer mixes)</div>
             <v-slider v-model="perfBudget" density="compact" hide-details :min="4" :max="24" :step="1" @end="persistSettings" />
             <div class="set-row">Resolution</div>
