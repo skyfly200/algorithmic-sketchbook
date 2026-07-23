@@ -85,6 +85,11 @@ let camFacing = 'user' // 'user' (front) | 'environment' (back)
 export function sharedCameraOn() {
   return !!camStream
 }
+// The live shared-camera stream, for hosts that want to draw it themselves
+// (e.g. Autopilot feeding the camera through a filter). Null when off.
+export function sharedCameraStream() {
+  return camStream
+}
 export function sharedCameraFacing() {
   return camFacing
 }

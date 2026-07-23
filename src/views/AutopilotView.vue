@@ -25,6 +25,7 @@ import perfScores from '../registry/perf.json'
 import { traitsOf } from '../registry/traits'
 import { FILTER_SLUGS } from '../registry/filters'
 import { handOffToPatch } from '../lib/mixToPatch'
+import { mediaLibrary, mediaById, sharedCameraOn, sharedCameraStream } from '../stores/media'
 
 const router = useRouter()
 const store = useSketchStore()
@@ -77,6 +78,13 @@ const perfBudget = ref(savedSet.perfBudget ?? 12)
 const resolution = ref(savedSet.resolution ?? 'high') // low | medium | high | native
 const showNotes = ref(savedSet.showNotes ?? true) // the change title-card in the corner
 const evolveOptions = ref(savedSet.evolveOptions ?? true) // auto-drift each layer's own params
+// Live sources: fold the shared camera (only while it's on) and the media
+// library into the show as filter feeds, and switch on each sketch's own
+// audio mappings while the mic is live. Each is gated on the source being
+// actually available, so nothing changes until you turn a source on.
+const useCamera = ref(savedSet.useCamera ?? true)
+const useMedia = ref(savedSet.useMedia ?? true)
+const useAudioMap = ref(savedSet.useAudioMap ?? true)
 // How the show evolves over time. Each mode shapes which effects get strung
 // together, how many layers stack, and the cadence of change — see the helpers
 // further down. "Evolve" is the original one-move-at-a-time behaviour.
@@ -103,6 +111,7 @@ function persistSettings() {
     dwell: dwell.value, lowSkip: lowSkip.value, fpsFloor: fpsFloor.value, perfBudget: perfBudget.value,
     resolution: resolution.value, evolveMode: evolveMode.value, showNotes: showNotes.value,
     evolveOptions: evolveOptions.value, sections: { ...sections },
+    useCamera: useCamera.value, useMedia: useMedia.value, useAudioMap: useAudioMap.value,
   }))
 }
 function toggleEffect(slug) {
@@ -364,6 +373,7 @@ function makeLayer(slug, kind, blend, opacity, locked = false) {
     state: 'warming',
     replaces: null,
     occluded: false, // hidden behind an opaque filter — culled from the screen composite
+    feed: null, // filters only: 'camera' | 'media:<id>' — a live source in place of the composite
     bornAt: performance.now(),
   }
 }
@@ -410,6 +420,7 @@ function opReplace(target, preferSlug) {
   const ti = stack.findIndex((x) => x.id === target.id)
   const isBase = target.kind === 'effect' && ti === stack.findIndex((x) => x.kind === 'effect')
   const l = makeLayer(s.slug, target.kind, isBase ? 'normal' : target.blend, target.opacity)
+  if (target.kind === 'filter') l.feed = target.feed // keep any live-source feed across the swap
   l.replaces = target.id
   insertLayer(l, isBase ? ti : ti + 1) // base slides underneath, others mount on top
   say(`${titleOf(target.slug)} → ${titleOf(s.slug)}`)
@@ -433,8 +444,26 @@ function opRemove() {
 function opAddFilter() {
   const s = pickSketch(filterPool.value, perfBudget.value - stackCost())
   if (!s) return false
-  insertLayer(makeLayer(s.slug, 'filter', 'normal', 1))
-  say(`adding filter ${titleOf(s.slug)}`)
+  const l = makeLayer(s.slug, 'filter', 'normal', 1)
+  // When a live source is on, sometimes feed this filter the camera/clip
+  // instead of the effect composite — a filtered camera/clip in the show.
+  if (chance(0.5)) l.feed = pickFeed()
+  insertLayer(l)
+  say(l.feed ? `filter ${titleOf(s.slug)} · ${feedLabel(l.feed)}` : `adding filter ${titleOf(s.slug)}`)
+  return true
+}
+// Switch a filter's source: cycle its feed among the live sources (camera /
+// media) and the composite-below, so the show flips between a filtered scene
+// and a filtered camera/clip on its own.
+function opSwitchFeed() {
+  const f = filterOf()
+  if (!f || f.locked) return false
+  const avail = availableFeeds()
+  if (!avail.length) return false
+  const options = [null, ...avail].filter((o) => o !== f.feed)
+  if (!options.length) return false
+  f.feed = pick(options)
+  say(f.feed ? `feed → ${feedLabel(f.feed)}` : `feed → scene`)
   return true
 }
 function opDropFilter() {
@@ -498,6 +527,9 @@ function mutate() {
     if (filter) {
       if (!filter.locked) moves.push([() => opReplace(filter), 2])
       if (!filter.locked) moves.push([opDropFilter, 0.8])
+      // when a live source is on, favour swapping the filter's feed (camera /
+      // clip ↔ scene) — it's a striking, cheap change
+      if (!filter.locked && availableFeeds().length) moves.push([opSwitchFeed, 2.4])
     } else if (budgetLeft >= 1) {
       moves.push([opAddFilter, 2])
     }
@@ -605,12 +637,16 @@ function logicalLayers() {
   return stack.filter((l) => l.state !== 'dying' && !replaced.has(l.id))
 }
 function snapshot() {
-  history.push(logicalLayers().map((l) => ({ slug: l.slug, kind: l.kind, blend: l.blend, opacity: l.opacity, locked: l.locked })))
+  history.push(logicalLayers().map((l) => ({ slug: l.slug, kind: l.kind, blend: l.blend, opacity: l.opacity, locked: l.locked, feed: l.feed })))
   if (history.length > 30) history.shift()
 }
 function rebuildTo(descriptors) {
   for (const l of [...stack]) retire(l, 1700)
-  for (const d of descriptors) insertLayer(makeLayer(d.slug, d.kind, d.blend, d.opacity, d.locked))
+  for (const d of descriptors) {
+    const l = makeLayer(d.slug, d.kind, d.blend, d.opacity, d.locked)
+    if (d.feed) l.feed = d.feed
+    insertLayer(l)
+  }
   settleUntil = performance.now() + 4000
   dwellLeft = effectiveDwell(); dwellTotal.value = dwellLeft
 }
@@ -645,6 +681,7 @@ function settleWarming(now) {
     if ((ready && age > 1400) || age > 6000) {
       l.state = 'live'
       l.liveAt = now // when it started actually showing — for engagement scoring
+      autoMapLayer(l) // if the mic is live, make this newcomer audio-reactive too
       if (l.replaces != null) {
         retire(stack.find((x) => x.id === l.replaces))
         l.replaces = null
@@ -708,6 +745,16 @@ beat.onBeat(() => {
     mutate()
   }
 })
+// With the mic live, switch on each sketch's own default (audio-reactive)
+// mappings via sketch:auto-map, so the whole show reacts to sound hands-free.
+function autoMapLayer(l) {
+  if (!useAudioMap.value || !micOn.value) return
+  const win = frames.get(l.id)?.contentWindow
+  if (win) try { win.postMessage({ type: 'sketch:auto-map' }, '*') } catch {}
+}
+function autoMapAll() {
+  for (const l of stack) autoMapLayer(l)
+}
 async function toggleMic() {
   if (micOn.value) {
     beat.stop()
@@ -717,10 +764,26 @@ async function toggleMic() {
   try {
     await beat.start()
     micOn.value = true
+    autoMapAll() // make what's already on screen audio-reactive
   } catch {
     /* no mic */
   }
 }
+function onAudioMapToggle() {
+  persistSettings()
+  if (useAudioMap.value) autoMapAll()
+}
+// A one-line status of the live sources Autopilot can pull in right now. The
+// camera is only used if it's already shared (from Patch/Mixer) — Autopilot
+// never opens it itself; media comes from the shared library; audio needs the
+// mic (M). mediaLibrary + micOn are reactive so this refreshes as they change.
+const liveSourceHint = computed(() => {
+  const bits = []
+  bits.push(sharedCameraOn() ? 'camera live' : 'camera off')
+  bits.push(`${mediaLibrary.length} in library`)
+  bits.push(micOn.value ? 'mic on' : 'mic off')
+  return bits.join(' · ')
+})
 
 // --- filter feed: composite the layers below into a filter's source --------
 // The feed is sized to the *viewport's* aspect ratio, not a fixed 16:9. If it
@@ -750,6 +813,76 @@ function coverDraw(ctx, cv, sw, sh, tw, th) {
   const h = sh * scale
   ctx.drawImage(cv, (tw - w) / 2, (th - h) / 2, w, h)
 }
+
+// --- live sources: the shared camera + the media library --------------------
+// Autopilot can feed a filter from a live source instead of the effect
+// composite below it: the shared camera (only while it's on) or any clip/image
+// in the media library. We keep one hidden <video>/<img> per source, drawn into
+// the same feed the filter already reads — so a filtered camera/clip drops
+// straight into the show with no new compositor path.
+const camVideo = (() => {
+  const v = document.createElement('video')
+  v.muted = true; v.autoplay = true; v.playsInline = true; v.setAttribute('playsinline', '')
+  return v
+})()
+const mediaEls = new Map() // feed key 'media:<id>' -> HTMLVideoElement | HTMLImageElement
+let camBound = false
+function ensureCamera() {
+  const stream = sharedCameraStream()
+  if (!stream) { if (camBound) { camVideo.srcObject = null; camBound = false } return null }
+  if (camVideo.srcObject !== stream) { camVideo.srcObject = stream; camBound = true; camVideo.play?.().catch(() => {}) }
+  return camVideo.videoWidth ? camVideo : null
+}
+function ensureMediaEl(id) {
+  const key = `media:${id}`
+  let el = mediaEls.get(key)
+  const item = mediaById(id)
+  if (!item) { mediaEls.delete(key); return null }
+  if (!el) {
+    if (item.kind === 'video') {
+      el = document.createElement('video')
+      el.muted = true; el.loop = true; el.autoplay = true; el.playsInline = true; el.setAttribute('playsinline', '')
+      el.src = item.url; el.play?.().catch(() => {})
+    } else {
+      el = new Image(); el.src = item.url
+    }
+    mediaEls.set(key, el)
+  }
+  const ready = item.kind === 'video' ? el.videoWidth > 0 : el.complete && el.naturalWidth > 0
+  return ready ? el : null
+}
+// A drawable element for a feed key, or null if the source isn't ready/available.
+function sourceEl(feed) {
+  if (feed === 'camera') return useCamera.value ? ensureCamera() : null
+  if (feed?.startsWith('media:')) return useMedia.value ? ensureMediaEl(+feed.slice(6)) : null
+  return null
+}
+function elDims(el) {
+  if (el instanceof HTMLVideoElement) return [el.videoWidth, el.videoHeight]
+  return [el.naturalWidth, el.naturalHeight]
+}
+// The feed keys available to route right now (gated on each source being on).
+function availableFeeds() {
+  const out = []
+  if (useCamera.value && sharedCameraOn()) out.push('camera')
+  if (useMedia.value) for (const m of mediaLibrary) out.push(`media:${m.id}`)
+  return out
+}
+// Pick a live-source feed for a filter (or null to feed it the composite below).
+// Weighted so the camera, when live, leads; media clips share the rest.
+function pickFeed() {
+  const avail = availableFeeds()
+  if (!avail.length) return null
+  if (avail.includes('camera') && chance(0.55)) return 'camera'
+  const media = avail.filter((f) => f !== 'camera')
+  return media.length ? pick(media) : (avail.includes('camera') ? 'camera' : null)
+}
+function feedLabel(feed) {
+  if (feed === 'camera') return 'camera'
+  if (feed?.startsWith('media:')) return mediaById(+feed.slice(6))?.name ?? 'clip'
+  return null
+}
+
 function feedFilters() {
   sizeFeed()
   for (let i = 0; i < stack.length; i++) {
@@ -763,7 +896,18 @@ function feedFilters() {
     feedCtx.fillRect(0, 0, feed.width, feed.height)
     let drew = false
     let first = true
-    for (let j = 0; j < i; j++) {
+    // A live source (camera / media clip) feeds the filter in place of the
+    // composite below; falls back to the composite if it isn't ready yet.
+    const live = L.feed ? sourceEl(L.feed) : null
+    if (live) {
+      const [sw, sh] = elDims(live)
+      if (sw && sh) {
+        feedCtx.globalAlpha = 1
+        feedCtx.globalCompositeOperation = 'source-over'
+        try { coverDraw(feedCtx, live, sw, sh, feed.width, feed.height); drew = true } catch {}
+      }
+    }
+    if (!drew) for (let j = 0; j < i; j++) {
       const under = stack[j]
       if (under.kind !== 'effect' || under.state === 'warming') continue
       let cv = null
@@ -1050,6 +1194,11 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFsChange)
   document.removeEventListener('webkitfullscreenchange', onFsChange)
   beat.stop()
+  // release the hidden source elements (the camera stream itself is owned by
+  // the media store and left running for other views)
+  try { camVideo.pause?.(); camVideo.srcObject = null } catch {}
+  for (const el of mediaEls.values()) { try { el.pause?.(); if (el instanceof HTMLVideoElement) el.src = '' } catch {} }
+  mediaEls.clear()
 })
 </script>
 
@@ -1142,6 +1291,7 @@ onBeforeUnmount(() => {
               <div v-for="l in liveLayers()" :key="l.id" class="mix-item" :class="{ locked: l.locked, planned: plannedNext?.targetId === l.id }">
                 <span class="mix-kind" :title="l.kind">{{ l.kind === 'filter' ? '⧉' : '◆' }}</span>
                 <span class="mix-name">{{ titleOf(l.slug) }}</span>
+                <span v-if="l.feed" class="mix-feed" :title="'feed: ' + feedLabel(l.feed)">◉ {{ feedLabel(l.feed) }}</span>
                 <button class="mix-btn" :title="l.locked ? 'Unlock' : 'Lock — keep this layer'" @click="toggleLock(l)">{{ l.locked ? '🔒' : '🔓' }}</button>
                 <button class="mix-btn" :disabled="l.locked" title="Swap this layer next (preview)" @click="planSwap(l)">⇄</button>
               </div>
@@ -1175,6 +1325,13 @@ onBeforeUnmount(() => {
             <v-checkbox v-model="lowSkip" density="compact" hide-details label="Auto-thin the mix on low FPS" @change="persistSettings" />
             <div v-if="lowSkip" class="set-row">FPS floor: {{ fpsFloor }}</div>
             <v-slider v-if="lowSkip" v-model="fpsFloor" density="compact" hide-details :min="10" :max="50" :step="1" @end="persistSettings" />
+            <div class="panel-sub">Live sources</div>
+            <v-checkbox v-model="useCamera" density="compact" hide-details label="Feed the shared camera (when on)" @change="persistSettings" />
+            <v-checkbox v-model="useMedia" density="compact" hide-details label="Feed the media library" @change="persistSettings" />
+            <v-checkbox v-model="useAudioMap" density="compact" hide-details label="Audio-map effects when the mic is on" @change="onAudioMapToggle" />
+            <p class="set-sub mb-1">
+              {{ liveSourceHint }}
+            </p>
           </div>
 
           <!-- ── Effects in rotation ──────────────────────────────────────── -->
@@ -1340,6 +1497,7 @@ onBeforeUnmount(() => {
 .mix-item.planned { border-color: rgba(255,190,120,0.5); }
 .mix-kind { color: #7c8cff; font-size: 11px; width: 12px; text-align: center; }
 .mix-name { flex: 1; font: 11px system-ui, sans-serif; color: #dfe4f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mix-feed { flex: 0 0 auto; max-width: 40%; font: 9px system-ui, sans-serif; color: #8fe6c8; background: rgba(60,180,140,0.14); border: 1px solid rgba(120,230,200,0.3); border-radius: 5px; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mix-btn { background: transparent; border: 0; cursor: pointer; font-size: 12px; line-height: 1; padding: 2px; opacity: 0.85; }
 .mix-btn:hover { opacity: 1; }
 .mix-btn:disabled { opacity: 0.3; cursor: default; }
