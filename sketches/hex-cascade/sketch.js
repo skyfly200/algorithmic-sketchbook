@@ -7,6 +7,10 @@
 import p5 from 'p5'
 import { createRuntime } from '../_lib/runtime.js'
 
+// Disable p5's Friendly Error System — it otherwise lazy-loads localized message
+// files from a CDN (which fails offline) and costs performance. We don't need it.
+p5.disableFriendlyErrors = true
+
 const rt = createRuntime()
 // Retrofit: the cascade bloom is a mappable param (audio drives it by default;
 // remove the mapping in the controls panel for a purely cursor-driven piece).

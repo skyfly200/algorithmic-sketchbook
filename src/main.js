@@ -25,3 +25,12 @@ const vuetify = createVuetify({
 })
 
 createApp(App).use(createPinia()).use(router).use(vuetify).mount('#app')
+
+// Register the offline service worker (built only in production). Scope is the
+// deployment root so it covers the gallery, viewer and every iframed sketch.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    const base = import.meta.env.BASE_URL || './'
+    navigator.serviceWorker.register(base + 'sw.js', { scope: base }).catch(() => {})
+  })
+}
