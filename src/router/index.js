@@ -20,7 +20,7 @@ export default createRouter({
     { path: '/present/:slug', name: 'present-slug', component: PresentView },
     { path: '/mix', name: 'mixer', component: MixerView },
     { path: '/patch', name: 'patch', component: PatchView },
-    { path: '/docs', name: 'docs', component: DocsView },
+    { path: '/docs/:page?', name: 'docs', component: DocsView, props: true },
     { path: '/auto', name: 'autopilot', component: AutopilotView },
     { path: '/library', name: 'library', component: LibraryView },
     { path: '/settings', name: 'settings', component: SettingsView },
