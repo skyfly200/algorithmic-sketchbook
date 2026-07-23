@@ -26,7 +26,7 @@ and saved with [scenes](#/docs/scenes) and patches.
 | `tilt.x` · `tilt.y` · `shake` | Device accelerometer / gyro (falls back to the mouse where there's no sensor). |
 | `time.sin` | A slow ~10-second oscillation — free automation with no hardware at all. |
 | `midi.ccN` · `midi.note` · `midi.velocity` | Any MIDI controller (via the Web MIDI API); every CC number resolves (`midi.cc74`, …). |
-| `leap.x` · `y` · `z` · `pinch` · `grab` | Hand-tracking controller — position and pinch/grab. |
+| `leap.x` · `y` · `z` · `pinch` · `grab` | Leap Motion Controller — hand position and pinch/grab. |
 | `artnet.chN` | DMX channels received over the network (Art-Net protocol). |
 
 All sources are normalised to roughly `0..1` (bipolar ones like tilt sit around
@@ -54,8 +54,9 @@ cymatics) also take the raw FFT directly for physically-driven standing waves.
 
 - **MIDI** works in browsers that support the Web MIDI API — plug in a
   controller and its CCs resolve automatically as `midi.ccN`.
-- **Hand tracking** needs its controller's tracking service running locally; the
-  runtime connects to its websocket and exposes hand position and pinch/grab.
+- **Leap Motion Controller** needs the Ultraleap tracking service running
+  locally; the runtime connects to its websocket and exposes hand position and
+  pinch/grab.
 - **Art-Net** brings DMX into the browser through a small local bridge —
   run `npm run artnet-bridge` and channels arrive as `artnet.chN`. This is how a
   lighting desk can drive the visuals, or the visuals can be programmed from the
@@ -67,3 +68,9 @@ cymatics) also take the raw FFT directly for physically-driven standing waves.
 Because inputs are just named sources, a sketch never cares *which* one you
 pick — you can map a MIDI knob to the same parameter a beat was driving without
 touching the sketch.
+
+---
+
+> Leap Motion and Ultraleap are trademarks of Ultraleap Holdings Ltd. This
+> application is independently developed and is not affiliated with or endorsed
+> by Ultraleap.

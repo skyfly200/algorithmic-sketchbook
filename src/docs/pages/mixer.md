@@ -45,3 +45,11 @@ A mix can be saved and later reopened. Under the hood a mix is stored the same
 way as a Patch routing, which is why they share a home in the
 [Library](#/docs/scenes) and why the [Patch](#/docs/patch) board can open a mix
 as a graph.
+
+## Open in Patch
+
+The **Open in Patch** button converts the current layer stack into a node graph
+and drops it onto the [Patch](#/docs/patch) board: an Effect node per layer,
+folded together with Blend nodes that carry each layer's blend mode and opacity,
+then an Output. From there you can rewire it, insert filters and control nodes,
+or hand it to Patch's own autopilot mode.

@@ -12,9 +12,11 @@
  * the graph. Cycles are allowed — an upstream canvas simply holds last frame,
  * giving video-feedback loops. Graph persists in localStorage.
  */
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { useSketchStore } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
+import { PATCH_HANDOFF_KEY } from '../lib/mixToPatch'
 import TourOverlay from '../components/TourOverlay.vue'
 import perfScores from '../registry/perf.json'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
@@ -26,6 +28,7 @@ import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, st
 // pipes its video input straight into them.
 import { FILTER_SLUGS } from '../registry/filters'
 
+const router = useRouter()
 const store = useSketchStore()
 const settings = useSettingsStore()
 // Only local, same-origin sketches can be captured for piping. Filters (and
@@ -495,6 +498,59 @@ function rerollUpstream(node) {
   persist()
   nextTick(() => layoutTick.value++)
 }
+
+// --- autopilot mode: auto-evolve the graph -----------------------------------
+// A hands-free mode that mutates the graph on a timer, the same idea as the
+// Autopilot view but operating on THIS node network: it swaps effect/filter
+// sketches, restyles blends, and occasionally regrows a whole upstream branch —
+// always leaving locked nodes alone. Toggle it to jump between hand-editing
+// (manual) and letting it drive (autopilot).
+const autoOn = ref(false)
+const autoEverySec = ref(12) // dwell between moves
+let autoTimer = 0
+function autoStep() {
+  if (!autoOn.value) return
+  const swappable = nodes.filter((n) => (n.type === 'effect' || n.type === 'filter') && !n.locked)
+  const blends = nodes.filter((n) => n.type === 'blend' && !n.locked)
+  const branchable = nodes.filter((n) => TYPES[n.type].ins > 0 && !n.locked && edges.some((e) => e.to === n.id))
+  // weight gentle moves (slug swap, blend restyle) over the drastic branch reroll
+  const bag = []
+  if (swappable.length) bag.push('swap', 'swap', 'swap')
+  if (blends.length) bag.push('blend', 'blend')
+  if (branchable.length) bag.push('branch')
+  if (!bag.length) { randomPatch(); return }
+  const move = bag[Math.floor(Math.random() * bag.length)]
+  if (move === 'swap') {
+    const n = swappable[Math.floor(Math.random() * swappable.length)]
+    const base = n.type === 'filter' ? filterOptions.value : settings.filterToPool(effectOptions.value)
+    const opts = base.length ? base : (n.type === 'filter' ? filterOptions.value : effectOptions.value)
+    if (!opts.length) return
+    let s = n.params.slug
+    for (let k = 0; k < 6 && s === n.params.slug; k++) s = opts[Math.floor(Math.random() * opts.length)]?.slug ?? s
+    n.params.slug = s
+    persist()
+  } else if (move === 'blend') {
+    const n = blends[Math.floor(Math.random() * blends.length)]
+    n.params.mode = BLENDS[Math.floor(Math.random() * BLENDS.length)]
+    n.params.mix = +(0.35 + Math.random() * 0.6).toFixed(2)
+    persist()
+  } else {
+    rerollUpstream(branchable[Math.floor(Math.random() * branchable.length)])
+  }
+}
+function armAuto() {
+  clearInterval(autoTimer)
+  if (autoOn.value) autoTimer = setInterval(autoStep, Math.max(2, autoEverySec.value) * 1000)
+}
+function toggleAuto() {
+  autoOn.value = !autoOn.value
+  if (autoOn.value && !nodes.some((n) => n.type === 'effect' || n.type === 'filter')) randomPatch()
+  armAuto()
+}
+watch(autoEverySec, armAuto)
+
+// Jump to the full Autopilot view (its own evolving-mix mode).
+function openAutopilot() { router.push({ name: 'autopilot' }) }
 
 // --- rename ---
 const editingName = ref(null) // node id whose title is being edited
@@ -2314,6 +2370,27 @@ onMounted(async () => {
   document.addEventListener('fullscreenchange', onFsChange)
   document.addEventListener('webkitfullscreenchange', onFsChange)
   if (settings.shouldAutoTour('patch')) setTimeout(startTour, 600)
+  // Handoff from the Mixer / Autopilot: a converted graph waiting to be edited.
+  const handoff = localStorage.getItem(PATCH_HANDOFF_KEY)
+  if (handoff) {
+    localStorage.removeItem(PATCH_HANDOFF_KEY)
+    try {
+      const g = JSON.parse(handoff)
+      if (g && g.nodes?.length) {
+        loadRouting(g)
+        await nextTick()
+        layoutTick.value++
+        resizeStage()
+        window.addEventListener('resize', resizeStage)
+        window.addEventListener('message', onEffectMessage)
+        window.addEventListener('keydown', onKey)
+        window.addEventListener('pointermove', trackMouse)
+        raf = requestAnimationFrame(loop)
+        showToast('Loaded mix as a patch')
+        return
+      }
+    } catch { /* fall through to normal load */ }
+  }
   // Deep link from the Library: ?load=<id> opens a saved routing.
   const loadId = new URLSearchParams(location.hash.split('?')[1] || '').get('load')
   if (loadId) {
@@ -2358,6 +2435,7 @@ function trackMouse(e) {
 }
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
+  clearInterval(autoTimer)
   window.removeEventListener('resize', resizeStage)
   window.removeEventListener('message', onEffectMessage)
   window.removeEventListener('keydown', onKey)
@@ -2420,6 +2498,26 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
       </div>
       <div class="toolbar-row">
+      <!-- Autopilot: auto-evolve this graph; jump between manual and autopilot -->
+      <v-btn
+        :prepend-icon="autoOn ? 'mdi-robot' : 'mdi-robot-outline'"
+        size="small"
+        :variant="autoOn ? 'flat' : 'tonal'"
+        :color="autoOn ? 'primary' : undefined"
+        :title="autoOn ? 'Autopilot on — the graph is evolving itself; click to take over' : 'Autopilot — let it auto-evolve this graph'"
+        @click="toggleAuto"
+      >{{ autoOn ? 'Autopilot' : 'Manual' }}</v-btn>
+      <v-menu :close-on-content-click="false">
+        <template #activator="{ props }">
+          <v-btn v-bind="props" icon="mdi-cog-outline" variant="text" size="x-small" title="Autopilot options" />
+        </template>
+        <v-card class="pa-3" min-width="250">
+          <div class="text-caption text-medium-emphasis mb-1">Change every {{ autoEverySec }}s</div>
+          <v-slider v-model="autoEverySec" :min="3" :max="60" :step="1" hide-details density="compact" class="mb-2" />
+          <v-btn size="small" block variant="text" prepend-icon="mdi-robot-outline" @click="openAutopilot">Open the Autopilot view</v-btn>
+        </v-card>
+      </v-menu>
+
       <!-- Save: name + store the current graph as a routing -->
       <v-menu :close-on-content-click="false">
         <template #activator="{ props }">

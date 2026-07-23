@@ -57,4 +57,11 @@ Open the side drawer to steer without stopping the show:
 - A shared mic drives the whole mix's audio reactivity.
 
 You can **save the current mix as a patch** and open it in [Patch](#/docs/patch)
-to keep building by hand, or save it to the [Library](#/docs/scenes).
+to keep building by hand, or save it to the [Library](#/docs/scenes). **Edit in
+Patch** jumps straight to the node board with the current mix converted to an
+editable graph.
+
+Autopilot's evolving-mix behaviour also lives *inside* Patch now: the Patch run
+toolbar has a **Manual / Autopilot** toggle that auto-evolves the node graph in
+place, so you can jump between hand-editing and hands-free in either view. See
+[Patch → Autopilot mode](#/docs/patch).

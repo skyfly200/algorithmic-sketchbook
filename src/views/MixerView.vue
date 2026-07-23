@@ -9,6 +9,7 @@
  * — the composite is therefore input-reactive through its layers.
  */
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import { useSketchStore } from '../stores/sketches'
 import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
 import { useSettingsStore } from '../stores/settings'
@@ -16,10 +17,20 @@ import TourOverlay from '../components/TourOverlay.vue'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 // Single source of truth for mapping sources (audio/mouse/tilt/midi/leap/artnet).
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
+import { mixToPatch, handOffToPatch } from '../lib/mixToPatch'
 
+const router = useRouter()
 const store = useSketchStore()
 const viewer = useViewerStore()
 const settings = useSettingsStore()
+
+// Convert the current layer stack into a node graph and open it in Patch.
+function openInPatch() {
+  const graph = mixToPatch(layers.value)
+  if (!graph.nodes.length) return
+  handOffToPatch(graph)
+  router.push({ name: 'patch' })
+}
 
 const options = computed(() => store.sketches.filter((s) => s.embed && s.url))
 const BLENDS = [
@@ -367,6 +378,7 @@ onBeforeUnmount(() => {
           />
         </v-list>
       </v-menu>
+      <v-btn icon="mdi-vector-polyline" variant="text" size="small" title="Open this mix in the Patch node editor" @click="openInPatch" />
       <v-btn data-tour="mix-panel" icon="mdi-tune-variant" variant="text" size="small" title="Toggle layers panel" :color="showPanel ? 'primary' : undefined" @click="showPanel = !showPanel" />
       <v-btn icon="mdi-help-circle-outline" variant="text" size="small" title="Replay the walkthrough" @click="startTour" />
       <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />

@@ -36,7 +36,7 @@ Two ideas make all of that hang together:
 | Area | What it's for |
 | --- | --- |
 | [Gallery & Viewer](#/docs/viewer) | Browse, search, sort and open a single experiment; tweak its parameters; re-roll its seed. |
-| [Inputs & mappings](#/docs/inputs) | Drive any parameter from audio, mouse, touch, the device tilt sensor, MIDI, hand tracking or Art-Net. |
+| [Inputs & mappings](#/docs/inputs) | Drive any parameter from audio, mouse, touch, the device tilt sensor, MIDI, a Leap Motion Controller or Art-Net. |
 | [Scenes & Library](#/docs/scenes) | Save named snapshots of a look and deep-link them; collect saved patches and mixes. |
 | [Mixer](#/docs/mixer) | Stack sketches as blended layers, like a VJ deck. |
 | [Patch](#/docs/patch) | Wire sketches, filters and control signals into a node graph. |

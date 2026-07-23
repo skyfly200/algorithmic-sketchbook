@@ -15,6 +15,7 @@
  * rather than cutting to a new scene.
  */
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import { useSketchStore } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
 import TourOverlay from '../components/TourOverlay.vue'
@@ -23,7 +24,9 @@ import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import perfScores from '../registry/perf.json'
 import { traitsOf } from '../registry/traits'
 import { FILTER_SLUGS } from '../registry/filters'
+import { handOffToPatch } from '../lib/mixToPatch'
 
+const router = useRouter()
 const store = useSketchStore()
 const settings = useSettingsStore()
 const BLENDS = [
@@ -210,11 +213,11 @@ function titleOf(slug) {
 // effect sources chained through Blend nodes, an optional Filter fed the
 // composite, then Output. It lands in the shared saved-routings store so it
 // shows up in Patch and the Library.
-function saveAsPatch() {
+function buildMixGraph() {
   const layers = liveLayers()
   const effs = layers.filter((l) => l.kind === 'effect')
   const filt = layers.find((l) => l.kind === 'filter')
-  if (!effs.length) return
+  if (!effs.length) return null
   const nodes = []
   const edges = []
   let id = 1
@@ -224,7 +227,7 @@ function saveAsPatch() {
   // fold them together with blends: base, then blend each next on top
   let composite = effNodes[0]
   for (let i = 1; i < effNodes.length; i++) {
-    const b = mk('blend', { mode: effs[i].blend === 'normal' ? 'screen' : effs[i].blend, mix: effs[i].opacity ?? 1 }, 250 + i * 40, 60 + i * 150)
+    const b = mk('blend', { mode: effs[i].blend === 'normal' ? 'source-over' : effs[i].blend, mix: effs[i].opacity ?? 1 }, 250 + i * 40, 60 + i * 150)
     edges.push({ from: composite.id, to: b.id, port: 0 })
     edges.push({ from: effNodes[i].id, to: b.id, port: 1 })
     composite = b
@@ -237,14 +240,25 @@ function saveAsPatch() {
   }
   const out = mk('output', {}, 700, 160)
   edges.push({ from: tail.id, to: out.id, port: 0 })
-
+  const name = `Autopilot: ${effs.map((l) => titleOf(l.slug)).join(' + ')}`.slice(0, 60)
+  return { nodes, edges, links: [], name }
+}
+function saveAsPatch() {
+  const g = buildMixGraph()
+  if (!g) return
   const SAVED_KEY = 'sketchbook-patch-saved'
   let saved = []
   try { saved = JSON.parse(localStorage.getItem(SAVED_KEY)) || [] } catch {}
-  const names = effs.map((l) => titleOf(l.slug)).join(' + ')
-  saved.push({ id: Date.now().toString(36), name: `Autopilot: ${names}`.slice(0, 60), nodes, edges, links: [] })
+  saved.push({ id: Date.now().toString(36), name: g.name, nodes: g.nodes, edges: g.edges, links: [] })
   localStorage.setItem(SAVED_KEY, JSON.stringify(saved))
   say('saved as a patch')
+}
+// Jump to the Patch view with the current mix loaded, ready to edit by hand.
+function editInPatch() {
+  const g = buildMixGraph()
+  if (!g) return
+  handOffToPatch(g)
+  router.push({ name: 'patch' })
 }
 
 // --- evolution-mode intelligence -------------------------------------------
@@ -1069,6 +1083,7 @@ onBeforeUnmount(() => {
             @click="toggleMic"
           />
           <v-btn icon="mdi-content-save-outline" variant="text" size="small" title="Save the current mix as a Patch (S)" @click="saveAsPatch" />
+          <v-btn icon="mdi-vector-polyline" variant="text" size="small" title="Edit the current mix in the Patch node editor" @click="editInPatch" />
         </div>
 
         <div class="panel-scroll" data-tour="ap-settings">

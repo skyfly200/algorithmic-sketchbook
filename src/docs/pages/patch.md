@@ -67,6 +67,30 @@ adjusting the graph here without disturbing the output. A timeline of **cues**
 lets you snapshot the whole patch (graph + params) and crossfade between saved
 looks.
 
+## Autopilot mode
+
+Patch can also drive itself. The **Manual / Autopilot** toggle in the run
+toolbar flips between hand-editing and a hands-free mode that mutates *this*
+graph on a timer — swapping effect and filter sketches, restyling blends, and
+occasionally regrowing a whole upstream branch — always leaving locked nodes
+alone. The cog next to it sets how often it changes and links to the full
+[Autopilot](#/docs/autopilot) view. Lock the nodes you want to keep, hit
+Autopilot, and let the board evolve; take over any time by switching back to
+Manual.
+
+You can hop between the two either way: **Open the Autopilot view** from Patch,
+or **Edit in Patch** from Autopilot to drop its current evolving mix onto the
+board as an editable graph.
+
+## Converting a mix into a patch
+
+A [Mixer](#/docs/mixer) stack is just a linear blend of layers, so it maps
+cleanly onto nodes. The Mixer's **Open in Patch** button (and Autopilot's
+**Edit in Patch**) converts the live mix into a graph — an Effect node per
+layer, folded together with Blend nodes carrying each layer's blend mode and
+opacity, into an Output — and hands it to the board, where you can rewire it,
+add filters and controls, and save it like any routing.
+
 ## Touch
 
 The board works on touch screens — drag nodes and wires with a finger, pinch to
