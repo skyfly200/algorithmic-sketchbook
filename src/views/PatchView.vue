@@ -446,6 +446,23 @@ function ancestorsOf(id) {
 }
 // Replace the whole branch feeding a node: remove every (unlocked) node upstream
 // of it and grow a fresh random source into each of its now-empty input ports.
+// Slide a proposed node box downward until it no longer overlaps any existing
+// node (plus a margin) — keeps freshly-laid-out nodes from stacking on top of
+// each other or on nodes that are staying put.
+const NODE_H = HEAD_H + THUMB_H + 24
+function freeSpot(x, y, ignore = new Set()) {
+  const mx = 24, my = 20
+  let guard = 0
+  let overlap = true
+  while (overlap && guard++ < 200) {
+    overlap = false
+    for (const o of nodes) {
+      if (ignore.has(o.id)) continue
+      if (Math.abs(o.x - x) < NODE_W + mx && Math.abs(o.y - y) < NODE_H + my) { y = o.y + NODE_H + my; overlap = true; break }
+    }
+  }
+  return { x, y }
+}
 function rerollUpstream(node) {
   if (!node || TYPES[node.type].ins === 0) return
   const anc = ancestorsOf(node.id)
@@ -455,17 +472,26 @@ function rerollUpstream(node) {
   for (let i = links.length - 1; i >= 0; i--) if (rm.has(links[i].from) || rm.has(links[i].node)) links.splice(i, 1)
   const pool = settings.filterToPool(effectOptions.value)
   const ins = Math.max(1, TYPES[node.type].ins)
-  for (let port = 0; port < ins; port++) {
-    if (edges.some((e) => e.to === node.id && e.port === port)) continue // still fed by a locked branch
-    const eff = reactive({ id: nextId++, type: 'effect', x: node.x - 260, y: node.y + port * 170, params: { slug: pk(pool.length ? pool : effectOptions.value)?.slug ?? '' } })
-    nodes.push(eff); st(eff.id)
+  // the ports still needing a fresh feeder, laid out as a tidy column centred on
+  // the target node so multi-input branches don't pile up on one another
+  const openPorts = []
+  for (let port = 0; port < ins; port++) if (!edges.some((e) => e.to === node.id && e.port === port)) openPorts.push(port)
+  const ROW = NODE_H + 26
+  const fresh = new Set()
+  openPorts.forEach((port, idx) => {
+    const cy = node.y + (idx - (openPorts.length - 1) / 2) * ROW
+    const withFilter = Math.random() < 0.4
+    const eSpot = freeSpot(node.x - (withFilter ? 430 : 250), cy, fresh)
+    const eff = reactive({ id: nextId++, type: 'effect', x: eSpot.x, y: eSpot.y, params: { slug: pk(pool.length ? pool : effectOptions.value)?.slug ?? '' } })
+    nodes.push(eff); st(eff.id); fresh.add(eff.id)
     let src = eff
-    if (Math.random() < 0.4) {
-      const f = reactive({ id: nextId++, type: 'filter', x: node.x - 130, y: node.y + port * 170, params: { slug: pk(filterOptions.value)?.slug ?? '' } })
-      nodes.push(f); st(f.id); edges.push({ from: eff.id, to: f.id, port: 0 }); src = f
+    if (withFilter) {
+      const fSpot = freeSpot(node.x - 220, cy, fresh)
+      const f = reactive({ id: nextId++, type: 'filter', x: fSpot.x, y: fSpot.y, params: { slug: pk(filterOptions.value)?.slug ?? '' } })
+      nodes.push(f); st(f.id); fresh.add(f.id); edges.push({ from: eff.id, to: f.id, port: 0 }); src = f
     }
     edges.push({ from: src.id, to: node.id, port })
-  }
+  })
   persist()
   nextTick(() => layoutTick.value++)
 }
@@ -721,6 +747,7 @@ function applyLinks(now) {
 const drag = reactive({ node: null, dx: 0, dy: 0, ids: [], starts: null, px: 0, py: 0 })
 const wire = reactive({ active: false, from: null, fromPort: 0, x: 0, y: 0, kind: 'video' })
 const selected = ref(null) // node id last clicked — target for copy/delete
+const frontNodeId = ref(null) // node raised above the others while interacted with
 // Multi-selection (shift-click to add/remove). Moving any selected node moves
 // the whole set; locking applies to all of them.
 const selectedSet = reactive(new Set())
@@ -816,6 +843,7 @@ function onBoardDown(e) {
   pan.oy = view.panY
 }
 function startDrag(n, e) {
+  frontNodeId.value = n.id // raise the grabbed node above its neighbours
   // Shift-click toggles the node in the multi-selection (no move).
   if (e.shiftKey) { toggleSel(n.id); return }
   // Plain click on a node outside the current selection selects just it.
@@ -2789,7 +2817,8 @@ onBeforeUnmount(() => {
         :data-node-id="n.id"
         class="node"
         :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked, 'node--slow': nodeSlow(n) }"
-        :style="{ left: n.x + 'px', top: n.y + 'px', width: NODE_W + 'px' }"
+        :style="{ left: n.x + 'px', top: n.y + 'px', width: NODE_W + 'px', zIndex: n.id === frontNodeId ? 6 : (selectedSet.has(n.id) || selected === n.id ? 4 : undefined) }"
+        @pointerdown.capture="frontNodeId = n.id"
       >
         <div
           class="node-head"
