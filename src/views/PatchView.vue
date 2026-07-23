@@ -1,6 +1,6 @@
 <script setup>
 /**
- * Patch — a TouchDesigner-style node compositor for live visuals. Drop operator
+ * Patch — a node-based compositor for live visuals. Drop operator
  * nodes, drag wires between their ports, and a per-frame compositor pipes each
  * node's rendered frame into the next:
  *

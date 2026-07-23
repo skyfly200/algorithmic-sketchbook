@@ -90,8 +90,8 @@ Derive anything generative from these and the 🎲 button reproduces a look, whi
 ## Motion sensors
 
 `rt.enableMotion()` opts into the accelerometer/gyro without needing a mapping
-(and triggers the iOS permission prompt). `rt.motion` exposes the current tilt /
-shake state.
+(and triggers the mobile motion-permission prompt where required). `rt.motion`
+exposes the current tilt / shake state.
 
 ## The messaging bridge
 

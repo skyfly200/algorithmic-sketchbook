@@ -1,6 +1,6 @@
 # Patch
 
-**Patch** is a TouchDesigner-style node graph. Instead of a fixed stack of
+**Patch** is a node-graph compositor. Instead of a fixed stack of
 layers, you wire sketches, filters, media and control signals together into an
 arbitrary network and blit the result to a fullscreen stage.
 
