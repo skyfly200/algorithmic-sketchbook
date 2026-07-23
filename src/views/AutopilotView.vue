@@ -1091,6 +1091,8 @@ onBeforeUnmount(() => {
             <span class="ring-num">{{ playing ? dwellShown : '‖' }}</span>
           </span>
           <v-btn icon="mdi-dice-5-outline" variant="text" size="small" title="Full reroll (R)" @click="reroll" />
+        </div>
+        <div class="panel-transport">
           <v-btn
             :icon="micOn ? 'mdi-microphone' : 'mdi-microphone-off'"
             variant="text" size="small"
