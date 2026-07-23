@@ -3,20 +3,16 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSketchStore } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
+// The "filter" sketches are effects that process another image, not standalone
+// generators — they don't belong in the random/Autopilot source pool.
+import { FILTER_SLUG_SET } from '../registry/filters'
 
 const router = useRouter()
 const store = useSketchStore()
 const settings = useSettingsStore()
 
-// The "filter" sketches are effects that process another image, not standalone
-// generators — they don't belong in the random/Autopilot source pool.
-const FILTER_SLUGS = new Set([
-  'pointillism', 'camera-lens', 'rain-window', 'halftone', 'channel-offset', 'delay',
-  'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope', 'fog', 'mist', 'glow', 'nebula-gasses',
-  'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves', 'warp', 'rolling-shutter', 'feedback', 'interlace', 'painterly',
-])
 const effects = computed(() =>
-  store.sketches.filter((s) => s.type === 'local' && s.embed && !FILTER_SLUGS.has(s.slug) && s.slug !== 'bright-waves-logo'),
+  store.sketches.filter((s) => s.type === 'local' && s.embed && !FILTER_SLUG_SET.has(s.slug) && s.slug !== 'bright-waves-logo'),
 )
 const allSlugs = computed(() => effects.value.map((s) => s.slug))
 const enabledCount = computed(() => effects.value.filter((s) => settings.isEffectEnabled(s.slug)).length)

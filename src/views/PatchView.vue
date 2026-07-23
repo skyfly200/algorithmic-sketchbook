@@ -21,17 +21,13 @@ import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
 import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, flipSharedCamera } from '../stores/media.js'
-
-const store = useSketchStore()
-const settings = useSettingsStore()
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
 // feed, so in the graph they live behind a dedicated Filter node type that
 // pipes its video input straight into them.
-const FILTER_SLUGS = [
-  'pointillism', 'camera-lens', 'rain-window', 'halftone',
-  'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
-  'fog', 'mist', 'glow', 'nebula-gasses', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves', 'warp', 'rolling-shutter', 'feedback', 'interlace', 'painterly',
-]
+import { FILTER_SLUGS } from '../registry/filters'
+
+const store = useSketchStore()
+const settings = useSettingsStore()
 // Only local, same-origin sketches can be captured for piping. Filters (and
 // Motion Extraction, which has a native node) are organized under the Filter
 // node type instead of the Effect source list.

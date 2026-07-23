@@ -22,14 +22,10 @@ import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import perfScores from '../registry/perf.json'
 import { traitsOf } from '../registry/traits'
+import { FILTER_SLUGS } from '../registry/filters'
 
 const store = useSketchStore()
 const settings = useSettingsStore()
-const FILTER_SLUGS = [
-  'pointillism', 'camera-lens', 'rain-window', 'halftone',
-  'channel-offset', 'delay', 'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope',
-  'fog', 'mist', 'glow', 'nebula-gasses', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves', 'warp', 'rolling-shutter', 'feedback', 'interlace', 'painterly',
-]
 const BLENDS = [
   'screen', 'lighten', 'overlay', 'soft-light', 'hard-light',
   'color-dodge', 'difference', 'exclusion', 'hue', 'color', 'luminosity',

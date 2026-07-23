@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { allSketches } from '../registry'
 import { traitsOf } from '../registry/traits'
+import { isFilterSketch } from '../registry/filters'
 
 // Curated theme filters. Raw tags+tech produced ~50 chips (most on a single
 // project); instead each chip is a theme backed by a set of keywords matched
@@ -33,6 +34,8 @@ export const useSketchStore = defineStore('sketches', {
     selectedEnergy: [], // calm | energetic
     selectedSpeed: [], // fast | slow
     typeFilter: 'all', // 'all' | 'local' | 'external'
+    roleFilter: 'all', // 'all' | 'effect' | 'filter'
+    sortBy: 'featured', // 'featured' | 'name' | 'newest' | 'performance'
   }),
 
   getters: {
@@ -47,8 +50,11 @@ export const useSketchStore = defineStore('sketches', {
       // `clearable` on the search field sets the model to null — coerce so an
       // empty/cleared search shows every sketch instead of throwing.
       const q = (state.search ?? '').trim().toLowerCase()
-      return state.sketches.filter((s) => {
+      const list = state.sketches.filter((s) => {
         if (state.typeFilter !== 'all' && s.type !== state.typeFilter) return false
+        // Effect vs filter role split
+        if (state.roleFilter === 'filter' && !isFilterSketch(s)) return false
+        if (state.roleFilter === 'effect' && isFilterSketch(s)) return false
         // Union: a project shows if it matches ANY selected theme, so combining
         // chips broadens the view instead of narrowing it to nothing.
         if (
@@ -70,6 +76,12 @@ export const useSketchStore = defineStore('sketches', {
         }
         return true
       })
+      // Sort — 'featured' keeps the registry's default (newest-first) order.
+      const by = state.sortBy
+      if (by === 'name') list.sort((a, b) => a.title.localeCompare(b.title))
+      else if (by === 'newest') list.sort((a, b) => (b.created || '').localeCompare(a.created || ''))
+      else if (by === 'performance') list.sort((a, b) => (b.perf ?? -1) - (a.perf ?? -1))
+      return list
     },
   },
 

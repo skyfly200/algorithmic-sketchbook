@@ -25,6 +25,24 @@ const store = useSketchStore()
         <v-btn value="external" size="small">External</v-btn>
       </v-btn-toggle>
 
+      <!-- Effect vs filter role -->
+      <v-btn-toggle v-model="store.roleFilter" density="compact" mandatory variant="outlined" divided>
+        <v-btn value="all" size="small">All</v-btn>
+        <v-btn value="effect" size="small"><v-icon icon="mdi-shape" size="14" class="mr-1" />Effects</v-btn>
+        <v-btn value="filter" size="small"><v-icon icon="mdi-tune-variant" size="14" class="mr-1" />Filters</v-btn>
+      </v-btn-toggle>
+
+      <!-- Sort order -->
+      <div class="d-flex align-center ga-1">
+        <span class="trait-label">Sort</span>
+        <v-btn-toggle v-model="store.sortBy" density="compact" mandatory variant="outlined" divided>
+          <v-btn value="featured" size="small" title="Featured order">Featured</v-btn>
+          <v-btn value="name" size="small" title="A–Z by title">A–Z</v-btn>
+          <v-btn value="newest" size="small" title="Newest first">Newest</v-btn>
+          <v-btn value="performance" size="small" title="Fastest first"><v-icon icon="mdi-speedometer" size="14" class="mr-1" />Perf</v-btn>
+        </v-btn-toggle>
+      </div>
+
       <div>
         <v-chip
           v-for="cat in store.categories"
