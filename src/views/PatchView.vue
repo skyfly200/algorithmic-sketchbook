@@ -1984,6 +1984,21 @@ function loadSaved() {
 }
 const savedRoutings = ref(loadSaved())
 const newName = ref('')
+// The saved routing currently being edited (set on load/save) — lets "Save"
+// overwrite it in place while "Save as" always forks a new one.
+const currentRoutingId = ref(null)
+const currentRoutingName = computed(() => savedRoutings.value.find((r) => r.id === currentRoutingId.value)?.name || '')
+// Grab a small JPEG of the composited output for a routing's preview thumbnail.
+function capturePreview() {
+  try {
+    const cnv = stage.value
+    if (!cnv || !cnv.width) return ''
+    const w = 220, h = Math.max(1, Math.round(w * (cnv.height / cnv.width)))
+    const off = document.createElement('canvas'); off.width = w; off.height = h
+    off.getContext('2d').drawImage(cnv, 0, 0, w, h)
+    return off.toDataURL('image/jpeg', 0.55)
+  } catch { return '' }
+}
 // A transient success card (bottom-right) for saves/exports.
 const toast = ref('')
 let toastTimer = 0
@@ -2116,16 +2131,40 @@ function commitRenameBlock() {
   if (b) { const n = editBlockName.value.trim(); if (n) { b.name = n; persistBlocks() } }
   editBlockId.value = null
 }
+// Save: overwrite the routing you're currently editing (if any), else fork one.
 function saveRouting() {
+  if (currentRoutingId.value) {
+    const r = savedRoutings.value.find((x) => x.id === currentRoutingId.value)
+    if (r) {
+      const nm = newName.value.trim()
+      if (nm) r.name = nm
+      r.nodes = JSON.parse(JSON.stringify(nodes))
+      r.edges = JSON.parse(JSON.stringify(edges))
+      r.links = JSON.parse(JSON.stringify(links))
+      r.effects = currentEffects()
+      r.preview = capturePreview()
+      persistSaved()
+      showToast(`Updated “${r.name}”`)
+      newName.value = ''
+      return
+    }
+  }
+  saveAsRouting()
+}
+// Save as: always store a new routing and switch to editing it.
+function saveAsRouting() {
   const name = newName.value.trim() || `Routing ${savedRoutings.value.length + 1}`
+  const id = Date.now().toString(36)
   savedRoutings.value.push({
-    id: Date.now().toString(36),
+    id,
     name,
     nodes: JSON.parse(JSON.stringify(nodes)),
     edges: JSON.parse(JSON.stringify(edges)),
     links: JSON.parse(JSON.stringify(links)),
     effects: currentEffects(), // each effect sketch's own param values + mappings
+    preview: capturePreview(),
   })
+  currentRoutingId.value = id
   persistSaved()
   showToast(`Saved “${name}”`)
   newName.value = ''
@@ -2149,6 +2188,9 @@ function loadRouting(r) {
   // Restore each effect sketch's own params once its iframe is live.
   pendingEffects = { ...(data.effects || {}) }
   nextTick(applyPendingEffects)
+  // now editing this routing: Save overwrites it, and its name pre-fills the box
+  currentRoutingId.value = r.id
+  newName.value = r.name || ''
   persist()
   nextTick(() => layoutTick.value++)
 }
@@ -2156,6 +2198,7 @@ function deleteRouting(r) {
   const i = savedRoutings.value.findIndex((x) => x.id === r.id)
   if (i >= 0) {
     savedRoutings.value.splice(i, 1)
+    if (currentRoutingId.value === r.id) currentRoutingId.value = null
     persistSaved()
   }
 }
@@ -2358,16 +2401,21 @@ onBeforeUnmount(() => {
         <template #activator="{ props }">
           <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-content-save-outline">Save</v-btn>
         </template>
-        <v-card class="pa-2" min-width="250">
+        <v-card class="pa-2" min-width="270">
+          <div v-if="currentRoutingId" class="text-caption text-medium-emphasis mb-1" style="font-size:11px">
+            Editing “{{ currentRoutingName }}”
+          </div>
+          <v-text-field
+            v-model="newName"
+            density="compact"
+            hide-details
+            class="mb-2"
+            :placeholder="currentRoutingId ? 'Rename (optional)' : 'Name this routing'"
+            @keyup.enter="saveRouting"
+          />
           <div class="d-flex ga-1 mb-2">
-            <v-text-field
-              v-model="newName"
-              density="compact"
-              hide-details
-              placeholder="Name this routing"
-              @keyup.enter="saveRouting"
-            />
-            <v-btn size="small" variant="tonal" @click="saveRouting">Save</v-btn>
+            <v-btn size="small" variant="tonal" prepend-icon="mdi-content-save" @click="saveRouting">Save</v-btn>
+            <v-btn size="small" variant="tonal" prepend-icon="mdi-content-save-plus-outline" @click="saveAsRouting">Save as new</v-btn>
           </div>
           <div class="d-flex ga-1">
             <v-btn size="small" variant="text" prepend-icon="mdi-download" @click="exportPatch">Export .json</v-btn>
@@ -2380,13 +2428,21 @@ onBeforeUnmount(() => {
         <template #activator="{ props }">
           <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-folder-open-outline">Load</v-btn>
         </template>
-        <v-card class="pa-2" min-width="250">
-          <v-list density="compact" max-height="320">
+        <v-card class="pa-2" min-width="290">
+          <p class="text-caption text-medium-emphasis mb-1" style="font-size:11px">Click a routing to open it for editing.</p>
+          <v-list density="compact" max-height="360">
             <v-list-item
               v-for="r in savedRoutings"
               :key="r.id"
+              :active="currentRoutingId === r.id"
               @click="editRoutingId === r.id ? null : loadRouting(r)"
             >
+              <template #prepend>
+                <div class="routing-preview">
+                  <img v-if="r.preview" :src="r.preview" alt="" />
+                  <v-icon v-else icon="mdi-vector-polyline" size="18" />
+                </div>
+              </template>
               <template #title>
                 <input
                   v-if="editRoutingId === r.id"
@@ -2401,7 +2457,8 @@ onBeforeUnmount(() => {
                 <span v-else>{{ r.name }}</span>
               </template>
               <template #append>
-                <v-icon icon="mdi-pencil" size="16" class="mr-2" title="Rename" @click.stop="startRenameRouting(r)" />
+                <v-icon icon="mdi-pencil-box-outline" size="16" class="mr-2" title="Open for editing" @click.stop="loadRouting(r)" />
+                <v-icon icon="mdi-rename-outline" size="16" class="mr-2" title="Rename" @click.stop="startRenameRouting(r)" />
                 <v-icon icon="mdi-download" size="16" class="mr-2" title="Export this routing as a file" @click.stop="exportRouting(r)" />
                 <v-icon icon="mdi-delete" size="16" @click.stop="deleteRouting(r)" />
               </template>
@@ -3094,6 +3151,8 @@ onBeforeUnmount(() => {
   border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif;
 }
 .routing-rename { width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #3a4056; border-radius: 4px; font: 13px system-ui, sans-serif; padding: 2px 6px; }
+.routing-preview { width: 46px; height: 30px; margin-right: 10px; border-radius: 4px; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.12); flex: none; }
+.routing-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .shape-row { display: flex; gap: 6px; margin-top: 4px; }
 .shape-btn {
   flex: 1; font: 10px system-ui, sans-serif; color: #cdd3e0; cursor: pointer;

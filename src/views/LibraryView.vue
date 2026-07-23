@@ -56,10 +56,14 @@ function sketchTitle(slug) {
     <v-row v-if="routings.length">
       <v-col v-for="r in routings" :key="r.id" cols="12" sm="6" md="4">
         <v-card class="save-card" variant="outlined">
+          <div class="routing-thumb">
+            <img v-if="r.preview" :src="r.preview" :alt="r.name" />
+            <v-icon v-else icon="mdi-vector-polyline" size="32" />
+          </div>
           <v-card-title class="text-subtitle-1">{{ r.name }}</v-card-title>
           <v-card-subtitle>{{ nodeSummary(r) }}</v-card-subtitle>
           <v-card-actions>
-            <v-btn size="small" variant="tonal" prepend-icon="mdi-open-in-app" @click="openRouting(r)">Open in Patch</v-btn>
+            <v-btn size="small" variant="tonal" prepend-icon="mdi-pencil-box-outline" @click="openRouting(r)">Edit in Patch</v-btn>
             <v-spacer />
             <v-btn size="small" variant="text" icon="mdi-delete" @click="deleteRouting(r)" />
           </v-card-actions>
@@ -105,5 +109,10 @@ function sketchTitle(slug) {
 }
 .save-card { height: 100%; display: flex; flex-direction: column; }
 .save-card .v-card-actions { margin-top: auto; }
+.routing-thumb {
+  aspect-ratio: 16 / 9; background: #000; display: flex; align-items: center; justify-content: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1); overflow: hidden; opacity: 0.55;
+}
+.routing-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .empty-note { opacity: 0.7; font-size: 0.92rem; }
 </style>
