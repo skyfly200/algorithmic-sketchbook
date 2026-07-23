@@ -363,6 +363,7 @@ function makeLayer(slug, kind, blend, opacity, locked = false) {
     seed: ((Math.random() * 4294967296) >>> 0).toString(36),
     state: 'warming',
     replaces: null,
+    occluded: false, // hidden behind an opaque filter — culled from the screen composite
     bornAt: performance.now(),
   }
 }
@@ -787,6 +788,31 @@ function feedFilters() {
   }
 }
 
+// --- occlusion culling: don't paint layers masked out by an opaque filter ---
+// A filter renders full-screen opaque output (blend 'normal', opacity 1) built
+// from the composite feed, so once it has finished fading in, every layer below
+// it is completely hidden on screen. Those layers still feed the filter through
+// their canvas (read directly in feedFilters, regardless of CSS opacity), so we
+// can drop their screen compositing with no visual change and no loss of feed —
+// saving the browser from painting 1–3 hidden full-screen iframes every frame.
+// Cleared the instant the filter starts dying, so they crossfade back as it goes.
+function updateOcclusion() {
+  // topmost *faded-in* opaque filter — everything under it is masked out
+  let cut = -1
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const l = stack[i]
+    if (
+      l.kind === 'filter' && l.state === 'live' &&
+      l.blend === 'normal' && (l.opacity ?? 1) >= 0.99 &&
+      l.liveAt && performance.now() - l.liveAt > 1500 // let its crossfade complete first
+    ) { cut = i; break }
+  }
+  for (let i = 0; i < stack.length; i++) {
+    const want = cut >= 0 && i < cut
+    if (stack[i].occluded !== want) stack[i].occluded = want
+  }
+}
+
 // --- per-layer params + mappings (same protocol as the viewer) -------------
 const layerControls = reactive([]) // [{ id, win, title, schema, values, mappings, open }]
 let controlSeq = 1
@@ -928,6 +954,7 @@ function loop(now) {
 
   settleWarming(performance.now())
   feedFilters()
+  updateOcclusion()
 
   frameCount++
   if (!winStart) winStart = now
@@ -1038,7 +1065,7 @@ onBeforeUnmount(() => {
         :class="{ hidden: l.state === 'warming' || l.state === 'dying' }"
         :style="{
           mixBlendMode: l.blend === 'add' ? 'plus-lighter' : l.blend,
-          opacity: l.state === 'live' ? l.opacity : 0,
+          opacity: l.occluded ? 0 : l.state === 'live' ? l.opacity : 0,
         }"
         :src="srcFor(l)"
         allow="microphone; camera; midi; accelerometer; gyroscope"
