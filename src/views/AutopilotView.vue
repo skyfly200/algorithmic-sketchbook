@@ -329,9 +329,9 @@ function maxLayersForMode() {
 // quickens toward its energy peak. Beat-synced ignores this (beats drive it).
 function effectiveDwell() {
   const m = evolveMode.value, base = dwell.value
-  if (m === 'Chaos') return Math.max(4, base * 0.4)
-  if (m === 'Calm ambient') return base * 1.4
-  if (m === 'Energy arc') return Math.max(5, base * (1.4 - arcPhase() * 0.9))
+  if (m === 'Chaos') return Math.round(Math.max(4, base * 0.4))
+  if (m === 'Calm ambient') return Math.round(base * 1.4)
+  if (m === 'Energy arc') return Math.round(Math.max(5, base * (1.4 - arcPhase() * 0.9)))
   return base
 }
 
@@ -1297,11 +1297,13 @@ onBeforeUnmount(() => {
 .fps.low { color: #f88; }
 .countdown { font: 12px ui-monospace, monospace; color: #9aa4c0; min-width: 48px; text-align: right; margin-right: auto; }
 /* Countdown with a circular progress ring drawn around the number. */
-.countdown-ring { position: relative; width: 30px; height: 30px; margin-right: auto; display: inline-flex; align-items: center; justify-content: center; }
-.countdown-ring svg { position: absolute; inset: 0; width: 30px; height: 30px; transform: rotate(-90deg); }
+/* Grid-stack the ring and the number in one cell so both are perfectly centred,
+   with room for up to three digits (the dwell can now reach 360 s). */
+.countdown-ring { display: inline-grid; place-items: center; width: 36px; height: 36px; margin-right: auto; }
+.countdown-ring svg { grid-area: 1 / 1; width: 36px; height: 36px; transform: rotate(-90deg); }
 .countdown-ring .ring-bg { fill: none; stroke: rgba(255,255,255,0.12); stroke-width: 3; }
 .countdown-ring .ring-fg { fill: none; stroke: #7c8cff; stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 0.9s linear; }
-.ring-num { font: 11px ui-monospace, monospace; color: #cdd3e0; }
+.ring-num { grid-area: 1 / 1; font: 600 10px/1 ui-monospace, monospace; color: #cdd3e0; text-align: center; }
 .planned { font: 11px system-ui, sans-serif; color: #ffcf9a; background: rgba(60,42,20,0.5); border: 1px solid rgba(255,190,120,0.3); border-radius: 6px; padding: 3px 8px; }
 .mix-list { display: flex; flex-direction: column; gap: 3px; margin-bottom: 4px; }
 .mix-item { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; background: rgba(255,255,255,0.04); border: 1px solid transparent; }

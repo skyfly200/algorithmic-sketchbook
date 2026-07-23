@@ -199,7 +199,6 @@ function render() {
 }
 
 // --- interaction + auto emitters -----------------------------------------
-const hint = document.getElementById('hint')
 const pointer = { x: 0, y: 0, px: 0, py: 0, down: false, moved: false }
 function toGrid(e) {
   const r = canvas.getBoundingClientRect()
@@ -218,7 +217,6 @@ canvas.addEventListener('pointermove', (e) => {
   pointer.x = x
   pointer.y = y
   pointer.moved = true
-  if (hint) hint.style.opacity = 0
 })
 window.addEventListener('pointerup', () => (pointer.down = false))
 

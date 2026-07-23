@@ -136,13 +136,6 @@ function render(t) {
     ctx.globalAlpha = 1
   }
 
-  if (!rt.beat.state.active) {
-    ctx.fillStyle = 'rgba(255,255,255,0.5)'
-    ctx.font = `${13 * rt.pixelRatio}px system-ui, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.fillText('click 🎤 to trace live audio', W / 2, 26 * rt.pixelRatio)
-    ctx.textAlign = 'left'
-  }
 }
 
 function frame(now) {

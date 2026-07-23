@@ -31,7 +31,6 @@ rt.mapInput('audio.volume', 'deposit', 0.4)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
-const hint = document.getElementById('hint')
 
 let W, H, trail, tmp, img, sim, sctx
 let agents = null // Float32Array packed [x, y, heading] * N
@@ -78,7 +77,6 @@ function resize() {
 canvas.addEventListener('pointerdown', (e) => {
   foods.push({ x: (e.clientX / window.innerWidth) * W, y: (e.clientY / window.innerHeight) * H, born: performance.now(), ang: rt.random(0, Math.PI * 2) })
   if (foods.length > 12) foods.shift()
-  if (hint) hint.style.opacity = '0'
 })
 
 // A single rolled-oat flake — a pale, ridged oval with a central groove — drawn

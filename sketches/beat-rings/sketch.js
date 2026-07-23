@@ -8,7 +8,6 @@ const params = rt.params({
 })
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
-const hint = document.getElementById('hint')
 
 let width, height
 const rings = []
@@ -32,7 +31,6 @@ rt.onBeat(({ energy }) => {
       alpha: 0.9,
     })
   }
-  hint.style.opacity = 0
 })
 
 // Manual fallback so the sketch works without a microphone.

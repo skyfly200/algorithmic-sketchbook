@@ -126,13 +126,6 @@ function frame(now) {
   }
   ctx.globalAlpha = 1
 
-  if (params.audioDrive && !rt.beat.state.active) {
-    ctx.fillStyle = 'rgba(255,255,255,0.4)'
-    ctx.font = `${13 * PR}px system-ui, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.fillText('click 🎤 to drive the plate with sound', W / 2, oy - 12 * PR)
-    ctx.textAlign = 'left'
-  }
   requestAnimationFrame(frame)
 }
 

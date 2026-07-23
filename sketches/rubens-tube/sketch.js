@@ -129,13 +129,6 @@ function frame(now) {
   }
   ctx.globalCompositeOperation = 'source-over'
 
-  if (params.audioDrive && !rt.beat.state.active) {
-    ctx.fillStyle = 'rgba(255,255,255,0.45)'
-    ctx.font = `${13 * PR}px system-ui, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.fillText('click 🎤 to drive the flames with sound', W / 2, 26 * PR)
-    ctx.textAlign = 'left'
-  }
   requestAnimationFrame(frame)
 }
 

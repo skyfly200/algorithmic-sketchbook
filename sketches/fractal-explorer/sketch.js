@@ -26,7 +26,6 @@ rt.mapInput('audio.volume', 'colorCycle', 0.6)
 const canvas = document.getElementById('canvas')
 const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
 const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: CAPTURE })
-const hint = document.getElementById('hint')
 
 // View state (complex plane). scale = half-height in complex units.
 const DEFAULTS = {
@@ -140,7 +139,6 @@ canvas.addEventListener('wheel', (e) => {
   const after = complexAt(nx, ny)
   center[0] += before[0] - after[0]
   center[1] += before[1] - after[1]
-  hint.style.opacity = 0
 }, { passive: false })
 
 let dragging = false
@@ -158,7 +156,6 @@ canvas.addEventListener('pointermove', (e) => {
   center[0] -= dnx * 2 * ax * scale
   center[1] += dny * 2 * ay * scale
   last = [e.clientX, e.clientY]
-  hint.style.opacity = 0
 })
 canvas.addEventListener('pointerup', () => (dragging = false))
 canvas.addEventListener('dblclick', () => {
@@ -267,7 +264,6 @@ function frame(now) {
       center = [...diveTarget]
       scale = Math.min(defaultView().scale, scale * 60)
     }
-    hint.style.opacity = 0
   } else {
     autoWas = false
   }
