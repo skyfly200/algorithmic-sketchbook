@@ -506,11 +506,40 @@ function rerollUpstream(node) {
 // always leaving locked nodes alone. Toggle it to jump between hand-editing
 // (manual) and letting it drive (autopilot).
 const autoOn = ref(false)
-const autoEverySec = ref(12) // dwell between moves
+const autoEverySec = ref(12)   // dwell between moves
+const autoFpsFloor = ref(15)   // if the composite drops below this, cheapen the graph
+const autoBudget = ref(12)     // keep the graph's total render cost under this
 let autoTimer = 0
+// Per-sketch render cost (higher = slower), same model as the Autopilot view.
+function slugCost(slug) {
+  const s = perfScores[slug]
+  if (!s) return 4
+  return Math.min(12, Math.max(1, Math.round(100 / Math.max(s, 8))))
+}
+function graphCost() {
+  return nodes.reduce((a, n) => a + ((n.type === 'effect' || n.type === 'filter') && n.params.slug ? slugCost(n.params.slug) : 0), 0)
+}
+function slugPool(n) {
+  const base = n.type === 'filter' ? filterOptions.value : settings.filterToPool(effectOptions.value)
+  return base.length ? base : (n.type === 'filter' ? filterOptions.value : effectOptions.value)
+}
 function autoStep() {
   if (!autoOn.value) return
   const swappable = nodes.filter((n) => (n.type === 'effect' || n.type === 'filter') && !n.locked)
+
+  // Perf watchdog: if the frame rate is under the floor, don't add churn — swap
+  // the most expensive unlocked node for a cheaper sketch and stop for this tick.
+  if (fps.value > 0 && fps.value < autoFpsFloor.value && swappable.length) {
+    const heavy = [...swappable].sort((a, b) => slugCost(b.params.slug) - slugCost(a.params.slug))[0]
+    const cheaper = slugPool(heavy).filter((o) => slugCost(o.slug) < slugCost(heavy.params.slug))
+    if (cheaper.length) {
+      cheaper.sort((a, b) => slugCost(a.slug) - slugCost(b.slug))
+      heavy.params.slug = cheaper[Math.floor(Math.random() * Math.min(3, cheaper.length))].slug
+      persist()
+      return
+    }
+  }
+
   const blends = nodes.filter((n) => n.type === 'blend' && !n.locked)
   const branchable = nodes.filter((n) => TYPES[n.type].ins > 0 && !n.locked && edges.some((e) => e.to === n.id))
   // weight gentle moves (slug swap, blend restyle) over the drastic branch reroll
@@ -522,11 +551,14 @@ function autoStep() {
   const move = bag[Math.floor(Math.random() * bag.length)]
   if (move === 'swap') {
     const n = swappable[Math.floor(Math.random() * swappable.length)]
-    const base = n.type === 'filter' ? filterOptions.value : settings.filterToPool(effectOptions.value)
-    const opts = base.length ? base : (n.type === 'filter' ? filterOptions.value : effectOptions.value)
+    const opts = slugPool(n)
     if (!opts.length) return
+    // respect the perf budget: prefer replacements that keep total cost in check
+    const headroom = autoBudget.value - (graphCost() - slugCost(n.params.slug))
+    let pool = opts.filter((o) => slugCost(o.slug) <= Math.max(2, headroom))
+    if (!pool.length) pool = [...opts].sort((a, b) => slugCost(a.slug) - slugCost(b.slug)).slice(0, Math.max(1, Math.ceil(opts.length * 0.3)))
     let s = n.params.slug
-    for (let k = 0; k < 6 && s === n.params.slug; k++) s = opts[Math.floor(Math.random() * opts.length)]?.slug ?? s
+    for (let k = 0; k < 6 && s === n.params.slug; k++) s = pool[Math.floor(Math.random() * pool.length)]?.slug ?? s
     n.params.slug = s
     persist()
   } else if (move === 'blend') {
@@ -2511,9 +2543,13 @@ onBeforeUnmount(() => {
         <template #activator="{ props }">
           <v-btn v-bind="props" icon="mdi-cog-outline" variant="text" size="x-small" title="Autopilot options" />
         </template>
-        <v-card class="pa-3" min-width="250">
+        <v-card class="pa-3" min-width="260">
           <div class="text-caption text-medium-emphasis mb-1">Change every {{ autoEverySec }}s</div>
           <v-slider v-model="autoEverySec" :min="3" :max="60" :step="1" hide-details density="compact" class="mb-2" />
+          <div class="text-caption text-medium-emphasis mb-1">FPS floor: {{ autoFpsFloor }} — cheapen the graph below this</div>
+          <v-slider v-model="autoFpsFloor" :min="10" :max="50" :step="1" hide-details density="compact" class="mb-2" />
+          <div class="text-caption text-medium-emphasis mb-1">Perf budget: {{ autoBudget }} (bigger = richer, heavier)</div>
+          <v-slider v-model="autoBudget" :min="4" :max="30" :step="1" hide-details density="compact" class="mb-2" />
           <v-btn size="small" block variant="text" prepend-icon="mdi-robot-outline" @click="openAutopilot">Open the Autopilot view</v-btn>
         </v-card>
       </v-menu>
