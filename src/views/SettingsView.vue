@@ -1,11 +1,12 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSketchStore } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
 // The "filter" sketches are effects that process another image, not standalone
 // generators — they don't belong in the random/Autopilot source pool.
 import { FILTER_SLUG_SET } from '../registry/filters'
+import { exportBackup, readBackupFile, applyBackup } from '../lib/backup'
 
 const router = useRouter()
 const store = useSketchStore()
@@ -24,6 +25,43 @@ function clearSessionMemory() {
   if (!window.confirm('Clear the working state of the Patch, Mixer and Autopilot editors? Your saved routings, blocks and scenes are kept. The app will reload.')) return
   settings.clearSession()
   window.location.reload()
+}
+
+// --- backup & restore: whole library + settings to/from a JSON file ---------
+const backupMsg = ref('')
+const backupErr = ref(false)
+const fileInput = ref(null)
+function note(text, err = false) { backupMsg.value = text; backupErr.value = err }
+function doExport() {
+  try {
+    const n = exportBackup()
+    note(`Backup downloaded — ${n} item${n === 1 ? '' : 's'} saved.`)
+  } catch (e) {
+    note(`Export failed: ${e.message}`, true)
+  }
+}
+async function onPickFile(e) {
+  const file = e.target.files?.[0]
+  e.target.value = '' // let the same file be re-picked later
+  if (!file) return
+  let parsed
+  try {
+    parsed = await readBackupFile(file)
+  } catch (err) {
+    note(err.message, true)
+    return
+  }
+  const when = parsed.exportedAt ? new Date(parsed.exportedAt).toLocaleString() : 'unknown date'
+  if (!window.confirm(
+    `Restore this backup (${parsed.keys ?? Object.keys(parsed.data).length} items, saved ${when})?\n\n` +
+    'This replaces your current settings, saved routings, blocks and scenes, then reloads the app.',
+  )) return
+  try {
+    applyBackup(parsed, { replace: true })
+    window.location.reload()
+  } catch (err) {
+    note(`Restore failed: ${err.message}`, true)
+  }
 }
 </script>
 
@@ -99,6 +137,32 @@ function clearSessionMemory() {
         <p class="text-caption text-medium-emphasis mt-2 mb-0">
           Wipes the current Patch / Mixer / Autopilot working state and reloads. Saved routings, blocks and
           scenes are not affected.
+        </p>
+      </v-card-text>
+    </v-card>
+
+    <!-- Backup & restore -->
+    <v-card class="mb-6" variant="tonal">
+      <v-card-title class="text-subtitle-1">
+        <v-icon icon="mdi-database-arrow-down-outline" size="small" class="mr-2" />Backup &amp; restore
+      </v-card-title>
+      <v-card-text>
+        <p class="text-caption text-medium-emphasis mb-3">
+          Save everything stored in this browser — settings and favorites, saved routings and blocks,
+          scenes, the Mixer / Autopilot / Patch working state, and on-device performance data — to a single
+          file you can keep or move to another machine. Restoring replaces what's here now.
+        </p>
+        <div class="d-flex ga-2 flex-wrap">
+          <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-download-outline" @click="doExport">
+            Export backup
+          </v-btn>
+          <v-btn size="small" variant="tonal" prepend-icon="mdi-upload-outline" @click="fileInput?.click()">
+            Restore from file…
+          </v-btn>
+          <input ref="fileInput" type="file" accept="application/json,.json" class="d-none" @change="onPickFile" />
+        </div>
+        <p v-if="backupMsg" class="text-caption mt-3 mb-0" :class="backupErr ? 'text-error' : 'text-medium-emphasis'">
+          {{ backupMsg }}
         </p>
       </v-card-text>
     </v-card>
