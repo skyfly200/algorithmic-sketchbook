@@ -25,7 +25,7 @@ import perfScores from '../registry/perf.json'
 import { traitsOf } from '../registry/traits'
 import { FILTER_SLUGS } from '../registry/filters'
 import { handOffToPatch } from '../lib/mixToPatch'
-import { mediaLibrary, mediaById, sharedCameraOn, sharedCameraStream } from '../stores/media'
+import { mediaLibrary, mediaById, sharedCameraOn, sharedCameraStream, startSharedCamera, stopSharedCamera } from '../stores/media'
 
 const router = useRouter()
 const store = useSketchStore()
@@ -785,6 +785,30 @@ function onAudioMapToggle() {
   persistSettings()
   if (useAudioMap.value) autoMapAll()
 }
+// Turn the shared camera on/off right from Autopilot (it's otherwise only
+// shared from Patch/Mixer). Once it's on and "Feed the shared camera" is
+// ticked, the router starts feeding it through filters. camOn tracks the
+// shared state locally since sharedCameraOn() isn't itself reactive.
+const camOn = ref(sharedCameraOn())
+const camBusy = ref(false)
+async function toggleCamera() {
+  if (camBusy.value) return
+  if (camOn.value || sharedCameraOn()) {
+    stopSharedCamera()
+    camOn.value = false
+    return
+  }
+  camBusy.value = true
+  try {
+    await startSharedCamera()
+    camOn.value = true
+    if (!useCamera.value) { useCamera.value = true; persistSettings() } // make sure it actually gets used
+  } catch {
+    camOn.value = false
+  } finally {
+    camBusy.value = false
+  }
+}
 // A one-line status of the live sources Autopilot can pull in right now. The
 // camera is only used if it's already shared (from Patch/Mixer) — Autopilot
 // never opens it itself; media comes from the shared library; audio needs the
@@ -1214,6 +1238,7 @@ function onKey(e) {
   else if (k === 'r') reroll()
   else if (k === 's') saveAsPatch()
   else if (k === 'm') toggleMic()
+  else if (k === 'c') toggleCamera()
   else return
 }
 
@@ -1337,6 +1362,14 @@ onBeforeUnmount(() => {
             :color="micOn ? 'primary' : undefined"
             title="Mic — audio reactivity (M)"
             @click="toggleMic"
+          />
+          <v-btn
+            :icon="camOn ? 'mdi-camera' : 'mdi-camera-off'"
+            variant="text" size="small"
+            :color="camOn ? 'primary' : undefined"
+            :loading="camBusy"
+            title="Camera — feed the live camera through filters (C)"
+            @click="toggleCamera"
           />
           <v-btn icon="mdi-content-save-outline" variant="text" size="small" title="Save the current mix as a Patch (S)" @click="saveAsPatch" />
           <v-btn icon="mdi-vector-polyline" variant="text" size="small" title="Edit the current mix in the Patch node editor" @click="editInPatch" />
