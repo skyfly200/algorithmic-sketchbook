@@ -132,6 +132,11 @@ const TYPES = {
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
   shape: { title: 'Polygon Mask', ins: 1, color: '#f2ad00' }, // clip to an editable polygon (projection mapping)
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
+  // Geometry space: a mesh source (its displacement stands in for a vertex
+  // shader) and a virtual Camera that rasterizes connected geometry down to a
+  // pixel frame the rest of the graph can composite.
+  geo: { title: 'Geometry', ins: 0, color: '#6ee7b7' },
+  vcam: { title: 'Camera', ins: 3, color: '#ffd166' },
   output: { title: 'Output', ins: 1, color: '#ffffff' },
   // Control emitters (0..1 values, not video): their output jacks wire into the
   // parameter jacks of other nodes to modulate them live.
@@ -281,7 +286,7 @@ function applySnap(s) {
   pruneOrphans()
   nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
   const ids = new Set(nodes.map((n) => n.id))
-  for (const id of [...rtState.keys()]) if (!ids.has(id)) rtState.delete(id)
+  for (const id of [...rtState.keys()]) if (!ids.has(id)) { disposeRuntime(id); rtState.delete(id) }
   for (const n of nodes) st(n.id)
   if (settings.persistEditors) localStorage.setItem(STORE_KEY, s)
   lastSnap = s
@@ -312,6 +317,16 @@ function st(id) {
   }
   return s
 }
+// Release a node's geometry-space GPU resources (meshes) before its runtime
+// state is dropped, so deleting/undoing Camera nodes doesn't leak the GPU.
+function disposeRuntime(id) {
+  const s = rtState.get(id)
+  if (s?.three) {
+    for (const o of s.three.meshes.values()) disposeObject(o)
+    s.three.meshes.clear()
+    s.three = null
+  }
+}
 
 function addNode(type) {
   const n = reactive({
@@ -340,7 +355,11 @@ function addNode(type) {
                         ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }
                         : type === 'shape'
                           ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0, invert: false }
-                          : {},
+                          : type === 'geo'
+                            ? { shape: 'Icosahedron', material: 'Solid', hue: 160, displace: 0.25, freq: 2, spin: 0.5, detail: 2 }
+                            : type === 'vcam'
+                              ? { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, spin: true }
+                              : {},
   })
   // Polygon Mask nodes lock by default so a mapped mask isn't nudged or
   // randomized by accident — its corners are still editable via "Edit masks".
@@ -356,6 +375,7 @@ function removeNode(id) {
   nodes.splice(i, 1)
   selectedSet.delete(id)
   pruneOrphans()
+  disposeRuntime(id)
   rtState.delete(id)
   persist()
 }
@@ -404,7 +424,7 @@ function randomPatch() {
   nodes.splice(0, nodes.length, ...keptNodes)
   edges.splice(0, edges.length, ...keptEdges)
   links.splice(0, links.length, ...keptLinks)
-  for (const id of [...rtState.keys()]) if (!keptIds.has(id)) rtState.delete(id)
+  for (const id of [...rtState.keys()]) if (!keptIds.has(id)) { disposeRuntime(id); rtState.delete(id) }
   if (keptIds.size) nextId = Math.max(nextId, ...keptIds) + 1
 
   const col = (c) => 60 + c * 240
@@ -504,7 +524,7 @@ function rerollUpstream(node) {
   if (!node || TYPES[node.type].ins === 0) return
   const anc = ancestorsOf(node.id)
   const rm = new Set([...anc].filter((id) => !nodeById(id)?.locked))
-  for (let i = nodes.length - 1; i >= 0; i--) if (rm.has(nodes[i].id)) { rtState.delete(nodes[i].id); nodes.splice(i, 1) }
+  for (let i = nodes.length - 1; i >= 0; i--) if (rm.has(nodes[i].id)) { disposeRuntime(nodes[i].id); rtState.delete(nodes[i].id); nodes.splice(i, 1) }
   for (let i = edges.length - 1; i >= 0; i--) if (rm.has(edges[i].from) || rm.has(edges[i].to)) edges.splice(i, 1)
   for (let i = links.length - 1; i >= 0; i--) if (rm.has(links[i].from) || rm.has(links[i].node)) links.splice(i, 1)
   const pool = settings.filterToPool(effectOptions.value)
@@ -698,10 +718,12 @@ function wirePath(a, b) {
 // are diamonds. A wire is a matte if either end is a matte.
 function inKind(node, port) {
   if (node.type === 'mask') return port === 1 ? 'matte' : 'image'
+  if (node.type === 'vcam') return 'geometry' // Camera inputs take meshes, not frames
   return 'image'
 }
 function outKind(node) {
   if (node.type === 'input' || node.type === 'xy' || node.type === 'tracker') return 'control'
+  if (node.type === 'geo') return 'geometry'
   return 'image'
 }
 
@@ -784,11 +806,13 @@ const wires = computed(() =>
     const to = nodes.find((n) => n.id === e.to)
     if (!from || !to) return null
     const matte = outKind(from) === 'matte' || inKind(to, e.port) === 'matte'
+    const geometry = outKind(from) === 'geometry'
     return {
       idx,
       d: wirePath(outPort(from), inPort(to, e.port)),
       color: TYPES[from.type].color,
       matte,
+      geometry,
     }
   }).filter(Boolean),
 )
@@ -1007,12 +1031,20 @@ function startWire(n, e, port = 0) {
   wire.active = true
   wire.from = n.id
   wire.fromPort = port
-  wire.kind = outKind(n) === 'control' ? 'control' : 'video'
+  const ok = outKind(n)
+  wire.kind = ok === 'control' ? 'control' : ok === 'geometry' ? 'geometry' : 'video'
   wire.x = p.x
   wire.y = p.y
 }
 function endWire(n, port) {
   if (!wire.active || wire.from === n.id || wire.kind === 'control') return
+  // geometry and image streams don't mix: a geometry out only feeds a geometry
+  // in (the Camera), and an image out never lands on a geometry input
+  const fromNode = nodes.find((x) => x.id === wire.from)
+  if (fromNode && (outKind(fromNode) === 'geometry') !== (inKind(n, port) === 'geometry')) {
+    wire.active = false
+    return
+  }
   // one edge per input port
   for (let k = edges.length - 1; k >= 0; k--)
     if (edges[k].to === n.id && edges[k].port === port) edges.splice(k, 1)
@@ -1366,6 +1398,183 @@ function polyPath(cx, pts, invert) {
   cx.closePath()
 }
 
+// --- geometry space: mesh sources + a virtual Camera that rasterizes them ---
+// Three.js loads on demand the first time a geometry/camera node renders, so the
+// base app never pays for it. A Geometry node emits a mesh descriptor (shape,
+// material, a vertex-space displacement standing in for a vertex shader); the
+// Camera node collects the descriptors wired into it, builds/refreshes the
+// meshes in a scene, and renders through a perspective camera into its frame.
+let THREE = null
+let threeReq = false
+function ensureThree() {
+  if (THREE || threeReq) return
+  threeReq = true
+  import('three').then((m) => { THREE = m }).catch(() => { threeReq = false })
+}
+let geoRenderer = null
+function getRenderer() {
+  if (!geoRenderer && THREE) {
+    geoRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true })
+    geoRenderer.setPixelRatio(1)
+  }
+  return geoRenderer
+}
+const GEO_SHAPES = ['Cube', 'Sphere', 'Torus', 'Icosahedron', 'Torus knot', 'Cone', 'Cylinder', 'Plane']
+const GEO_MATERIALS = ['Solid', 'Wireframe', 'Points', 'Normals']
+function buildGeometry(shape, detail) {
+  const d = Math.max(0, Math.min(4, Math.round(detail ?? 2)))
+  switch (shape) {
+    case 'Sphere': return new THREE.SphereGeometry(1, 24 + d * 12, 16 + d * 8)
+    case 'Torus': return new THREE.TorusGeometry(0.85, 0.34, 16 + d * 6, 40 + d * 16)
+    case 'Icosahedron': return new THREE.IcosahedronGeometry(1.15, d)
+    case 'Torus knot': return new THREE.TorusKnotGeometry(0.75, 0.26, 90 + d * 40, 12 + d * 4)
+    case 'Cone': return new THREE.ConeGeometry(1, 1.8, 24 + d * 12, 3 + d * 3)
+    case 'Cylinder': return new THREE.CylinderGeometry(0.8, 0.8, 1.7, 24 + d * 12, 2 + d * 2)
+    case 'Plane': return new THREE.PlaneGeometry(2.2, 2.2, 12 + d * 10, 12 + d * 10)
+    default: return new THREE.BoxGeometry(1.5, 1.5, 1.5, 4 + d * 6, 4 + d * 6, 4 + d * 6)
+  }
+}
+function makeMaterial(material, hue) {
+  const col = new THREE.Color().setHSL(((hue ?? 160) % 360) / 360, 0.7, 0.55)
+  if (material === 'Wireframe') return new THREE.MeshBasicMaterial({ color: col, wireframe: true })
+  if (material === 'Normals') return new THREE.MeshNormalMaterial({ flatShading: true })
+  if (material === 'Points') return new THREE.PointsMaterial({ color: col, size: 0.045, sizeAttenuation: true })
+  return new THREE.MeshStandardMaterial({ color: col, metalness: 0.25, roughness: 0.45 })
+}
+function buildObject(geo) {
+  const g = buildGeometry(geo.shape, geo.detail)
+  if (!g.attributes.normal) g.computeVertexNormals()
+  const base = Float32Array.from(g.attributes.position.array)
+  const nrm = Float32Array.from(g.attributes.normal.array)
+  const mat = makeMaterial(geo.material, geo.hue)
+  const obj = geo.material === 'Points' ? new THREE.Points(g, mat) : new THREE.Mesh(g, mat)
+  obj.userData = { shape: geo.shape, material: geo.material, detail: geo.detail, base, nrm, warped: false }
+  return obj
+}
+function disposeObject(obj) {
+  obj.geometry?.dispose?.()
+  obj.material?.dispose?.()
+}
+function updateObject(obj, geo, time) {
+  const spin = geo.spin ?? 0.5
+  obj.rotation.y = time * spin * 0.6
+  obj.rotation.x = time * spin * 0.25 + 0.3
+  if (obj.material.color) obj.material.color.setHSL(((geo.hue ?? 160) % 360) / 360, 0.7, 0.55)
+  // the "vertex shader": push every vertex along its normal by a travelling wave
+  // of its base position, so the mesh warps in geometry space each frame
+  const amp = geo.displace ?? 0
+  const g = obj.geometry
+  const pos = g.attributes.position
+  const base = obj.userData.base, nrm = obj.userData.nrm
+  if (amp < 0.001) {
+    if (obj.userData.warped) {
+      pos.array.set(base); pos.needsUpdate = true; obj.userData.warped = false
+      if (geo.material === 'Solid') g.computeVertexNormals()
+    }
+  } else {
+    const f = geo.freq ?? 2
+    for (let i = 0; i < pos.count; i++) {
+      const ix = i * 3
+      const bx = base[ix], by = base[ix + 1], bz = base[ix + 2]
+      const w = Math.sin(bx * f + time) * Math.cos(by * f * 1.3 - time * 0.8) * Math.sin(bz * f * 0.7 + time * 1.1)
+      const sc = amp * 0.55 * w
+      pos.array[ix] = bx + nrm[ix] * sc
+      pos.array[ix + 1] = by + nrm[ix + 1] * sc
+      pos.array[ix + 2] = bz + nrm[ix + 2] * sc
+    }
+    pos.needsUpdate = true
+    obj.userData.warped = true
+    if (geo.material === 'Solid') g.computeVertexNormals()
+  }
+}
+// A little rotating wireframe cube for the Geometry node's own thumbnail (2D, so
+// each source node stays cheap — the real 3D render happens at the Camera).
+function drawGeoGlyph(ctx, ang, hue, warp) {
+  const cx = W / 2, cy = H * 0.44, R = Math.min(W, H) * 0.26
+  const V = [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]]
+  const E = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]]
+  const ca = Math.cos(ang), sa = Math.sin(ang), cb = Math.cos(ang * 0.6), sb = Math.sin(ang * 0.6)
+  const proj = V.map(([x, y, z]) => {
+    let X = x * ca - z * sa, Z = x * sa + z * ca
+    let Y = y * cb - Z * sb; Z = y * sb + Z * cb
+    const wob = 1 + warp * 0.3 * Math.sin(ang * 3 + x + y + z)
+    const s = 2.6 / (Z + 3.2)
+    return [cx + X * R * s * wob, cy + Y * R * s * wob]
+  })
+  ctx.strokeStyle = `hsl(${hue}, 70%, 62%)`
+  ctx.lineWidth = Math.max(1.2, Math.min(W, H) * 0.006)
+  ctx.beginPath()
+  for (const [a, b] of E) { ctx.moveTo(proj[a][0], proj[a][1]); ctx.lineTo(proj[b][0], proj[b][1]) }
+  ctx.stroke()
+}
+function evalGeo(node, octx) {
+  const p = node.params
+  st(node.id).geo = { shape: p.shape, material: p.material, hue: p.hue, displace: p.displace, freq: p.freq, spin: p.spin, detail: p.detail }
+  const t = performance.now() * 0.001
+  octx.fillStyle = '#0a0e14'
+  octx.fillRect(0, 0, W, H)
+  drawGeoGlyph(octx, t * (0.4 + (p.spin ?? 0.5) * 0.6), p.hue ?? 160, p.displace ?? 0)
+  octx.fillStyle = 'rgba(230,240,255,0.85)'
+  octx.font = `${Math.round(H * 0.07)}px system-ui, sans-serif`
+  octx.textAlign = 'center'
+  octx.fillText(`${p.shape} · ${p.material}`, W / 2, H * 0.9)
+}
+function evalCamera(node, octx) {
+  const s = st(node.id)
+  if (!THREE) {
+    ensureThree()
+    octx.fillStyle = '#0a0e14'; octx.fillRect(0, 0, W, H)
+    octx.fillStyle = 'rgba(230,240,255,0.7)'
+    octx.font = `${Math.round(H * 0.06)}px system-ui, sans-serif`
+    octx.textAlign = 'center'
+    octx.fillText('loading 3D…', W / 2, H / 2)
+    return
+  }
+  const renderer = getRenderer()
+  if (!renderer) return
+  let three = s.three
+  if (!three) {
+    const scene = new THREE.Scene()
+    const cam = new THREE.PerspectiveCamera(55, W / H, 0.1, 100)
+    const key = new THREE.DirectionalLight(0xffffff, 1.15); key.position.set(3, 4, 5); scene.add(key)
+    const rim = new THREE.DirectionalLight(0x88aaff, 0.5); rim.position.set(-4, -2, -3); scene.add(rim)
+    const amb = new THREE.AmbientLight(0xffffff, 0.38); scene.add(amb)
+    three = s.three = { scene, cam, key, rim, amb, meshes: new Map() }
+  }
+  const p = node.params
+  const time = performance.now() * 0.001
+  // collect the geometry wired into this camera, keyed by its source node id
+  const inputs = []
+  for (const e of edges) if (e.to === node.id) { const g = rtState.get(e.from)?.geo; if (g) inputs.push({ id: e.from, geo: g }) }
+  const want = new Set(inputs.map((i) => i.id))
+  for (const [id, obj] of three.meshes) if (!want.has(id)) { three.scene.remove(obj); disposeObject(obj); three.meshes.delete(id) }
+  inputs.forEach(({ id, geo }, idx) => {
+    let obj = three.meshes.get(id)
+    if (!obj || obj.userData.shape !== geo.shape || obj.userData.material !== geo.material || obj.userData.detail !== geo.detail) {
+      if (obj) { three.scene.remove(obj); disposeObject(obj) }
+      obj = buildObject(geo); three.meshes.set(id, obj); three.scene.add(obj)
+    }
+    updateObject(obj, geo, time)
+    obj.position.x = (idx - (inputs.length - 1) / 2) * 2.7
+  })
+  const dist = p.distance ?? 4.5
+  const orbit = p.spin === false ? (node._orbit ?? 0) : (node._orbit = (node._orbit ?? 0) + (p.orbit ?? 0) * 0.016)
+  three.cam.position.set(Math.sin(orbit) * dist, (p.tilt ?? 0.35) * dist, Math.cos(orbit) * dist)
+  three.cam.lookAt(0, 0, 0)
+  three.cam.fov = p.fov ?? 55
+  three.cam.aspect = W / H
+  three.cam.updateProjectionMatrix()
+  three.key.color.setHSL(((p.lightHue ?? 40) % 360) / 360, 0.5, 0.72)
+  const rw = Math.min(W, 1280), rh = Math.max(1, Math.round((rw * H) / W))
+  renderer.setSize(rw, rh, false)
+  const transparent = p.bg === 'Transparent'
+  renderer.setClearColor(0x05070c, transparent ? 0 : 1)
+  renderer.render(three.scene, three.cam)
+  if (transparent) octx.clearRect(0, 0, W, H)
+  else { octx.fillStyle = '#05070c'; octx.fillRect(0, 0, W, H) }
+  cover(octx, renderer.domElement, renderer.domElement.width, renderer.domElement.height)
+}
+
 function evalNode(node) {
   const s = st(node.id)
   const octx = s.octx
@@ -1374,6 +1583,9 @@ function evalNode(node) {
   octx.filter = 'none'
   octx.fillStyle = '#000'
   octx.fillRect(0, 0, W, H)
+
+  if (node.type === 'geo') { evalGeo(node, octx); return }
+  if (node.type === 'vcam') { evalCamera(node, octx); return }
 
   if (node.type === 'effect') {
     try {
@@ -2329,7 +2541,7 @@ function loadRouting(r) {
   // survive the swap — Vue won't re-mount same-keyed iframes, so clearing
   // their state would leave effect nodes black. Drop only vanished ids.
   const ids = new Set(nodes.map((n) => n.id))
-  for (const id of [...rtState.keys()]) if (!ids.has(id)) rtState.delete(id)
+  for (const id of [...rtState.keys()]) if (!ids.has(id)) { disposeRuntime(id); rtState.delete(id) }
   for (const n of nodes) st(n.id)
   // Restore each effect sketch's own params once its iframe is live.
   pendingEffects = { ...(data.effects || {}) }
@@ -2512,6 +2724,12 @@ onBeforeUnmount(() => {
   if (popup && !popup.closed) popup.close()
   stopSharedCamera()
   if (recorder && recorder.state === 'recording') recorder.stop()
+  // release any geometry-space GPU resources
+  for (const s of rtState.values()) {
+    if (s.three) { for (const obj of s.three.meshes.values()) disposeObject(obj); s.three.meshes.clear() }
+  }
+  geoRenderer?.dispose?.()
+  geoRenderer = null
 })
 </script>
 
@@ -2545,6 +2763,8 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-vector-polygon" variant="tonal" size="small" title="Add Polygon Mask (drag points on the output — projection mapping)" :style="{ color: TYPES.shape.color }" @click="addNode('shape')" />
         <v-btn icon="mdi-shape-outline" variant="tonal" size="small" title="Add Portal (remap a region elsewhere)" :style="{ color: TYPES.portal.color }" @click="addNode('portal')" />
         <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
+        <v-btn icon="mdi-cube-outline" variant="tonal" size="small" title="Add Geometry (a mesh in vertex space)" :style="{ color: TYPES.geo.color }" @click="addNode('geo')" />
+        <v-btn icon="mdi-camera-control" variant="tonal" size="small" title="Add Camera (render geometry to pixels)" :style="{ color: TYPES.vcam.color }" @click="addNode('vcam')" />
         <v-menu>
           <template #activator="{ props }">
             <v-btn v-bind="props" icon="mdi-tune-variant" variant="tonal" size="small" title="Add a control node (Input · XY Pad · Tracker)" :style="{ color: TYPES.input.color }" />
@@ -2953,7 +3173,8 @@ onBeforeUnmount(() => {
           :stroke="w.color"
           fill="none"
           stroke-width="2.5"
-          :stroke-dasharray="w.matte ? '7 5' : undefined"
+          :stroke-dasharray="w.matte ? '7 5' : w.geometry ? '1 6' : undefined"
+          :stroke-linecap="w.geometry ? 'round' : undefined"
           class="wire"
           @click="removeEdge(w.idx)"
         />
@@ -2972,10 +3193,10 @@ onBeforeUnmount(() => {
         <path
           v-if="wire.active"
           :d="wirePath(outPortAt(nodes.find((n) => n.id === wire.from), wire.fromPort), { x: wire.x, y: wire.y })"
-          :stroke="wire.kind === 'control' ? '#e0a060' : '#fff'"
+          :stroke="wire.kind === 'control' ? '#e0a060' : wire.kind === 'geometry' ? '#6ee7b7' : '#fff'"
           fill="none"
           stroke-width="2"
-          :stroke-dasharray="wire.kind === 'control' ? '2 4' : '4 4'"
+          :stroke-dasharray="wire.kind === 'control' ? '2 4' : wire.kind === 'geometry' ? '1 6' : '4 4'"
         />
       </svg>
 
@@ -3025,14 +3246,14 @@ onBeforeUnmount(() => {
           v-for="i in TYPES[n.type].ins"
           :key="'in' + i"
           class="port"
-          :class="inKind(n, i - 1) === 'matte' ? 'port--matte' : 'port--image'"
+          :class="inKind(n, i - 1) === 'matte' ? 'port--matte' : inKind(n, i - 1) === 'geometry' ? 'port--geometry' : 'port--image'"
           :style="{
             left: '-7px',
             top: HEAD_H + (THUMB_H * i) / (TYPES[n.type].ins + 1) - 7 + 'px',
           }"
           :data-in-node="n.id"
           :data-in-port="i - 1"
-          :title="n.type === 'mask' ? (i === 1 ? 'content' : 'mask (matte)') : 'input'"
+          :title="n.type === 'mask' ? (i === 1 ? 'content' : 'mask (matte)') : n.type === 'vcam' ? 'geometry in' : 'input'"
           @pointerup="endWire(n, i - 1)"
         />
         <!-- always-visible control dots for linked params whose settings panel
@@ -3053,7 +3274,7 @@ onBeforeUnmount(() => {
           v-for="oi in outCount(n)"
           :key="'out' + oi"
           class="port"
-          :class="outKind(n) === 'matte' ? 'port--matte' : outKind(n) === 'control' ? 'port--control' : 'port--image'"
+          :class="outKind(n) === 'matte' ? 'port--matte' : outKind(n) === 'control' ? 'port--control' : outKind(n) === 'geometry' ? 'port--geometry' : 'port--image'"
           :style="{ left: NODE_W - 7 + 'px', top: HEAD_H + (THUMB_H * oi) / (outCount(n) + 1) - 7 + 'px' }"
           :title="OUT_LABELS[n.type]?.[oi - 1] ?? (outKind(n) === 'control' ? 'control out — drag to a param ▣' : 'output')"
           @pointerdown="startWire(n, $event, oi - 1)"
@@ -3154,6 +3375,38 @@ onBeforeUnmount(() => {
               <option v-for="b in BLENDS" :key="b" :value="b">{{ b }}</option>
             </select>
             <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" :data-jack-node="n.id" data-jack-param="mix" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
+          </template>
+          <template v-if="n.type === 'geo'">
+            <label>shape
+              <select v-model="n.params.shape" @change="persist" @pointerdown.stop>
+                <option v-for="sh in GEO_SHAPES" :key="sh" :value="sh">{{ sh }}</option>
+              </select>
+            </label>
+            <label>material
+              <select v-model="n.params.material" @change="persist" @pointerdown.stop>
+                <option v-for="m in GEO_MATERIALS" :key="m" :value="m">{{ m }}</option>
+              </select>
+            </label>
+            <label>hue <input type="range" min="0" max="360" step="1" v-model.number="n.params.hue" @input="persist" @pointerdown.stop /></label>
+            <label>displace <input type="range" min="0" max="1" step="0.01" v-model.number="n.params.displace" @input="persist" @pointerdown.stop /></label>
+            <label>frequency <input type="range" min="0.5" max="6" step="0.1" v-model.number="n.params.freq" @input="persist" @pointerdown.stop /></label>
+            <label>spin <input type="range" min="0" max="3" step="0.05" v-model.number="n.params.spin" @input="persist" @pointerdown.stop /></label>
+            <label>detail <input type="range" min="0" max="4" step="1" v-model.number="n.params.detail" @change="persist" @pointerdown.stop /></label>
+          </template>
+          <template v-if="n.type === 'vcam'">
+            <div class="media-hint">Wire Geometry nodes into the ports on the left.</div>
+            <label>field of view <input type="range" min="20" max="100" step="1" v-model.number="n.params.fov" @input="persist" @pointerdown.stop /></label>
+            <label>distance <input type="range" min="2" max="10" step="0.1" v-model.number="n.params.distance" @input="persist" @pointerdown.stop /></label>
+            <label>orbit speed <input type="range" min="0" max="3" step="0.05" v-model.number="n.params.orbit" @input="persist" @pointerdown.stop /></label>
+            <label>tilt <input type="range" min="-1" max="1" step="0.02" v-model.number="n.params.tilt" @input="persist" @pointerdown.stop /></label>
+            <label>light hue <input type="range" min="0" max="360" step="1" v-model.number="n.params.lightHue" @input="persist" @pointerdown.stop /></label>
+            <label>background
+              <select v-model="n.params.bg" @change="persist" @pointerdown.stop>
+                <option value="Dark">Dark</option>
+                <option value="Transparent">Transparent</option>
+              </select>
+            </label>
+            <label class="chk"><input type="checkbox" :checked="n.params.spin !== false" @change="n.params.spin = $event.target.checked; persist()" @pointerdown.stop /> auto-orbit</label>
           </template>
           <template v-if="n.type === 'media'">
             <label>source
@@ -3424,6 +3677,9 @@ onBeforeUnmount(() => {
 .port--matte { border-radius: 2px; transform: rotate(45deg); }
 .port--control { border-radius: 2px; border-color: #e0a060; }
 .port--control:hover { border-color: #ffd9a0; }
+/* geometry ports: a hexagon-ish cut so mesh wires read as their own kind */
+.port--geometry { border-radius: 2px; border-color: #6ee7b7; clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.port--geometry:hover { border-color: #b6f5da; }
 /* a control-input jack sitting beside a param control */
 .pjack {
   display: inline-block; width: 10px; height: 10px; box-sizing: border-box;

@@ -29,6 +29,8 @@ arbitrary network and blit the result to a fullscreen stage.
 | **Polygon Mask** | A projection-mapping mask whose points you drag directly on the output. |
 | **Portal** | Remaps a rectangular (or shaped) region of the frame elsewhere, with recursion for infinity-mirror looks. |
 | **Blend** | Composites two streams with any blend mode and a mix amount. |
+| **Geometry** | A mesh living in geometry space — pick a shape and material, and its *displace* control warps every vertex along its normal (a vertex shader in miniature). Its dotted output is geometry, not pixels: it only plugs into a Camera. |
+| **Camera** | A virtual camera that rasterizes the geometry wired into its three inputs down to a pixel frame — set field of view, distance, orbit and lighting. Its output is a normal image stream you can Blend, Filter or send to Output. |
 | **Input** | Emits a 0..1 control value from any input source with scale/offset. Wire its ▣ into any param jack. |
 | **XY Pad** | A touch surface — drag on its thumbnail; x and y are separate control outputs. |
 | **Tracker** | Watches a video input and follows the brightest region: x, y and size (apparent depth) as control outputs. |
