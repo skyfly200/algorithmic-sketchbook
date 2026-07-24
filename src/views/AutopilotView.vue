@@ -1003,16 +1003,11 @@ function updateOcclusion() {
 // actually shows), so it matches the screen at the instant of the change.
 const dissolveEl = ref(null)
 const dissolveShow = ref(false)
-function captureComposite() {
-  const el = dissolveEl.value
-  if (!el) return false
-  const vw = window.innerWidth || 1280
-  const vh = window.innerHeight || 720
-  const W = Math.min(1280, vw)
-  const H = Math.max(1, Math.round(W * (vh / vw)))
-  if (el.width !== W) el.width = W
-  if (el.height !== H) el.height = H
-  const c = el.getContext('2d')
+// Reconstruct the visible composite (what's on screen) into a 2D context at the
+// given size: each live, non-occluded layer drawn with its blend/opacity, and a
+// filter's own output laid over source-over since that already is the look.
+// Shared by the smooth-changes snapshot and the pop-out mirror.
+function paintComposite(c, W, H) {
   c.setTransform(1, 0, 0, 1, 0, 0)
   c.globalAlpha = 1
   c.globalCompositeOperation = 'source-over'
@@ -1024,13 +1019,80 @@ function captureComposite() {
     try { cv = frames.get(L.id)?.contentDocument?.querySelector('canvas') } catch { cv = null }
     if (!cv || !cv.width) continue
     c.globalAlpha = L.opacity ?? 1
-    // a filter's canvas already *is* the composited look, so lay it over source-over
     c.globalCompositeOperation = !drew || L.kind === 'filter' ? 'source-over' : canvasBlend(L.blend)
     try { coverDraw(c, cv, cv.width, cv.height, W, H); drew = true } catch {}
   }
   c.globalAlpha = 1
   c.globalCompositeOperation = 'source-over'
   return drew
+}
+function captureComposite() {
+  const el = dissolveEl.value
+  if (!el) return false
+  const vw = window.innerWidth || 1280
+  const vh = window.innerHeight || 720
+  const W = Math.min(1280, vw)
+  const H = Math.max(1, Math.round(W * (vh / vw)))
+  if (el.width !== W) el.width = W
+  if (el.height !== H) el.height = H
+  return paintComposite(el.getContext('2d'), W, H)
+}
+
+// --- pop-out output: a separate window for a second display -----------------
+// Mirror the composite into a popup you can drag onto a projector / second
+// monitor (double-click for fullscreen) while the controls stay here. Same-
+// origin about:blank, so we repaint into its canvas each frame — the iframe
+// stack can't be moved to another window, but its reconstructed composite can.
+const popupOpen = ref(false)
+let popup = null
+function togglePopup() {
+  if (popup && !popup.closed) {
+    popup.close()
+    popup = null
+    popupOpen.value = false
+    return
+  }
+  popup = window.open('', 'autopilot-output', 'width=960,height=540')
+  if (!popup) return // blocked
+  const d = popup.document
+  d.title = 'Autopilot Output'
+  d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;'
+  const c = d.createElement('canvas')
+  c.id = 'out'
+  c.style.cssText = 'display:block;width:100vw;height:100vh;cursor:none;'
+  d.body.appendChild(c)
+  const hint = d.createElement('div')
+  hint.textContent = 'drag me to the display · double-click for fullscreen'
+  hint.style.cssText =
+    'position:fixed;left:50%;bottom:14px;transform:translateX(-50%);color:rgba(255,255,255,0.5);font:13px system-ui;transition:opacity 1s;pointer-events:none;'
+  d.body.appendChild(hint)
+  setTimeout(() => (hint.style.opacity = 0), 6000)
+  c.addEventListener('dblclick', () => {
+    if (d.fullscreenElement) d.exitFullscreen()
+    else c.requestFullscreen?.()
+  })
+  popup.addEventListener('beforeunload', () => {
+    popup = null
+    popupOpen.value = false
+  })
+  popupOpen.value = true
+}
+function blitPopup() {
+  if (!popup || popup.closed) {
+    if (popupOpen.value) { popupOpen.value = false; popup = null }
+    return
+  }
+  const c = popup.document.getElementById('out')
+  if (!c) return
+  const dpr = Math.min(popup.devicePixelRatio || 1, 2)
+  let pw = Math.round((popup.innerWidth || 960) * dpr)
+  let ph = Math.round((popup.innerHeight || 540) * dpr)
+  // cap the longest side so a big projector window stays cheap to repaint
+  const MAX = 1920
+  const long = Math.max(pw, ph)
+  if (long > MAX) { const k = MAX / long; pw = Math.round(pw * k); ph = Math.round(ph * k) }
+  if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph }
+  paintComposite(c.getContext('2d'), pw, ph)
 }
 // Snap the frozen snapshot to fully opaque with no transition, then drop it to
 // 0 on the next frames so the CSS transition dissolves it away over the change.
@@ -1181,6 +1243,7 @@ function loop(now) {
   settleWarming(performance.now())
   feedFilters()
   updateOcclusion()
+  if (popupOpen.value) blitPopup()
 
   frameCount++
   if (!winStart) winStart = now
@@ -1282,6 +1345,8 @@ onBeforeUnmount(() => {
   try { camVideo.pause?.(); camVideo.srcObject = null } catch {}
   for (const el of mediaEls.values()) { try { el.pause?.(); if (el instanceof HTMLVideoElement) el.src = '' } catch {} }
   mediaEls.clear()
+  if (popup && !popup.closed) popup.close()
+  popup = null
 })
 </script>
 
@@ -1373,6 +1438,13 @@ onBeforeUnmount(() => {
           />
           <v-btn icon="mdi-content-save-outline" variant="text" size="small" title="Save the current mix as a Patch (S)" @click="saveAsPatch" />
           <v-btn icon="mdi-vector-polyline" variant="text" size="small" title="Edit the current mix in the Patch node editor" @click="editInPatch" />
+          <v-btn
+            icon="mdi-open-in-new"
+            variant="text" size="small"
+            :color="popupOpen ? 'primary' : undefined"
+            title="Pop the render out to a new window — drag it to a second display"
+            @click="togglePopup"
+          />
         </div>
 
         <div class="panel-scroll" data-tour="ap-settings">
