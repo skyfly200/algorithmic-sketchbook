@@ -7,8 +7,8 @@
  * up against bright areas, and a soft vignette.
  *
  * There's no true depth here (the source is flat), so depth is modelled as
- * distance from a focal band — a tilt-shift plane, or a radial "portrait"
- * focus around the centre.
+ * distance from a focal region — pick the lens type: a tilt-shift focal band, a
+ * radial "portrait" spot, or the stepped concentric zones of a Fresnel lens.
  */
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource, clamp } from '../_lib/source.js'
@@ -20,7 +20,9 @@ const params = rt.params({
   scanSpeed: { value: 1, min: 0.2, max: 3, step: 0.05, label: 'Auto-scan speed' },
   focusDepth: { value: 0.3, min: 0.03, max: 1, step: 0.01, label: 'Focus depth' },
   aperture: { value: +rt.random(0.35, 0.8).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Aperture (blur)' },
-  radial: { value: rt.rng() < 0.35, type: 'bool', label: 'Radial focus (portrait)' },
+  // How the sharp zone is shaped: a tilt-shift focal band, a radial portrait
+  // spot, or the stepped concentric zones of a Fresnel lens.
+  lens: { value: rt.rng() < 0.3 ? 'Radial' : 'Tilt-shift', type: 'select', options: ['Tilt-shift', 'Radial', 'Fresnel'], label: 'Lens type' },
   bloom: { value: 0.35, min: 0, max: 1, step: 0.02, label: 'Highlight bloom' },
   dirt: { value: +rt.random(0.2, 0.7).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Lens dirt' },
   vignette: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Vignette' },
@@ -149,6 +151,7 @@ function frame(now) {
 
   const fp = params.autoScan ? autoFocal(t) : params.focalPlane
   const mirror = params.mirror
+  const lens = params.lens
   const bright = avgBrightness()
 
   // --- sharp base ---
@@ -168,10 +171,12 @@ function frame(now) {
     src.draw(blurCtx, W, H, { mirror })
     blurCtx.filter = 'none'
 
-    // Keep the blur only where it's out of focus (destination-in alpha mask).
+    // Keep the blur only where it's out of focus (destination-in alpha mask):
+    // alpha 1 keeps the blur, 0 lets the sharp base through.
     blurCtx.globalCompositeOperation = 'destination-in'
     const depth = params.focusDepth
-    if (params.radial) {
+    if (lens === 'Radial') {
+      // portrait spot: a sharp disc that softens outward
       const cx = W / 2
       const cy = fp * H
       const rIn = depth * 0.5 * Math.min(W, H)
@@ -180,7 +185,21 @@ function frame(now) {
       g.addColorStop(0, 'rgba(0,0,0,0)')
       g.addColorStop(1, 'rgba(0,0,0,1)')
       blurCtx.fillStyle = g
+    } else if (lens === 'Fresnel') {
+      // concentric zones: sharp and soft rings alternate outward from the focal
+      // point, like the stepped grooves of a real Fresnel lens element
+      const cx = W / 2
+      const cy = fp * H
+      const maxR = 0.5 * Math.hypot(W, H) + 1
+      const rings = Math.max(3, Math.min(26, Math.round(0.7 / depth)))
+      const stops = rings * 2
+      const g = blurCtx.createRadialGradient(cx, cy, 0, cx, cy, maxR)
+      for (let i = 0; i <= stops; i++) {
+        g.addColorStop(clamp(i / stops, 0, 1), i % 2 === 0 ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,1)')
+      }
+      blurCtx.fillStyle = g
     } else {
+      // tilt-shift: a horizontal focal band, sharp at fp, soft above and below
       const c = fp
       const hw = depth * 0.5
       const g = blurCtx.createLinearGradient(0, 0, 0, H)
@@ -219,6 +238,26 @@ function frame(now) {
     ctx.drawImage(dirtC, 0, 0)
     ctx.globalAlpha = 1
     ctx.globalCompositeOperation = 'source-over'
+  }
+
+  // --- Fresnel groove seams: faint concentric ring lines catching the light,
+  // the tell-tale of a stepped Fresnel element ---
+  if (lens === 'Fresnel') {
+    const cx = W / 2
+    const cy = fp * H
+    const maxR = 0.5 * Math.hypot(W, H)
+    const rings = Math.max(3, Math.min(26, Math.round(0.7 / params.focusDepth)))
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.lineWidth = Math.max(1, rt.pixelRatio)
+    for (let k = 1; k <= rings * 2; k++) {
+      const rr = (maxR * k) / (rings * 2)
+      ctx.strokeStyle = `rgba(200,220,255,${0.06 * (0.5 + 0.6 * bright)})`
+      ctx.beginPath()
+      ctx.arc(cx, cy, rr, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+    ctx.restore()
   }
 
   // --- vignette ---
