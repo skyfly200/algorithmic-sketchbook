@@ -2,10 +2,20 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { traitsOf, elementMeta, energyMeta } from '../registry/traits'
 import { effectivePerf } from '../registry/localPerf'
+import { useSettingsStore } from '../stores/settings'
 
 const props = defineProps({
   sketch: { type: Object, required: true },
 })
+
+const settings = useSettingsStore()
+const isFavorite = computed(() => settings.isFavorite(props.sketch.slug))
+// Star toggle sits on the router-link card, so stop the click from navigating.
+function toggleFavorite(e) {
+  e.preventDefault()
+  e.stopPropagation()
+  settings.toggleFavorite(props.sketch.slug)
+}
 
 // Derived "vibe" traits: element (fire/water/earth/air) + calm/energetic.
 const traits = computed(() => traitsOf(props.sketch))
@@ -193,6 +203,17 @@ onBeforeUnmount(() => {
       >
         {{ sketch.type === 'local' ? 'embedded' : 'external repo' }}
       </v-chip>
+
+      <!-- star: favorite this effect (floats to the top of Featured) -->
+      <button
+        class="fav-btn"
+        :class="{ on: isFavorite }"
+        :title="isFavorite ? 'Unstar — remove from favorites' : 'Star — show first in Featured'"
+        :aria-pressed="isFavorite"
+        @click="toggleFavorite"
+      >
+        <v-icon :icon="isFavorite ? 'mdi-star' : 'mdi-star-outline'" size="18" />
+      </button>
       <div
         v-if="perfScore"
         class="perf-bubble"
@@ -275,6 +296,29 @@ onBeforeUnmount(() => {
   right: 8px;
   z-index: 2;
 }
+/* favorite star, top-left of the preview */
+.fav-btn {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 0;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(10, 12, 18, 0.55);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  opacity: 0.65;
+  transition: opacity 0.2s, transform 0.1s, color 0.2s;
+}
+.fav-btn:hover { opacity: 1; transform: scale(1.1); }
+.fav-btn.on { color: #ffca3a; opacity: 1; }
+
 /* measured performance grade (1-100), bottom-left of the preview */
 .perf-bubble {
   position: absolute;

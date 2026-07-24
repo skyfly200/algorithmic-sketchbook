@@ -14,7 +14,7 @@
  */
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { useSketchStore } from '../stores/sketches'
+import { useSketchStore, CATEGORIES } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
 import { PATCH_HANDOFF_KEY } from '../lib/mixToPatch'
 import TourOverlay from '../components/TourOverlay.vue'
@@ -39,6 +39,40 @@ const effectOptions = computed(() =>
 )
 const filterOptions = computed(() =>
   store.sketches.filter((s) => s.type === 'local' && s.embed && FILTER_SLUGS.includes(s.slug)),
+)
+
+// The effect/filter node pickers are grouped into sections so a long list is
+// scannable: starred favorites first, then themed sections, then anything left.
+// Effects group by their tags/tech (the gallery's CATEGORIES); filters group by
+// a small slug-based taxonomy since their tags don't map to those themes.
+const FILTER_GROUPS = [
+  { label: 'Stylize', keys: ['pointillism', 'halftone', 'painterly', 'crt', 'vhs-defects', 'interlace', 'rolling-shutter'] },
+  { label: 'Optical', keys: ['camera-lens', 'lens-flare', 'kaleidoscope', 'warp', 'channel-offset', 'polarization', 'light-leaves'] },
+  { label: 'Atmosphere', keys: ['fog', 'mist', 'glow', 'nebula-gasses', 'uv-light'] },
+  { label: 'Color', keys: ['color-filter', 'strobe'] },
+  { label: 'Time-based', keys: ['delay', 'feedback', 'motion-extraction'] },
+  { label: 'Weather', keys: ['rain-window'] },
+]
+function groupOptions(list, defs, matchFn) {
+  const favSet = settings.favoriteSet
+  const groups = []
+  const favs = list.filter((s) => favSet.has(s.slug))
+  if (favs.length) groups.push({ label: '★ Favorites', items: favs })
+  const rest = list.filter((s) => !favSet.has(s.slug))
+  const used = new Set()
+  for (const d of defs) {
+    const items = rest.filter((s) => !used.has(s.slug) && matchFn(s, d))
+    if (items.length) { items.forEach((s) => used.add(s.slug)); groups.push({ label: d.label, items }) }
+  }
+  const other = rest.filter((s) => !used.has(s.slug))
+  if (other.length) groups.push({ label: 'Other', items: other })
+  return groups
+}
+const effectGroups = computed(() =>
+  groupOptions(effectOptions.value, CATEGORIES, (s, d) => d.keys.some((k) => [...s.tags, ...s.tech].includes(k))),
+)
+const filterGroups = computed(() =>
+  groupOptions(filterOptions.value, FILTER_GROUPS, (s, d) => d.keys.includes(s.slug)),
 )
 
 // Internal compositor resolution — a user setting (all node canvases and the
@@ -3038,7 +3072,9 @@ onBeforeUnmount(() => {
           <template v-if="n.type === 'effect' || n.type === 'filter'">
             <div class="d-flex ga-1 align-center">
               <select v-model="n.params.slug" class="flex-grow-1" @change="persist" @pointerdown.stop>
-                <option v-for="o in n.type === 'filter' ? filterOptions : effectOptions" :key="o.slug" :value="o.slug">{{ o.title }}</option>
+                <optgroup v-for="g in (n.type === 'filter' ? filterGroups : effectGroups)" :key="g.label" :label="g.label">
+                  <option v-for="o in g.items" :key="o.slug" :value="o.slug">{{ o.title }}</option>
+                </optgroup>
               </select>
               <button
                 v-if="effectControls.has(n.id)"

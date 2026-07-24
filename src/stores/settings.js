@@ -25,16 +25,26 @@ export const useSettingsStore = defineStore('settings', {
       tutorials: s.tutorials ?? true, // master on/off for all guided tours
       seen: s.seen ?? {}, // { app: true, patch: true, ... } — which tours have auto-run
       effectPool: s.effectPool ?? [], // enabled effect slugs; [] means "all effects"
+      favorites: s.favorites ?? [], // starred effect slugs — surfaced first in Featured
       persistEditors: s.persistEditors ?? true, // remember editor working state across refreshes
     }
   },
   getters: {
     // A set of the enabled slugs, or null when everything is enabled.
     effectPoolSet: (s) => (s.effectPool.length ? new Set(s.effectPool) : null),
+    favoriteSet: (s) => new Set(s.favorites),
   },
   actions: {
     persist() {
-      localStorage.setItem(KEY, JSON.stringify({ tutorials: this.tutorials, seen: this.seen, effectPool: this.effectPool, persistEditors: this.persistEditors }))
+      localStorage.setItem(KEY, JSON.stringify({ tutorials: this.tutorials, seen: this.seen, effectPool: this.effectPool, favorites: this.favorites, persistEditors: this.persistEditors }))
+    },
+    // Favorites: starred sketches float to the top of the Featured sort and get
+    // their own section in the effect pickers.
+    isFavorite(slug) { return this.favoriteSet.has(slug) },
+    toggleFavorite(slug) {
+      const i = this.favorites.indexOf(slug)
+      i === -1 ? this.favorites.push(slug) : this.favorites.splice(i, 1)
+      this.persist()
     },
     setPersistEditors(on) { this.persistEditors = !!on; this.persist() },
     // Wipe the editors' working state (but not the saved library). The editors

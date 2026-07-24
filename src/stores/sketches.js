@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { allSketches } from '../registry'
 import { traitsOf } from '../registry/traits'
 import { isFilterSketch } from '../registry/filters'
+import { useSettingsStore } from './settings'
 
 // Curated theme filters. Raw tags+tech produced ~50 chips (most on a single
 // project); instead each chip is a theme backed by a set of keywords matched
@@ -81,6 +82,16 @@ export const useSketchStore = defineStore('sketches', {
       if (by === 'name') list.sort((a, b) => a.title.localeCompare(b.title))
       else if (by === 'newest') list.sort((a, b) => (b.created || '').localeCompare(a.created || ''))
       else if (by === 'performance') list.sort((a, b) => (b.perf ?? -1) - (a.perf ?? -1))
+      else if (by === 'featured') {
+        // Starred favorites float to the top, otherwise keep the default order.
+        // A stable partition so both groups keep their relative ordering.
+        const fav = useSettingsStore().favoriteSet
+        if (fav.size) {
+          const stars = list.filter((s) => fav.has(s.slug))
+          const rest = list.filter((s) => !fav.has(s.slug))
+          return [...stars, ...rest]
+        }
+      }
       return list
     },
   },
