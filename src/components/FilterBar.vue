@@ -38,7 +38,7 @@ const store = useSketchStore()
         <v-btn-toggle v-model="store.sortBy" density="compact" mandatory variant="outlined" divided>
           <v-btn value="featured" size="small" title="Featured order">Featured</v-btn>
           <v-btn value="name" size="small" title="A–Z by title">A–Z</v-btn>
-          <v-btn value="newest" size="small" title="Newest first">Newest</v-btn>
+          <v-btn value="newest" size="small" title="Most recently updated first">Newest</v-btn>
           <v-btn value="performance" size="small" title="Fastest first"><v-icon icon="mdi-speedometer" size="14" class="mr-1" />Perf</v-btn>
         </v-btn-toggle>
       </div>

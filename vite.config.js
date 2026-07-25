@@ -4,6 +4,55 @@ import vuetify from 'vite-plugin-vuetify'
 import { readdirSync, existsSync, statSync, writeFileSync } from 'node:fs'
 import { resolve, join, relative } from 'node:path'
 import { createHash } from 'node:crypto'
+import { execSync } from 'node:child_process'
+
+// Stamp each sketch with a "last updated" timestamp so the gallery can sort by
+// most-recently-touched. Prefer the date of the last git commit that touched the
+// folder (the true edit time across the repo's history); fall back to the newest
+// file mtime when git isn't available (e.g. a shallow CI checkout). Exposed as a
+// virtual module the registry imports: { slug: ISO-8601 }.
+function sketchUpdated() {
+  const virtualId = 'virtual:sketch-updated'
+  const resolvedId = '\0' + virtualId
+  return {
+    name: 'sketch-updated',
+    resolveId(id) { if (id === virtualId) return resolvedId },
+    load(id) {
+      if (id !== resolvedId) return
+      const root = resolve(__dirname, 'sketches')
+      const slugs = existsSync(root)
+        ? readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)
+        : []
+      const map = {}
+      // One walk of history (newest-first): the first commit to touch each
+      // sketches/<slug>/... path is that sketch's last-updated date.
+      try {
+        const out = execSync('git log --format=%cI --name-only', {
+          cwd: __dirname, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+        }).toString()
+        let cur = ''
+        for (const line of out.split('\n')) {
+          if (/^\d{4}-\d\d-\d\dT/.test(line)) { cur = line.trim(); continue }
+          const m = line.match(/^sketches\/([^/]+)\//)
+          if (m && cur && !map[m[1]]) map[m[1]] = cur
+        }
+      } catch { /* no git */ }
+      // fall back to newest file mtime for anything git didn't cover (untracked)
+      for (const slug of slugs) {
+        if (map[slug]) continue
+        try {
+          let mx = 0
+          for (const f of readdirSync(join(root, slug))) {
+            const st = statSync(join(root, slug, f))
+            if (st.mtimeMs > mx) mx = st.mtimeMs
+          }
+          if (mx) map[slug] = new Date(mx).toISOString()
+        } catch { /* skip */ }
+      }
+      return `export default ${JSON.stringify(map)}`
+    },
+  }
+}
 
 // Every sketches/<slug>/index.html becomes its own page in the build,
 // so each sketch stays a self-contained app the gallery loads in an iframe.
@@ -110,7 +159,7 @@ self.addEventListener('fetch', (e) => {
 export default defineConfig({
   // Relative base so the built site works from any subpath (e.g. GitHub Pages).
   base: './',
-  plugins: [vue(), vuetify({ autoImport: true }), offlinePwa()],
+  plugins: [vue(), vuetify({ autoImport: true }), sketchUpdated(), offlinePwa()],
   build: {
     rollupOptions: {
       input: sketchInputs(),

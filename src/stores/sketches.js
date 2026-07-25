@@ -80,7 +80,9 @@ export const useSketchStore = defineStore('sketches', {
       // Sort — 'featured' keeps the registry's default (newest-first) order.
       const by = state.sortBy
       if (by === 'name') list.sort((a, b) => a.title.localeCompare(b.title))
-      else if (by === 'newest') list.sort((a, b) => (b.created || '').localeCompare(a.created || ''))
+      // 'newest' = most recently *updated* (last git commit touching the sketch),
+      // falling back to its created date.
+      else if (by === 'newest') list.sort((a, b) => (b.updated || b.created || '').localeCompare(a.updated || a.created || ''))
       else if (by === 'performance') list.sort((a, b) => (b.perf ?? -1) - (a.perf ?? -1))
       else if (by === 'featured') {
         // Starred favorites float to the top, otherwise keep the default order.

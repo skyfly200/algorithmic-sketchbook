@@ -22,6 +22,8 @@ import externalProjects from './external.json'
 // Measured performance scores (1-100 vs a 60fps target), written by
 // `npm run perf` (scripts/perf-audit.mjs). Relative to the auditing machine.
 import perfScores from './perf.json'
+// { slug: ISO date } of each sketch's last update, from git (see vite.config.js).
+import updatedMap from 'virtual:sketch-updated'
 
 const manifests = import.meta.glob('/sketches/*/sketch.json', { eager: true })
 const thumbnails = import.meta.glob('/sketches/*/thumbnail.{png,jpg,webp,gif}', {
@@ -45,6 +47,7 @@ const localSketches = Object.entries(manifests).map(([path, mod]) => {
     tags: manifest.tags ?? [],
     tech: manifest.tech ?? [],
     created: manifest.created ?? '',
+    updated: updatedMap[slug] ?? manifest.updated ?? manifest.created ?? '',
     type: 'local',
     url: `${import.meta.env.BASE_URL}sketches/${slug}/index.html`,
     repo: null,
@@ -61,6 +64,7 @@ const externals = externalProjects.map((p) => ({
   tags: p.tags ?? [],
   tech: p.tech ?? [],
   created: p.created ?? '',
+  updated: p.updated ?? p.created ?? '',
   type: 'external',
   url: p.url ?? null,
   repo: p.repo ?? null,
