@@ -1,0 +1,7 @@
+{
+  "title": "Escher Tiles",
+  "description": "Interlocking tessellations in the spirit of M.C. Escher. It starts from a square polygon lattice and replaces the straight edges with arcs — every bump carved out of one edge is added to the opposite edge, so all tiles are identical and lock together with no gaps (the translation method behind Escher's bird and fish tilings). Two-tone, four-tone or gradient colourings make the interlocking lobes read, with an optional eye motif that hints at a creature. Tile size, aspect, arcs-per-edge, interlock depth and irregularity are live; it renders once and holds (a static pattern), and re-deals a fresh tiling on a new seed. Five palettes plus Random, and a live rotation.",
+  "tags": ["tessellation", "escher", "geometric", "pattern", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-25"
+}
