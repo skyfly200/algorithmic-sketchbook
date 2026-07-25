@@ -1,0 +1,7 @@
+{
+  "title": "Pattern Tessellator",
+  "description": "A generator of repeating geometric patterns built from little dashes, in the spirit of the dotted 'coated-canvas' weaves on luggage and endpapers. Pick a tiling — an interlocking chevron weave on a triangular lattice, a herringbone, a diamond trellis or a basket weave — set the scale, dash density, weight and palette, and it fills the frame with a seamless static motif; a soft emboss highlight and a faint canvas texture sell the woven feel, and the whole field can be rotated live. It's a pattern, not an animation, so it renders once and holds. Six palettes plus Random.",
+  "tags": ["pattern", "tessellation", "geometric", "weave", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-25"
+}
