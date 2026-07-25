@@ -29,7 +29,7 @@ const PALS = {
 }
 
 const params = rt.params({
-  motif: { value: 'Birds', type: 'select', options: ['Birds', 'Fish', 'Lizards'], label: 'Creature' },
+  motif: { value: 'Birds', type: 'select', options: ['Birds', 'Fish', 'Lizards', 'Squares', 'Triangles', 'Hexagons', 'Cubes'], label: 'Tessellation' },
   palette: { value: 'Day & Night', type: 'select', options: [...Object.keys(PALS), 'Random'], label: 'Palette' },
   scale: { value: 120, min: 50, max: 320, step: 1, label: 'Creature size' },
   plump: { value: 1, min: 0.4, max: 1.6, step: 0.02, label: 'Shape depth' },
@@ -64,7 +64,13 @@ const MOTIFS = {
     prof: { a: [{ at: 0.28, amp: 0.6, w: 0.1 }, { at: 0.62, amp: -0.55, w: 0.1 }, { at: 0.85, amp: 0.4, w: 0.08 }] }, // limbs
     orient: null, cls: (k) => k % 3, feat: drawLizard, tones: 3,
   },
+  // plain geometric tessellations: straight edges, no markings
+  Squares: { tiling: 'square', geo: true, orient: () => 0, cls: (i, j) => (i + j) & 1 },
+  Triangles: { tiling: 'triangle', geo: true },
+  Hexagons: { tiling: 'hexagon', geo: true },
+  Cubes: { tiling: 'rhombille', geo: true, orient: () => 0, cls: (k) => k % 3 },
 }
+const EMPTY = []
 
 // --- luminance helpers to pick a contrasting ink -----------------------------
 function lum(hex) {
@@ -93,6 +99,7 @@ function profileVal(bumps, t) {
   return s
 }
 function bumpsFor(ang) {
+  if (motif.geo) return EMPTY
   if (motif.tiling === 'rhombille') return motif.prof.a
   return Math.abs(Math.sin(ang)) < 0.5 ? motif.prof.h : motif.prof.v
 }
@@ -105,7 +112,7 @@ function edgeSamples(A, B) {
   const nx = -dy / len, ny = dx / len
   let ang = Math.atan2(dy, dx); ang = ((ang % Math.PI) + Math.PI) % Math.PI
   const bumps = bumpsFor(ang)
-  const depth = motif.depth * params.plump
+  const depth = (motif.depth || 0) * params.plump
   const N = 18, out = []
   for (let k = 0; k <= N; k++) {
     const t = k / N
@@ -143,7 +150,7 @@ function addTile(list, poly, orient, cls, size) {
 }
 function buildTiling(u) {
   const list = []
-  MARGIN = u * (1 + motif.depth * params.plump) + 4
+  MARGIN = u * (1 + (motif.depth || 0) * params.plump) + 4
   if (motif.tiling === 'rhombille') {
     const R = u, Wd = Math.sqrt(3) * R, Vsp = 1.5 * R
     const cols = Math.ceil(D / Wd) + 3, rows = Math.ceil(D / Vsp) + 3
@@ -156,6 +163,25 @@ function buildTiling(u) {
           const poly = [[cx, cy], vs[2 * k], outer, vs[(2 * k + 2) % 6]]
           addTile(list, poly, Math.atan2(outer[1] - cy, outer[0] - cx), motif.cls(k), R)
         }
+      }
+    }
+  } else if (motif.tiling === 'triangle') {
+    const Hh = u * Math.sqrt(3) / 2
+    const cols = Math.ceil(D / u) + 3, rows = Math.ceil(D / Hh) + 3
+    for (let j = -2; j < rows; j++) {
+      for (let i = -rows - 2; i < cols + 2; i++) {
+        const b0 = i * u + j * (u / 2), c0 = j * Hh
+        addTile(list, [[b0, c0], [b0 + u, c0], [b0 + u / 2, c0 + Hh]], 0, (i + j) & 1 ? 0 : 1, u)
+        addTile(list, [[b0 + u, c0], [b0 + u / 2, c0 + Hh], [b0 + 3 * u / 2, c0 + Hh]], 0, (i + j) & 1 ? 2 : 0, u)
+      }
+    }
+  } else if (motif.tiling === 'hexagon') {
+    const R = u, Wd = Math.sqrt(3) * R, Vsp = 1.5 * R
+    const cols = Math.ceil(D / Wd) + 3, rows = Math.ceil(D / Vsp) + 3
+    for (let j = -2; j < rows; j++) {
+      for (let i = -2; i < cols; i++) {
+        const cx = i * Wd + (j & 1 ? Wd / 2 : 0), cy = j * Vsp
+        addTile(list, hexVerts(cx, cy, R), 0, ((i + 2 * j) % 3 + 3) % 3, R)
       }
     }
   } else {
@@ -251,7 +277,7 @@ function renderPattern() {
     const path = buildPath(t.poly)
     bx.fillStyle = base; bx.fill(path)
     if (params.outline) { bx.strokeStyle = T[darkI]; bx.lineWidth = Math.max(1, PR * 1.1); bx.lineJoin = 'round'; bx.stroke(path) }
-    if (params.features) {
+    if (params.features && motif.feat) {
       bx.save(); bx.clip(path)
       bx.translate(t.cx, t.cy); bx.rotate(t.orient); bx.scale(t.size, t.size)
       motif.feat(bx, ink)
