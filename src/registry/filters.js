@@ -7,6 +7,7 @@ export const FILTER_SLUGS = [
   'lens-flare', 'motion-extraction', 'vhs-defects', 'kaleidoscope', 'fog', 'mist', 'glow',
   'nebula-gasses', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves',
   'warp', 'rolling-shutter', 'feedback', 'interlace', 'painterly', 'film-tone',
+  'blur', 'brightness-contrast', 'shaky-film',
 ]
 export const FILTER_SLUG_SET = new Set(FILTER_SLUGS)
 export function isFilterSketch(sketch) {

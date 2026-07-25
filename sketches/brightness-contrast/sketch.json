@@ -1,0 +1,7 @@
+{
+  "title": "Brightness & Contrast",
+  "description": "The basic tonal controls for a live source — brightness, contrast, exposure (in stops), gamma and saturation. The brightness/contrast/exposure/gamma curve is baked into a 256-entry lookup table each frame so it's a single table read per channel, then saturation is mixed per pixel around the luminance. Brightness is audio-mappable. Grades the camera, a dropped photo or clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": ["filter", "brightness", "contrast", "exposure", "grade"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-25"
+}

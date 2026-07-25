@@ -1,0 +1,7 @@
+{
+  "title": "Blur",
+  "description": "A family of blurs for a live source: a plain Gaussian, a directional motion blur along any angle, a radial zoom blur streaking out from a centre, and a spin blur smearing around it. Motion, zoom and spin are accumulation blurs — many faint offset, scaled or rotated copies averaged together, with a quality/samples control — and the zoom/spin centre is mappable so the origin can be driven live. Amount is audio-mappable. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": ["filter", "blur", "motion-blur", "zoom", "optics"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-25"
+}

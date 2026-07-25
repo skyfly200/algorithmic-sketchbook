@@ -1,0 +1,7 @@
+{
+  "title": "Shaky Film",
+  "description": "A rickety old-projector look for a live source: the frame weaves and jitters in the gate, jumps as the film slips, flickers in exposure, and is peppered with grain, drifting dust and hair, and the odd vertical scratch — with a slight overscan so the shaking never reveals black edges. Gate weave, jumps, flicker, grain, scratches, dust and vignette are all live; shake is audio-mappable. Filmic damage only — stack it with Film Tone for sepia or black & white. Runs on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": ["filter", "film", "vintage", "grain", "glitch"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-25"
+}
