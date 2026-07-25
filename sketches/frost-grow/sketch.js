@@ -1,8 +1,11 @@
-// Frost Growth — dendritic ice creeping over a cold surface. Crystal tips
-// nucleate along a chosen substrate (leaf veins, a rock edge, barbed wire, a
-// chain-link fence, or a windowpane's corners) and grow outward as fern-like
-// fronds: each tip advances, wanders a little, deposits ice, and occasionally
-// forks. Ice accumulates on a persistent layer so the frost only ever spreads.
+// Frost Growth — dendritic ice creeping over a cold surface, on the hexagonal
+// lattice of real ice. Crystal tips nucleate along a chosen substrate (leaf
+// veins, a rock edge, barbed wire, a chain-link fence, or a windowpane's
+// corners), each carrying a crystal orientation, and grow as straight faceted
+// spines that throw side-branches at fixed 60° angles — the regular comb of a
+// frost fern — with occasional angular kinks and tip-splits. No random-walk
+// wander, so it reads as crystal rather than string. Ice accumulates on a
+// persistent layer, so the frost only ever spreads.
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
@@ -12,8 +15,8 @@ const ctx = canvas.getContext('2d')
 const params = rt.params({
   surface: { value: 'Window glass', type: 'select', options: ['Leaf', 'Rock', 'Barbed wire', 'Chain link', 'Window glass'], label: 'Surface' },
   growth: { value: 1, min: 0.2, max: 3, step: 0.05, label: 'Growth speed' },
-  branch: { value: 0.5, min: 0.05, max: 1, step: 0.02, label: 'Branchiness' },
-  feather: { value: 0.5, min: 0, max: 1.5, step: 0.05, label: 'Feathering' },
+  branch: { value: 0.55, min: 0.05, max: 1, step: 0.02, label: 'Branch density' },
+  feather: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Fern detail' },
   thaw: { value: 0.6, min: 0, max: 1.5, step: 0.05, label: 'Pointer thaw' },
   hue: { value: 200, min: 160, max: 260, step: 1, label: 'Ice hue' },
 })
@@ -97,10 +100,20 @@ function resize() {
   tips = []
   spawnFromSeeds(seeds.length)
 }
+const HEX = Math.PI / 3 // 60° — the ice lattice step
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v)
+// Snap a heading to the nearest lattice direction of a given crystal orientation,
+// so spines stay straight and branches stay parallel (crystalline, not stringy).
+function snap(a, orient) {
+  return orient + Math.round((a - orient) / HEX) * HEX
+}
+function branchGap() { return (7 + (1 - clamp01(params.branch)) * 30) * PR }
 function spawnFromSeeds(count) {
   for (let i = 0; i < count && seeds.length; i++) {
     const s = seeds[(rt.rng() * seeds.length) | 0]
-    tips.push({ x: s.x, y: s.y, a: rt.random(0, 6.28), life: rt.random(30, 90), w: rt.random(1, 2.2) })
+    const orient = rt.random(0, HEX) // this frond's crystal domain orientation
+    const a = orient + ((rt.rng() * 6) | 0) * HEX // start along a lattice axis
+    tips.push({ x: s.x, y: s.y, a, orient, life: rt.random(50, 130), w: rt.random(1.4, 2.4), gen: 0, sinceBranch: rt.random(0, 8) * PR, gap: branchGap() })
   }
 }
 
@@ -122,24 +135,44 @@ function frame(now) {
     spawnFromSeeds(2)
   }
 
-  // grow tips onto the ice layer
+  // grow tips onto the ice layer, on the hex lattice
   const steps = Math.max(1, Math.round(3 * params.growth))
+  const maxGen = 2 + Math.round(params.feather * 3) // fern detail = branch depth
+  const kinkP = params.feather * 0.02 // rare 60° facet kink along a spine
   ix.lineCap = 'round'
   for (let s = 0; s < steps; s++) {
     for (let i = tips.length - 1; i >= 0; i--) {
       const tp = tips[i]
       const px = tp.x, py = tp.y
-      tp.a += (rt.rng() - 0.5) * params.feather * 0.5
+      // heading is locked to the lattice; occasionally kink to an adjacent axis
+      if (rt.rng() < kinkP) tp.a = snap(tp.a + (rt.rng() < 0.5 ? HEX : -HEX), tp.orient)
       const sp = 1.6 * PR
       tp.x += Math.cos(tp.a) * sp; tp.y += Math.sin(tp.a) * sp
-      ix.strokeStyle = `hsla(${params.hue}, 60%, 85%, 0.5)`
+      // crystalline deposit: a soft halo under a crisp bright core
+      ix.strokeStyle = `hsla(${params.hue}, 55%, 80%, 0.13)`
+      ix.lineWidth = (tp.w + 1.6) * PR
+      ix.beginPath(); ix.moveTo(px, py); ix.lineTo(tp.x, tp.y); ix.stroke()
+      ix.strokeStyle = `hsla(${params.hue}, 42%, 92%, 0.62)`
       ix.lineWidth = tp.w * PR
       ix.beginPath(); ix.moveTo(px, py); ix.lineTo(tp.x, tp.y); ix.stroke()
       tp.life--
-      tp.w *= 0.995
-      // fork
-      if (rt.rng() < params.branch * 0.08 && tips.length < 4000) {
-        tips.push({ x: tp.x, y: tp.y, a: tp.a + (rt.rng() < 0.5 ? 1 : -1) * (0.4 + rt.rng() * 0.5), life: tp.life * 0.7, w: tp.w * 0.85 })
+      tp.w *= 0.997
+      tp.sinceBranch += sp
+      // regular ±60° side-branches at even spacing — the fern comb
+      if (tp.sinceBranch >= tp.gap && tp.gen < maxGen && tips.length < 6000) {
+        tp.sinceBranch = 0
+        const g2 = tp.gap * 0.8
+        for (const side of [1, -1]) {
+          tips.push({ x: tp.x, y: tp.y, a: snap(tp.a + side * HEX, tp.orient), orient: tp.orient, life: tp.life * 0.5 + 8, w: Math.max(0.6, tp.w * 0.72), gen: tp.gen + 1, sinceBranch: rt.random(0, g2 * 0.4), gap: g2 })
+        }
+        // a tiny bright facet node where the branch springs
+        ix.fillStyle = `hsla(${params.hue}, 38%, 96%, 0.5)`
+        ix.beginPath(); ix.arc(tp.x, tp.y, tp.w * 0.9 * PR, 0, 6.28); ix.fill()
+      }
+      // rare dendrite tip-split into a 60° Y
+      if (rt.rng() < 0.004 && tp.gen < maxGen && tips.length < 6000) {
+        tips.push({ x: tp.x, y: tp.y, a: snap(tp.a - HEX, tp.orient), orient: tp.orient, life: tp.life, w: tp.w, gen: tp.gen, sinceBranch: tp.sinceBranch, gap: tp.gap })
+        tp.a = snap(tp.a + HEX, tp.orient)
       }
       if (tp.life <= 0 || tp.x < 0 || tp.y < 0 || tp.x > W || tp.y > H) tips.splice(i, 1)
     }
