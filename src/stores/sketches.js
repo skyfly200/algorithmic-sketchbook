@@ -34,7 +34,6 @@ export const useSketchStore = defineStore('sketches', {
     selectedElements: [], // fire | water | earth | air
     selectedEnergy: [], // calm | energetic
     selectedSpeed: [], // fast | slow
-    typeFilter: 'all', // 'all' | 'local' | 'external'
     roleFilter: 'all', // 'all' | 'effect' | 'filter'
     sortBy: 'featured', // 'featured' | 'name' | 'newest' | 'performance'
   }),
@@ -52,7 +51,6 @@ export const useSketchStore = defineStore('sketches', {
       // empty/cleared search shows every sketch instead of throwing.
       const q = (state.search ?? '').trim().toLowerCase()
       const list = state.sketches.filter((s) => {
-        if (state.typeFilter !== 'all' && s.type !== state.typeFilter) return false
         // Effect vs filter role split
         if (state.roleFilter === 'filter' && !isFilterSketch(s)) return false
         if (state.roleFilter === 'effect' && isFilterSketch(s)) return false

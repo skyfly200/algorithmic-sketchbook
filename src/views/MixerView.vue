@@ -75,7 +75,7 @@ function cssBlend(b) {
 function srcFor(slug) {
   const s = store.bySlug(slug)
   if (!s) return ''
-  if (s.type !== 'local') return s.url
+  if (s.standalone) return s.url
   const q = viewer.quality !== 'native' ? `&quality=${viewer.quality}` : ''
   // preview=1 hides each layer's overlay chrome; capture=1 makes WebGL layers'
   // buffers readable so a Motion Extraction layer can ingest the stack below it.

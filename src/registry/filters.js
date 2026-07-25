@@ -11,5 +11,5 @@ export const FILTER_SLUGS = [
 ]
 export const FILTER_SLUG_SET = new Set(FILTER_SLUGS)
 export function isFilterSketch(sketch) {
-  return sketch?.type === 'local' && FILTER_SLUG_SET.has(sketch.slug)
+  return !!sketch && FILTER_SLUG_SET.has(sketch.slug)
 }

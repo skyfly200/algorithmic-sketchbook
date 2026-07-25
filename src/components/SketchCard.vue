@@ -38,7 +38,10 @@ const fallbackGradient = computed(() => {
 // and cached for the session. External sites can't be captured (cross-
 // origin), so they rest on their cover gradient and come alive on hover.
 const canPreview = computed(() => props.sketch.embed && props.sketch.url)
-const isLocal = computed(() => props.sketch.type === 'local')
+// A runtime sketch understands the viewer's ?preview/quality params and the
+// offscreen poster capture; a standalone imported app does not (it has its own
+// UI), so it just hover-previews its own page.
+const isLocal = computed(() => !props.sketch.standalone)
 const previewSrc = computed(() =>
   isLocal.value ? `${props.sketch.url}?quality=low&preview=1` : props.sketch.url,
 )
@@ -194,15 +197,6 @@ onBeforeUnmount(() => {
         <v-icon v-else-if="!poster" icon="mdi-shimmer" size="42" class="preview-icon" />
       </template>
       <v-icon v-else icon="mdi-shimmer" size="42" class="preview-icon" />
-
-      <v-chip
-        size="x-small"
-        class="type-chip"
-        :color="sketch.type === 'local' ? 'primary' : 'secondary'"
-        variant="flat"
-      >
-        {{ sketch.type === 'local' ? 'embedded' : 'external repo' }}
-      </v-chip>
 
       <!-- star: favorite this effect (floats to the top of Featured) -->
       <button

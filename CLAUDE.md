@@ -6,14 +6,17 @@ verify a change compiles.
 
 ## The one thing to understand
 
-`src/registry/index.js` merges two sources into the gallery:
+`src/registry/index.js` builds the gallery from one source: every
+`sketches/<slug>/` folder containing a `sketch.json` is auto-discovered via
+`import.meta.glob`. Each folder is a self-contained page (`index.html` + JS)
+that the viewer iframes. Vite builds each one as its own page (see
+`sketchInputs()` in `vite.config.js`). There is no local-vs-external split —
+everything lives in the project.
 
-- **Embedded sketches**: every `sketches/<slug>/` folder containing a
-  `sketch.json` is auto-discovered via `import.meta.glob`. Each folder is a
-  self-contained page (`index.html` + JS) that the viewer iframes. Vite builds
-  each one as its own page (see `sketchInputs()` in `vite.config.js`).
-- **External projects**: entries in `src/registry/external.json` pointing at
-  other repos / live demos.
+A manifest may set `"standalone": true` to mark a fully self-contained imported
+app (it brings its own UI, e.g. `caustics-art`, `moire-patterns`). Standalone
+sketches show in the gallery like anything else but get no runtime param panel
+and are excluded from the Autopilot / Patch / Mixer compositor pools.
 
 ## Adding a new experiment (the common task)
 
@@ -58,9 +61,10 @@ controls panel, listed on the gallery page, deep-linked as
 
 ## Other tasks
 
-- Link an external repo: add an entry to `src/registry/external.json`
-  (fields documented in README.md). Set `embed: false` if the site blocks
-  iframes.
+- Import a standalone app: drop its self-contained page into
+  `sketches/<slug>/` (an `index.html` entry + its JS/assets) with a
+  `sketch.json` that sets `"standalone": true`. Reference runtime-loaded assets
+  via `?url` imports so Vite emits them (see `sketches/caustics-art`).
 - New template: add a folder in `templates/`; `__TITLE__` is replaced by the
   sketch title. Update `techByTemplate` in `scripts/new-sketch.mjs`.
 - Gallery/app changes: Vue SFCs in `src/`; Vuetify components, Pinia store in

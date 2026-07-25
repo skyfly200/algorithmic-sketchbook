@@ -19,12 +19,6 @@ const store = useSketchStore()
         style="max-width: 320px"
       />
 
-      <v-btn-toggle v-model="store.typeFilter" density="compact" mandatory variant="outlined" divided>
-        <v-btn value="all" size="small">All</v-btn>
-        <v-btn value="local" size="small">Embedded</v-btn>
-        <v-btn value="external" size="small">External</v-btn>
-      </v-btn-toggle>
-
       <!-- Effect vs filter role -->
       <v-btn-toggle v-model="store.roleFilter" density="compact" mandatory variant="outlined" divided>
         <v-btn value="all" size="small">All</v-btn>

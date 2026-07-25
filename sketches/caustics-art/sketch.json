@@ -1,0 +1,8 @@
+{
+  "title": "Cymatic Caustic Caster",
+  "description": "Generative simulation of a water surface and the caustics it casts — rain, wind, and cymatic (sound-driven) ripples, with mouse interaction and randomized settings on each load. Load 3D geometry to catch the caustics. A full standalone Three.js app, imported into the sketchbook, with its own settings/info drawers.",
+  "tags": ["caustics", "water", "audio-reactive", "generative"],
+  "tech": ["three.js", "webgl", "glsl"],
+  "created": "2026-07-10",
+  "standalone": true
+}

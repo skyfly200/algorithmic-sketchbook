@@ -1,24 +1,24 @@
 /**
- * The sketch registry merges two sources into one list:
+ * The sketch registry — every folder under /sketches that contains a
+ * `sketch.json` manifest becomes a gallery entry, discovered automatically at
+ * build time via import.meta.glob, so adding a sketch never requires touching
+ * app code. There's no local-vs-external split any more: everything lives in the
+ * project. A manifest may set `standalone: true` to mark a fully self-contained
+ * imported app (its own UI, no sketchbook runtime) — those are shown in the
+ * gallery like anything else but skip the runtime param panel and the
+ * compositor pools (Autopilot / Patch / Mixer).
  *
- * 1. LOCAL sketches — any folder under /sketches that contains a
- *    `sketch.json` manifest. Discovered automatically at build time via
- *    import.meta.glob, so adding a sketch never requires touching app code.
- *
- * 2. EXTERNAL projects — experiments that live in their own repos,
- *    listed by hand in ./external.json.
- *
- * Both are normalized to the same shape:
+ * Each entry is normalized to:
  *   {
- *     slug, title, description, tags[], tech[], created,
- *     type: 'local' | 'external',
- *     url,          // what the viewer iframes (local page or live demo)
- *     repo,         // source link (external only)
+ *     slug, title, description, tags[], tech[], created, updated,
+ *     url,          // the local page the viewer iframes
+ *     repo,         // optional source link
  *     embed,        // false => open in a new tab instead of iframing
+ *     standalone,   // true => a self-contained imported app
  *     thumbnail,    // optional image URL for the gallery card
+ *     perf,         // measured performance score, or null
  *   }
  */
-import externalProjects from './external.json'
 // Measured performance scores (1-100 vs a 60fps target), written by
 // `npm run perf` (scripts/perf-audit.mjs). Relative to the auditing machine.
 import perfScores from './perf.json'
@@ -37,42 +37,27 @@ function thumbnailFor(slug) {
   return key ? thumbnails[key] : null
 }
 
-const localSketches = Object.entries(manifests).map(([path, mod]) => {
-  const manifest = mod.default ?? mod
-  const slug = path.split('/')[2]
-  return {
-    slug,
-    title: manifest.title ?? slug,
-    description: manifest.description ?? '',
-    tags: manifest.tags ?? [],
-    tech: manifest.tech ?? [],
-    created: manifest.created ?? '',
-    updated: updatedMap[slug] ?? manifest.updated ?? manifest.created ?? '',
-    type: 'local',
-    url: `${import.meta.env.BASE_URL}sketches/${slug}/index.html`,
-    repo: null,
-    embed: true,
-    thumbnail: thumbnailFor(slug),
-    perf: perfScores[slug] ?? null,
-  }
-})
-
-const externals = externalProjects.map((p) => ({
-  slug: p.slug,
-  title: p.title ?? p.slug,
-  description: p.description ?? '',
-  tags: p.tags ?? [],
-  tech: p.tech ?? [],
-  created: p.created ?? '',
-  updated: p.updated ?? p.created ?? '',
-  type: 'external',
-  url: p.url ?? null,
-  repo: p.repo ?? null,
-  embed: p.embed ?? Boolean(p.url),
-  thumbnail: p.thumbnail ?? null,
-  perf: null, // external pages aren't audited
-}))
-
-export const allSketches = [...localSketches, ...externals].sort((a, b) =>
-  (b.created || '').localeCompare(a.created || ''),
-)
+export const allSketches = Object.entries(manifests)
+  .map(([path, mod]) => {
+    const manifest = mod.default ?? mod
+    const slug = path.split('/')[2]
+    return {
+      slug,
+      title: manifest.title ?? slug,
+      description: manifest.description ?? '',
+      tags: manifest.tags ?? [],
+      tech: manifest.tech ?? [],
+      created: manifest.created ?? '',
+      updated: updatedMap[slug] ?? manifest.updated ?? manifest.created ?? '',
+      url: `${import.meta.env.BASE_URL}sketches/${slug}/index.html`,
+      repo: manifest.repo ?? null,
+      embed: manifest.embed ?? true,
+      // A self-contained imported app: shown in the gallery, but it brings its
+      // own UI so it gets no runtime param panel and isn't offered as a
+      // composable effect in Autopilot / Patch / Mixer.
+      standalone: manifest.standalone ?? false,
+      thumbnail: thumbnailFor(slug),
+      perf: perfScores[slug] ?? null,
+    }
+  })
+  .sort((a, b) => (b.created || '').localeCompare(a.created || ''))

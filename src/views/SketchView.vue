@@ -21,11 +21,12 @@ const viewer = useViewerStore()
 const scenes = useSceneStore()
 const sketch = computed(() => store.bySlug(props.slug))
 
-// Local sketches understand the runtime's display params; external URLs are
-// left untouched. Changing a setting changes the src, which reloads the frame.
+// Runtime sketches understand the viewer's display params; a standalone imported
+// app has its own UI, so its URL is left untouched. Changing a setting changes
+// the src, which reloads the frame.
 const seed = ref(null)
 const frameSrc = computed(() => {
-  if (sketch.value?.type !== 'local') return sketch.value?.url
+  if (sketch.value?.standalone) return sketch.value?.url
   let s = sketch.value.url + viewer.sketchParams
   if (seed.value != null) s += (s.includes('?') ? '&' : '?') + 'seed=' + seed.value
   return s
@@ -186,7 +187,6 @@ onUnmounted(() => {
       </div>
 
       <v-btn
-        v-if="sketch.type === 'local'"
         prepend-icon="mdi-code-tags"
         variant="tonal"
         size="small"
@@ -220,7 +220,7 @@ onUnmounted(() => {
       </v-btn>
 
       <template v-if="sketch.embed && sketch.url">
-        <template v-if="sketch.type === 'local'">
+        <template v-if="!sketch.standalone">
           <v-btn
             icon="mdi-speedometer"
             variant="text"

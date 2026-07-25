@@ -13,7 +13,7 @@ const store = useSketchStore()
 const settings = useSettingsStore()
 
 const effects = computed(() =>
-  store.sketches.filter((s) => s.type === 'local' && s.embed && !FILTER_SLUG_SET.has(s.slug) && s.slug !== 'bright-waves-logo'),
+  store.sketches.filter((s) => s.embed && !s.standalone && !FILTER_SLUG_SET.has(s.slug) && s.slug !== 'bright-waves-logo'),
 )
 const allSlugs = computed(() => effects.value.map((s) => s.slug))
 const enabledCount = computed(() => effects.value.filter((s) => settings.isEffectEnabled(s.slug)).length)

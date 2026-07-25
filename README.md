@@ -11,22 +11,21 @@ npm run build    # static site in dist/
 
 ## How it works
 
-There are two kinds of entries, both shown in the same gallery:
+Every entry lives in this repo — there's no local-vs-external split:
 
 | Kind | Lives where | Registered how |
 | --- | --- | --- |
-| **Embedded sketch** | `sketches/<slug>/` in this repo | Automatically — any folder with a `sketch.json` appears in the gallery |
-| **External project** | Its own repo / deployment | Add an entry to `src/registry/external.json` |
+| **Sketch** | `sketches/<slug>/` in this repo | Automatically — any folder with a `sketch.json` appears in the gallery |
+| **Standalone app** | `sketches/<slug>/` with `"standalone": true` | Same auto-discovery; a self-contained imported app that brings its own UI |
 
-The gallery (`/`) lists everything with search, tag, and type filters. Each
-entry opens at `/#/sketch/<slug>`, where embedded sketches (and embeddable
-external demos) run live in an iframe with reload/fullscreen controls, plus
-links to source.
+The gallery (`/`) lists everything with search, tag, and role (Effects /
+Filters) filters. Each entry opens at `/#/sketch/<slug>` and runs live in an
+iframe with reload/fullscreen controls, plus links to source.
 
 ```
 ├── index.html            Gallery app shell
 ├── src/                  The Vue app (gallery + viewer)
-│   ├── registry/         Merges local sketches + external.json into one list
+│   ├── registry/         Auto-discovers every sketches/<slug> into one list
 │   ├── stores/           Pinia store (filtering/search state)
 │   ├── views/            GalleryView, SketchView
 │   └── components/       SketchCard, FilterBar
@@ -141,28 +140,29 @@ and a `sketch.json` like:
 Drop an optional `thumbnail.png` (or `.jpg`/`.webp`/`.gif`) in the folder for
 the gallery card.
 
-## Linking an external project
+## Importing a standalone app
 
-Add an entry to `src/registry/external.json`:
+To bring a whole self-contained app in (its own UI, not a sketchbook-runtime
+sketch), drop its page into `sketches/<slug>/` — an `index.html` entry plus its
+JS/assets — and give it a `sketch.json` with `"standalone": true`:
 
 ```json
 {
-  "slug": "my-other-project",
-  "title": "My Other Project",
-  "description": "Lives in its own repo.",
+  "slug": "my-imported-app",
+  "title": "My Imported App",
+  "description": "A full standalone app, imported into the sketchbook.",
   "tags": ["simulation"],
-  "tech": ["webgl"],
+  "tech": ["three.js", "webgl"],
   "created": "2025-11-02",
-  "url": "https://skyfly200.github.io/my-other-project/",
-  "repo": "https://github.com/skyfly200/my-other-project",
-  "embed": true
+  "standalone": true
 }
 ```
 
-Set `"embed": false` if the deployed site refuses to load in an iframe
-(`X-Frame-Options`/CSP) — the viewer will offer an open-in-new-tab button
-instead. `url` is optional; with only a `repo` link the entry still shows in
-the gallery.
+Standalone entries show in the gallery like anything else but skip the runtime
+param panel and the Autopilot / Patch / Mixer compositor pools. Reference any
+runtime-loaded assets (models, textures) via `?url` imports so Vite emits them
+alongside the page — see `sketches/caustics-art`. Two worked examples live in
+the repo: `caustics-art` (a Three.js app) and `moire-patterns` (a Vue app).
 
 ## Adding a template
 

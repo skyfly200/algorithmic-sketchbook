@@ -35,10 +35,10 @@ const settings = useSettingsStore()
 // Motion Extraction, which has a native node) are organized under the Filter
 // node type instead of the Effect source list.
 const effectOptions = computed(() =>
-  store.sketches.filter((s) => s.type === 'local' && s.embed && !FILTER_SLUGS.includes(s.slug)),
+  store.sketches.filter((s) => s.embed && !s.standalone && !FILTER_SLUGS.includes(s.slug)),
 )
 const filterOptions = computed(() =>
-  store.sketches.filter((s) => s.type === 'local' && s.embed && FILTER_SLUGS.includes(s.slug)),
+  store.sketches.filter((s) => s.embed && !s.standalone && FILTER_SLUGS.includes(s.slug)),
 )
 
 // The effect/filter node pickers are grouped into sections so a long list is

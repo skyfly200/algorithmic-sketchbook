@@ -38,14 +38,14 @@ const BLENDS = [
 // user has ticked on (an empty enabled-set means "all").
 const allEffects = computed(() =>
   store.sketches.filter(
-    (s) => s.type === 'local' && s.embed && !FILTER_SLUGS.includes(s.slug) && s.slug !== 'bright-waves-logo',
+    (s) => s.embed && !s.standalone && !FILTER_SLUGS.includes(s.slug) && s.slug !== 'bright-waves-logo',
   ),
 )
 // The pool Autopilot picks from is the app-wide effect selection (shared with
 // the Randomize feature), configurable here or on the Settings page.
 const effectPool = computed(() => settings.filterToPool(allEffects.value))
 const filterPool = computed(() =>
-  store.sketches.filter((s) => s.type === 'local' && s.embed && FILTER_SLUGS.includes(s.slug)),
+  store.sketches.filter((s) => s.embed && !s.standalone && FILTER_SLUGS.includes(s.slug)),
 )
 
 // --- settings (persisted) ---------------------------------------------------

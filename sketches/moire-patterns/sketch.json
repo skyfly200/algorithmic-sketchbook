@@ -1,0 +1,8 @@
+{
+  "title": "Moiré Pattern Generator",
+  "description": "Interactive moiré interference tool rendered entirely in a fragment shader: ten grating types plus custom GLSL, up to 8 layers with per-layer combine ops, SDF shape masks, color modes, and anti-aliasing controls. A full standalone Vue app, imported into the sketchbook, with its own control panel, timeline and share drawer.",
+  "tags": ["moire", "interference", "shader", "generative"],
+  "tech": ["vue", "three.js", "glsl"],
+  "created": "2026-07-10",
+  "standalone": true
+}

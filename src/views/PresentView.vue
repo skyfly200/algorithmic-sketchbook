@@ -34,7 +34,7 @@ const current = computed(() => playlist.value[index.value] ?? null)
 const frameSrc = computed(() => {
   const s = current.value
   if (!s) return ''
-  return s.type === 'local' ? s.url + viewer.sketchParams : s.url
+  return s.standalone ? s.url : s.url + viewer.sketchParams
 })
 
 // --- switching ----------------------------------------------------------

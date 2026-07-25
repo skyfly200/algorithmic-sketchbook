@@ -6,8 +6,6 @@ The home page lists every experiment as a live card. Use the controls above the
 grid to narrow it down:
 
 - **Search** matches a sketch's title, description, tags and tech.
-- **All / Embedded / External** filters by whether the sketch runs inline or
-  links out to another site.
 - **All / Effects / Filters** splits standalone generators from source
   [filters](#/docs/effects-filters).
 - **Sort** — *Featured* (the curated default order), *A–Z*, *Newest*, or
