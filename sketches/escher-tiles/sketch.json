@@ -1,7 +1,7 @@
 {
   "title": "Escher Tiles",
-  "description": "Interlocking tessellations in the spirit of M.C. Escher. It starts from a square polygon lattice and replaces the straight edges with arcs — every bump carved out of one edge is added to the opposite edge, so all tiles are identical and lock together with no gaps (the translation method behind Escher's bird and fish tilings). Two-tone, four-tone or gradient colourings make the interlocking lobes read, with an optional eye motif that hints at a creature. Tile size, aspect, arcs-per-edge, interlock depth and irregularity are live; it renders once and holds (a static pattern), and re-deals a fresh tiling on a new seed. Five palettes plus Random, and a live rotation.",
-  "tags": ["tessellation", "escher", "geometric", "pattern", "generative"],
+  "description": "A polygon-tessellation studio in the spirit of M.C. Escher. Pick a base tiling — squares, triangles, hexagons, tumbling-block rhombi or octagon-and-square — then choose how the edges behave: leave them as clean straight polygons, or deform them into arcs, zigzags or scallops. The deformation is keyed to each shared edge, so neighbouring tiles always lock together with no gaps, the translation trick behind Escher's interlocking creatures. Every tile of the block can then be filled with a polygon motif: concentric rings, radial fans, pinwheels, nested stars or midpoint subdivisions, so the whole field reads as a dense weave of polygons. Two-tone, multi, gradient, rainbow or outline colouring across nine palettes plus Random; edge depth, arcs-per-edge, pattern density and irregularity are live; it renders once and holds, re-deals on a new seed, and the whole field can be rotated.",
+  "tags": ["tessellation", "escher", "geometric", "polygon", "pattern", "generative"],
   "tech": ["canvas2d"],
   "created": "2026-07-25"
 }
