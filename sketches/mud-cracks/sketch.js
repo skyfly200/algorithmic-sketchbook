@@ -1,10 +1,13 @@
 // Mud Cracks — a drying mud flat that fractures into polygonal tiles. A cellular
 // (Worley) fracture network, plus finer secondary cracks inside the big plates,
-// is baked once into a distance field; each frame the dryness sets how wide/deep
-// the cracks have opened. Cracks open progressively (regions dry at different
-// rates), tiles curl at their edges (bump-shaded from the field gradient) and
-// cast shadow into the gaps, and the mud shifts wet-brown → dusty tan. Drag to
-// wet the surface and the cracks heal, then re-open as it dries again.
+// is baked once into a distance field — but the sample coordinates are domain-
+// warped by multi-octave noise so the boundaries meander like real cracks rather
+// than sitting on clean Voronoi bisectors, the crack lips are roughened to a
+// ragged, variable width, and the fine cracks only appear in patches. Each frame
+// the dryness sets how wide/deep the cracks have opened; regions dry at different
+// rates, tiles curl at their edges (bump-shaded from the field gradient) and cast
+// shadow into the gaps, and the mud shifts wet-brown → dusty tan. Drag to wet the
+// surface and the cracks heal, then re-open as it dries again.
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
@@ -18,6 +21,7 @@ const params = rt.params({
   crackWidth: { value: 1, min: 0.3, max: 2.5, step: 0.05, label: 'Crack width' },
   curl: { value: 1, min: 0, max: 2, step: 0.05, label: 'Edge curl' },
   detail: { value: 1, min: 0, max: 2, step: 0.05, label: 'Fine cracks' },
+  irregular: { value: 0.7, min: 0, max: 1.5, step: 0.05, label: 'Irregularity' },
   hue: { value: 27, min: 0, max: 45, step: 1, label: 'Mud hue' },
 })
 rt.mapInput('audio.level', 'dryness', 0.3)
@@ -37,6 +41,15 @@ function vnoise(gx, gy, per) {
   return a + (b - a) * uy
 }
 function smooth01(e0, e1, x) { let t = (x - e0) / (e1 - e0); t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t) }
+// multi-octave value noise (0..1), effectively non-tiling across the screen
+function fbm(x, y, seed) {
+  let v = 0, amp = 0.5, f = 1
+  for (let o = 0; o < 4; o++) {
+    v += amp * vnoise(x * f + seed * 0.137, y * f + seed * 0.371, 4096)
+    amp *= 0.5; f *= 2
+  }
+  return v
+}
 function hsl(h, s, l) {
   s /= 100; l /= 100
   const k = (n) => (n + h / 30) % 12
@@ -81,14 +94,29 @@ function build() {
   const seed = Math.floor(rt.random(0, 90000))
   const big = Math.max(24, RH * 0.14 / params.scale)
   const small = big * 0.42
+  const irr = params.irregular
+  // domain-warp frequency/amplitude: warp on the scale of the cells so plate
+  // boundaries meander instead of being straight Voronoi bisectors
+  const wf = 1.3 / big
+  const wAmp = big * 0.5 * irr
+  const wf2 = wf * 2.7
   for (let y = 0; y < RH; y++) {
     for (let x = 0; x < RW; x++) {
       const i = y * RW + x
-      const b = worley(x, y, big, seed)
-      const s = worley(x, y, small, seed + 7)
-      // primary plate boundaries, plus finer secondary cracks inside the plates
-      edge[i] = Math.min(b.e, s.e / (0.5 + params.detail))
-      tone[i] = 0.5 + (b.id - 0.5) * 0.6
+      // two-scale warp of the sample point (coarse meander + finer wobble)
+      const wx = (fbm(x * wf, y * wf, seed + 40) - 0.5) * 2 * wAmp + (fbm(x * wf2, y * wf2, seed + 55) - 0.5) * wAmp * 0.5
+      const wy = (fbm(x * wf + 11.3, y * wf + 4.7, seed + 70) - 0.5) * 2 * wAmp + (fbm(x * wf2 + 3.1, y * wf2 + 8.9, seed + 85) - 0.5) * wAmp * 0.5
+      const sx = x + wx, sy = y + wy
+      const b = worley(sx, sy, big, seed)
+      // fine cracks only show up in patches (a low-freq mask), so the interior
+      // isn't a uniform secondary net
+      const fineMask = fbm(x * 0.9 / big, y * 0.9 / big, seed + 500)
+      let sE = 1e9
+      if (fineMask > 0.52 - irr * 0.12) { const s = worley(sx, sy, small, seed + 7); sE = s.e / (0.5 + params.detail) }
+      // roughen the crack lip so its width meanders and frays (hairline ↔ open)
+      const rough = (fbm(x * 0.08, y * 0.08, seed + 200) - 0.5) * big * 0.09 * irr
+      edge[i] = Math.max(0, Math.min(b.e, sE) + rough)
+      tone[i] = 0.5 + (b.id - 0.5) * 0.6 + (fbm(x * 0.03, y * 0.03, seed + 900) - 0.5) * 0.35 * irr // mottled plates
       // regions dry (and so crack) at different times → progressive fracturing
       openF[i] = vnoise((x / RW) * 3 + seed + 3, (y / RH) * 3, 3) * 0.7
     }
@@ -111,7 +139,7 @@ window.addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType =
 window.addEventListener('pointerdown', wetAt)
 
 let sig = '', pending = null, pendingAt = 0
-function paramSig() { return [params.scale, params.detail].join(',') }
+function paramSig() { return [params.scale, params.detail, params.irregular].join(',') }
 
 function frame(now) {
   rt.tick(now)
