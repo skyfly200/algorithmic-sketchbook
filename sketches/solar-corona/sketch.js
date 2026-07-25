@@ -336,10 +336,8 @@ function frame(now) {
   // 6) flares + CME travelling along the field
   for (const reg of regions) {
     if (reg.flare <= 0.02 && reg.cme <= 0) continue
-    if (reg.mu <= 0) continue
-    const a = reg.rimA
-    // flare kernel at the region, blindingly bright
-    if (reg.flare > 0.02) {
+    // flare kernel at the region, blindingly bright (only on the near side)
+    if (reg.flare > 0.02 && reg.mu > 0) {
       const fe = reg.flare * (0.4 + params.flare) * smooth(reg.mu * 3)
       const fx = reg.px, fy = reg.py
       const g = ctx.createRadialGradient(fx, fy, 0, fx, fy, R * (0.3 + fe * 0.6))
@@ -349,15 +347,40 @@ function frame(now) {
       ctx.fillStyle = g
       ctx.beginPath(); ctx.arc(fx, fy, R * (0.3 + fe * 0.6), 0, 6.28); ctx.fill()
     }
-    // CME: a bright expanding loop-front launched radially outward along the field
-    if (reg.cme > 0) {
-      const cr = R * (1 + reg.cme * (1.2 + params.corona))
-      const fade = (1 - reg.cme) * 0.5 * smooth(reg.mu * 3)
-      ctx.strokeStyle = col(params.temp, 0.7, fade)
-      ctx.lineWidth = R * 0.03 * (1 - reg.cme * 0.5)
-      ctx.beginPath()
-      ctx.arc(0, 0, cr, a - reg.sep * 1.4, a + reg.sep * 1.4)
-      ctx.stroke()
+    // CME: a bright loop-front erupting from the active region and ballooning
+    // outward — a bubble anchored at the eruption site (brightest off the limb),
+    // with two trailing legs, not a ring concentric with the whole disk.
+    if (reg.cme > 0 && reg.mu > -0.12) {
+      const a = reg.rimA
+      const ux = Math.cos(a), uy = Math.sin(a)
+      const px0 = reg.px, py0 = reg.py                       // eruption site (surface)
+      const rad = R * 0.1 + reg.cme * R * (1.15 + params.corona) // bubble radius grows
+      const halfAng = 0.5 + reg.cme * 0.38                   // widens as it climbs
+      const edge = Math.sqrt(Math.max(0, 1 - reg.mu * reg.mu)) // 0 centre → 1 limb
+      const fade = smooth(reg.cme * 6) * (1 - reg.cme) * (0.28 + 0.72 * edge) * (0.5 + params.flare)
+      if (fade > 0.012) {
+        const eL = [px0 + rad * Math.cos(a - halfAng), py0 + rad * Math.sin(a - halfAng)]
+        const eR = [px0 + rad * Math.cos(a + halfAng), py0 + rad * Math.sin(a + halfAng)]
+        // soft bubble glow filling the erupting wedge
+        const g = ctx.createRadialGradient(px0, py0, rad * 0.25, px0, py0, rad)
+        g.addColorStop(0, col(params.temp, 0.6, 0.11 * fade))
+        g.addColorStop(0.7, col(params.temp, 0.7, 0.05 * fade))
+        g.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.fillStyle = g
+        ctx.beginPath(); ctx.moveTo(px0, py0); ctx.arc(px0, py0, rad, a - halfAng, a + halfAng); ctx.closePath(); ctx.fill()
+        // bright leading front
+        ctx.lineCap = 'round'
+        ctx.strokeStyle = col(params.temp, 0.82, fade)
+        ctx.lineWidth = R * 0.028 * (1 - reg.cme * 0.4)
+        ctx.beginPath(); ctx.arc(px0, py0, rad, a - halfAng, a + halfAng); ctx.stroke()
+        // two trailing legs, bowed outward → the classic croissant loop
+        ctx.lineWidth = R * 0.011
+        ctx.strokeStyle = col(params.temp, 0.72, fade * 0.8)
+        for (const e of [eL, eR]) {
+          const mxx = (px0 + e[0]) / 2 + ux * rad * 0.16, myy = (py0 + e[1]) / 2 + uy * rad * 0.16
+          ctx.beginPath(); ctx.moveTo(px0, py0); ctx.quadraticCurveTo(mxx, myy, e[0], e[1]); ctx.stroke()
+        }
+      }
     }
   }
   ctx.restore()
