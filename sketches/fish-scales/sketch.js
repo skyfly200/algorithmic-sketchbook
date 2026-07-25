@@ -87,36 +87,40 @@ function bodyColor(u, v, sp) {
 }
 
 // One scale: a rounded fan clipped to a semicircle, filled with a radial
-// gradient from a darker seat to a lighter free edge, plus a moving glint.
-function drawScale(cx, cy, r, col, glint) {
+// gradient from a darker seat to a lighter free edge, plus a moving glint. The
+// shape is deliberately irregular — asymmetric widths, an uneven top, a tilt and
+// an off-centre highlight — so no two scales read the same (`o` carries the
+// per-scale jitter).
+function drawScale(cx, cy, r, col, glint, o) {
   const [h, s, l] = col
-  const round = 0.5 + params.curvature * 0.5
-  const top = cy - r * round
+  const top = -r * o.round
+  const lw = r * o.lw, rw = r * o.rw
   ctx.save()
+  ctx.translate(cx, cy)
+  ctx.rotate(o.rot)
   ctx.beginPath()
-  // a scallop: arc across the top, meeting at the seated base below
-  ctx.moveTo(cx - r, cy)
-  ctx.quadraticCurveTo(cx - r, top, cx, top)
-  ctx.quadraticCurveTo(cx + r, top, cx + r, cy)
-  ctx.quadraticCurveTo(cx, cy + r * 0.5, cx - r, cy)
+  ctx.moveTo(-lw, 0)
+  ctx.quadraticCurveTo(-lw, top * o.lh, 0, top)
+  ctx.quadraticCurveTo(rw, top * o.rh, rw, 0)
+  ctx.quadraticCurveTo(0, r * o.dip, -lw, 0)
   ctx.closePath()
   ctx.clip()
-  const g = ctx.createRadialGradient(cx, cy, r * 0.1, cx, cy, r * 1.3)
+  const g = ctx.createRadialGradient(o.gx * r, o.gy * r, r * 0.08, 0, 0, r * 1.35)
   const base = hsl(h, s, Math.max(0.05, l - 0.14))
   const edge = hsl(h, s * 0.8, Math.min(0.95, l + 0.12 + glint * 0.5))
   g.addColorStop(0, `rgb(${base[0] | 0},${base[1] | 0},${base[2] | 0})`)
   g.addColorStop(1, `rgb(${edge[0] | 0},${edge[1] | 0},${edge[2] | 0})`)
   ctx.fillStyle = g
-  ctx.fillRect(cx - r - 1, top - 1, r * 2 + 2, r * 2 + 2)
+  ctx.fillRect(-lw - 1, top - 1, lw + rw + 2, r * 2 + 2)
   // iridescent rim highlight along the free edge
   if (glint > 0.01) {
     ctx.globalAlpha = glint
     ctx.strokeStyle = `rgb(${edge[0] | 0},${edge[1] | 0},${edge[2] | 0})`
     ctx.lineWidth = Math.max(1, r * 0.12)
     ctx.beginPath()
-    ctx.moveTo(cx - r, cy)
-    ctx.quadraticCurveTo(cx - r, top, cx, top)
-    ctx.quadraticCurveTo(cx + r, top, cx + r, cy)
+    ctx.moveTo(-lw, 0)
+    ctx.quadraticCurveTo(-lw, top * o.lh, 0, top)
+    ctx.quadraticCurveTo(rw, top * o.rh, rw, 0)
     ctx.stroke()
     ctx.globalAlpha = 1
   }
@@ -133,27 +137,51 @@ function render(t) {
   const r = minDim * 0.05 * params.scale
   const colW = r * 1.6
   const rowH = r * 0.95
-  const cols = Math.ceil(W / colW) + 2
-  const rows = Math.ceil(H / rowH) + 2
-  // travelling shimmer: a diagonal band whose phase moves with time
+  const cols = Math.ceil(W / colW) + 3
+  const rows = Math.ceil(H / rowH) + 3
   const sh = params.shimmer * t
   const irid = params.iridescence
   const pulse = rt.beat.state.pulse
   for (let ry = 0; ry < rows; ry++) {
-    const cy = ry * rowH
-    const off = (ry % 2) * colW * 0.5 // half-offset alternate rows (imbricate)
+    // rows waver left/right and breathe up/down a little, so the lattice isn't
+    // a perfect grid
+    const wav = Math.sin(ry * 0.9) * colW * 0.14 + Math.sin(ry * 2.3 + 1.7) * colW * 0.05
+    const cyRow = ry * rowH + Math.sin(ry * 1.7) * rowH * 0.08
+    const off = (ry % 2) * colW * 0.5 + wav
     for (let cxI = 0; cxI < cols; cxI++) {
-      const cx = cxI * colW + off - colW
+      // four decorrelated hashes drive the per-scale jitter
+      const h1 = hash(cxI * 1.7 + ry * 13.1, ry * 1.9 + 3.3)
+      const h2 = hash(cxI * 3.1 + 5.2, ry * 2.3 + cxI * 0.7)
+      const h3 = hash(cxI + 9.4, ry * 4.1 + 2.2)
+      const h4 = hash(cxI * 5.3 + 1.1, ry + 11.7)
+      const h5 = hash(cxI * 0.9 + ry * 7.7, cxI * 2.1 + 4.5)
+      const cx = cxI * colW + off - colW * 1.5 + (h1 - 0.5) * colW * 0.22
+      const cy = cyRow + (h2 - 0.5) * rowH * 0.22
       const u = cx / W, v = cy / H
       let col = bodyColor(u, v, sp)
-      // pattern strength scales the deviation of sat/light from a neutral scale
-      if (params.pattern !== 1) {
-        col = [col[0], col[1] * params.pattern, 0.5 + (col[2] - 0.5) * params.pattern]
+      // per-scale tone + hue jitter so patches break up organically
+      col = [col[0] + (h1 - 0.5) * 10, col[1] * (0.85 + h3 * 0.3), col[2] + (h5 - 0.5) * 0.12]
+      if (params.pattern !== 1) col = [col[0], col[1] * params.pattern, 0.5 + (col[2] - 0.5) * params.pattern]
+      const rr = r * (0.78 + h3 * 0.4)
+      // a worn / missing scale now and then: a dark socket showing the skin below
+      if (h4 < 0.03 + params.pattern * 0.01) {
+        ctx.save(); ctx.globalAlpha = 0.8
+        const dk = hsl(col[0], col[1] * 0.5, Math.max(0.03, col[2] - 0.28))
+        ctx.fillStyle = `rgb(${dk[0] | 0},${dk[1] | 0},${dk[2] | 0})`
+        ctx.beginPath(); ctx.ellipse(cx, cy - rr * 0.2, rr * 0.7, rr * 0.55, 0, 0, Math.PI * 2); ctx.fill()
+        ctx.restore()
+        continue
       }
-      // moving iridescent glint: bright where the shimmer band crosses this scale
       const band = Math.sin((u * 6 + v * 3) * Math.PI - sh * 2)
       const glint = Math.max(0, band) ** 3 * irid * (0.7 + pulse) + pulse * 0.15
-      drawScale(cx, cy, r, col, Math.min(1, glint))
+      drawScale(cx, cy, rr, col, Math.min(1, glint), {
+        round: params.curvature * (0.6 + h5 * 0.6) + 0.2,
+        rot: (h4 - 0.5) * 0.5,
+        lw: 0.82 + h1 * 0.34, rw: 0.82 + h2 * 0.34,
+        lh: 0.88 + h3 * 0.28, rh: 0.88 + h4 * 0.28,
+        dip: 0.35 + h5 * 0.4,
+        gx: (h2 - 0.5) * 0.6, gy: (h3 - 0.5) * 0.6,
+      })
     }
   }
 }

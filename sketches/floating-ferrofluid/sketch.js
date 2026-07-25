@@ -22,14 +22,15 @@ const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
 const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: CAPTURE })
 
 const params = rt.params({
-  blobs: { value: 6, min: 2, max: 12, step: 1, label: 'Blobs' },
-  size: { value: 0.32, min: 0.14, max: 0.55, step: 0.01, label: 'Blob size' },
-  field: { value: 0.7, min: 0, max: 1.6, step: 0.02, label: 'Field / spikes' },
-  spikes: { value: 9, min: 3, max: 22, step: 1, label: 'Spike count' },
-  magnet: { value: 0.8, min: 0, max: 2.5, step: 0.05, label: 'Magnet pull' },
-  buoyancy: { value: 0.5, min: 0, max: 1.5, step: 0.02, label: 'Drift / bob' },
+  blobs: { value: 7, min: 2, max: 12, step: 1, label: 'Fluid lobes' },
+  size: { value: 0.26, min: 0.12, max: 0.5, step: 0.01, label: 'Pool size' },
+  gather: { value: 0.7, min: 0.2, max: 1.4, step: 0.02, label: 'Gather (pool)' },
+  field: { value: 0.9, min: 0, max: 1.6, step: 0.02, label: 'Field / spikes' },
+  spikes: { value: 11, min: 3, max: 24, step: 1, label: 'Spike count' },
+  magnet: { value: 0.5, min: 0, max: 2.5, step: 0.05, label: 'Magnet pull' },
+  jitter: { value: 0.4, min: 0, max: 1.5, step: 0.02, label: 'Jitter / dance' },
   viscosity: { value: 0.5, min: 0.05, max: 1, step: 0.02, label: 'Viscosity' },
-  drive: { value: 1, min: 0, max: 2, step: 0.05, label: 'Speaker drive' },
+  drive: { value: 1.1, min: 0, max: 2, step: 0.05, label: 'Speaker drive' },
   hue: { value: Math.round(rt.random(200, 300)), min: 0, max: 360, step: 1, label: 'Sheen hue' },
 })
 rt.onBeat(() => {}) // mounts the mic toggle; audio is read directly below
@@ -64,8 +65,10 @@ float field(vec2 p){
     float radAng = atan(b.y, b.x);                       // outward from the cone
     float bias = mix(radAng, magAng, 0.4*u_magnetOn);
     float toward = 0.5+0.5*cos(ang-bias);
-    float ridge = pow(0.5+0.5*cos(ang*freq + u_time*0.7 + float(i)*1.7), 3.0);
-    float amp = u_field*(0.18 + 0.82*toward)*audio;
+    // sharp primary spikes with a finer secondary bristle riding on them
+    float ridge = pow(0.5+0.5*cos(ang*freq + u_time*0.7 + float(i)*1.7), 4.0);
+    ridge *= 0.75 + 0.25*pow(0.5+0.5*cos(ang*freq*2.7 - u_time*1.3 + float(i)), 2.0);
+    float amp = u_field*(0.25 + 0.75*toward)*audio*1.25;
     float reff = b.z*(1.0 + amp*ridge);
     f += reff*reff/(dist*dist);
   }
@@ -157,8 +160,9 @@ const blobs = []
 const buf3 = new Float32Array(MAXB * 3)
 function makeBlob() {
   return {
-    x: rt.random(-halfW * 0.6, halfW * 0.6),
-    y: rt.random(-halfH * 0.6, halfH * 0.6),
+    // spawn near the cone centre — the fluid pools there and spikes outward
+    x: rt.random(-0.28, 0.28),
+    y: rt.random(-0.28, 0.28),
     vx: 0, vy: 0,
     r: params.size * rt.random(0.7, 1.15),
     ph: rt.random(0, Math.PI * 2),
@@ -194,41 +198,42 @@ function step(t, dt) {
   magY += (tmagY - magY) * Math.min(1, dt * 4)
 
   const damp = Math.pow(0.02, dt * (0.4 + params.viscosity)) // higher viscosity → more damping
-  const drift = params.buoyancy
+  const jit = params.jitter
   const pull = params.magnet
+  const gather = params.gather
+  // the pool spreads a little as the bass drives it, then draws back together
+  const spreadR = params.size * (1.0 + bass * params.drive * 1.6)
   for (let i = 0; i < blobs.length; i++) {
     const b = blobs[i]
-    // slow current + a gentle vertical bob (the "floating")
+    // gather onto the cone centre (leaning toward the magnet) so the fluid stays
+    // one central spiky mass instead of drifting off across the frame
+    const gx = magX * 0.35 * (pull / 0.5), gy = magY * 0.35 * (pull / 0.5)
+    b.vx += (gx - b.x) * gather * 2.2 * dt
+    b.vy += (gy - b.y) * gather * 2.2 * dt
+    // small chaotic jitter so the lobes shiver and dance
     const [cx, cy] = current(b.x, b.y, t)
-    b.vx += cx * drift * 0.06 * dt
-    b.vy += (cy * drift * 0.06 + Math.sin(t * 0.8 + b.ph) * drift * 0.05) * dt
-    // magnet attraction
-    const dx = magX - b.x, dy = magY - b.y
-    const d = Math.hypot(dx, dy) + 1e-3
-    b.vx += (dx / d) * pull * 0.12 * dt
-    b.vy += (dy / d) * pull * 0.12 * dt
+    b.vx += (cx + Math.sin(t * 2.1 + b.ph) * 1.5) * jit * 0.04 * dt
+    b.vy += (cy + Math.cos(t * 1.8 + b.ph * 1.3) * 1.5) * jit * 0.04 * dt
     // the speaker shoves the fluid outward on the bass, then it settles back
     const rr = Math.hypot(b.x, b.y) + 1e-3
-    const push = (bass - 0.35) * params.drive * 0.14
+    const push = (bass - 0.3) * params.drive * 0.16
     b.vx += (b.x / rr) * push * dt * 6
     b.vy += (b.y / rr) * push * dt * 6
-    // soft mutual repulsion so they spread instead of stacking
+    // soft mutual repulsion so the lobes pack into a lumpy pool, not a point
     for (let j = 0; j < blobs.length; j++) {
       if (j === i) continue
       const o = blobs[j]
       const ox = b.x - o.x, oy = b.y - o.y
       const od = Math.hypot(ox, oy) + 1e-3
-      const min = (b.r + o.r) * 0.7
-      if (od < min) { const f = (min - od) / min * 0.4 * dt; b.vx += (ox / od) * f; b.vy += (oy / od) * f }
+      const min = (b.r + o.r) * 0.62
+      if (od < min) { const f = (min - od) / min * 0.5 * dt; b.vx += (ox / od) * f; b.vy += (oy / od) * f }
     }
     b.vx *= damp; b.vy *= damp
     b.x += b.vx; b.y += b.vy
-    // contain within the tank with soft walls
-    const mx = halfW * 0.86, my = halfH * 0.86
-    if (b.x < -mx) { b.x = -mx; b.vx = Math.abs(b.vx) * 0.4 }
-    if (b.x > mx) { b.x = mx; b.vx = -Math.abs(b.vx) * 0.4 }
-    if (b.y < -my) { b.y = -my; b.vy = Math.abs(b.vy) * 0.4 }
-    if (b.y > my) { b.y = my; b.vy = -Math.abs(b.vy) * 0.4 }
+    // keep the pool within a disc around the centre (never off the cone)
+    const maxR = Math.min(halfW, halfH) * 0.7 + spreadR
+    const cr = Math.hypot(b.x, b.y)
+    if (cr > maxR) { b.x *= maxR / cr; b.y *= maxR / cr; b.vx *= 0.3; b.vy *= 0.3 }
     b.r += (params.size * (0.85 + 0.15 * Math.sin(t + b.ph)) - b.r) * Math.min(1, dt * 2)
   }
 }
