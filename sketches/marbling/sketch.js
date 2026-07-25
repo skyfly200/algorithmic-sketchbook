@@ -6,12 +6,18 @@
  * thin concentric shells. Drawing a comb/tine across the bath shears those
  * shells into the feathery combed patterns of real marbled paper.
  *
+ * Two traditions: Suminagashi (Japanese) floats concentric rings of muted
+ * indigo/charcoal ink from a wandering source and barely combs them, for soft
+ * contour-line swirls; Ebru (Turkish) scatters vivid inks, rakes them hard into
+ * a nonpareil weave, and occasionally lays a stylised flower.
+ *
  * Drag to rake a comb through the ink; click to drop a stone.
  */
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
+  style: { value: 'Ebru (Turkish)', type: 'select', options: ['Ebru (Turkish)', 'Suminagashi (Japanese)'], label: 'Tradition' },
   dropRate: { value: 0.8, min: 0, max: 4, step: 0.05, label: 'Drop rate' },
   dropSize: { value: 0.13, min: 0.04, max: 0.3, step: 0.01, label: 'Drop size' },
   flow: { value: 0.5, min: 0, max: 2, step: 0.05, label: 'Water flow' },
@@ -39,11 +45,37 @@ function resize() {
 }
 
 function inkColor() {
-  const h = (params.palette + rt.random(-0.09, 0.09) + rt.pick([0, 0.08, 0.5, 0.6, 0.33]) + 1) % 1
-  const s = rt.random(0.55, 0.85)
-  const [r, g, b] = hslRGB(h, s, rt.random(0.42, 0.58))
-  const [rr, rg, rb] = hslRGB(h, s * 0.7, 0.8) // lighter wet-edge rim
+  if (params.style.startsWith('Suminagashi')) {
+    // Muted sumi bath: indigo, charcoal and teal, dark and low-saturation, the
+    // way lamp-black and indigo inks read floating on plain water.
+    const pick = rt.pick([0.62, 0.6, 0.66, 0.5, 0.0])
+    const black = pick === 0.0
+    const h = (pick + rt.random(-0.03, 0.03) + 1) % 1
+    const s = black ? 0.06 : rt.random(0.22, 0.5)
+    const l = black ? rt.random(0.13, 0.24) : rt.random(0.3, 0.5)
+    const [r, g, b] = hslRGB(h, s, l)
+    const [rr, rg, rb] = hslRGB(h, s * 0.6, Math.min(0.86, l + 0.34))
+    return { fill: `rgb(${r | 0}, ${g | 0}, ${b | 0})`, rim: `rgb(${rr | 0}, ${rg | 0}, ${rb | 0})` }
+  }
+  // Ebru: vivid, varied inks across the wheel.
+  const h = (params.palette + rt.random(-0.09, 0.09) + rt.pick([0, 0.08, 0.5, 0.6, 0.33, 0.9]) + 1) % 1
+  const s = rt.random(0.62, 0.9)
+  const [r, g, b] = hslRGB(h, s, rt.random(0.44, 0.6))
+  const [rr, rg, rb] = hslRGB(h, s * 0.7, 0.82) // lighter wet-edge rim
   return { fill: `rgb(${r | 0}, ${g | 0}, ${b | 0})`, rim: `rgb(${rr | 0}, ${rg | 0}, ${rb | 0})` }
+}
+// A stylised ebru flower: a few concentric drops, then radial stylus pulls
+// splitting them into petals — the tulips and carnations of Turkish marbling.
+function flower(cx, cy) {
+  const r0 = minDim * 0.02
+  for (let k = 0; k < 5; k++) dropInk(cx, cy, r0 * (1 + k * 0.7))
+  const petals = rt.pick([5, 6, 7, 8])
+  for (let i = 0; i < petals; i++) {
+    const a = (i / petals) * Math.PI * 2 + rt.random(-0.1, 0.1)
+    combLine(cx, cy, Math.cos(a), Math.sin(a), minDim * 0.06, params.sharp)
+  }
+  // a short stem pull downward
+  combLine(cx, cy, 0, 1, minDim * 0.05, params.sharp)
 }
 function hslRGB(h, s, l) {
   const k = (n) => (n + h * 12) % 12
@@ -106,7 +138,8 @@ function combStroke(angle) {
   const span = minDim * 1.2
   const cx = W / 2
   const cy = H / 2
-  const amp = minDim * 0.05
+  // Suminagashi is barely combed — just enough to nudge the rings; ebru rakes hard.
+  const amp = minDim * (params.style.startsWith('Suminagashi') ? 0.018 : 0.05)
   for (let t = 0; t < teeth; t++) {
     const off = (t / (teeth - 1 || 1) - 0.5) * span
     const bx = cx + -uy * off
@@ -185,15 +218,27 @@ function frame(now) {
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
   lastNow = now
 
+  const sumi = params.style.startsWith('Suminagashi')
   dropAcc += dt * params.dropRate
   while (dropAcc >= 1) {
     dropAcc -= 1
-    dropInk(rt.random(W * 0.15, W * 0.85), rt.random(H * 0.15, H * 0.85), minDim * params.dropSize * rt.random(0.6, 1.1))
+    if (sumi) {
+      // Rings grow from a slowly wandering source, so ink stacks into the
+      // concentric contour lines that define suminagashi.
+      const t = now * 0.001
+      const cx = W * 0.5 + Math.cos(t * 0.13) * W * 0.16
+      const cy = H * 0.5 + Math.sin(t * 0.17) * H * 0.16
+      dropInk(cx + rt.random(-1, 1) * minDim * 0.015, cy + rt.random(-1, 1) * minDim * 0.015, minDim * params.dropSize * rt.random(0.5, 0.85))
+    } else {
+      dropInk(rt.random(W * 0.15, W * 0.85), rt.random(H * 0.15, H * 0.85), minDim * params.dropSize * rt.random(0.6, 1.1))
+    }
   }
-  combAcc += dt * params.combRate
+  // Suminagashi barely combs; ebru rakes constantly and now and then flowers.
+  combAcc += dt * params.combRate * (sumi ? 0.35 : 1)
   while (combAcc >= 1) {
     combAcc -= 1
-    combStroke(rt.pick([0, Math.PI / 2, Math.PI / 4, -Math.PI / 4]))
+    if (!sumi && rt.rng() < 0.22) flower(rt.random(W * 0.2, W * 0.8), rt.random(H * 0.2, H * 0.8))
+    else combStroke(rt.pick(sumi ? [0, Math.PI / 2] : [0, Math.PI / 2, Math.PI / 4, -Math.PI / 4]))
   }
 
   const t = now * 0.001

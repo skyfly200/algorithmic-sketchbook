@@ -1,0 +1,7 @@
+{
+  "title": "Egg Speckle",
+  "description": "The speckled surface of a wild bird's egg — and the spray-marbled flecking on old notebook covers it inspired. A tinted shell is continually misted with pigment: fine specks, soft airbrush blooms, larger blotches and the odd ink squiggle, accumulating on a buffer that slowly renews so the pattern keeps breathing. Clutch presets range from real eggs (robin, quail, guillemot, dunnock) to a multi-colour notebook spray; density, fineness, blotches, squiggles, mist and renewal are live. Beats fling a burst of speckles; tap to puff pigment where you point.",
+  "tags": ["speckle", "egg", "marbling", "spray", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-25"
+}

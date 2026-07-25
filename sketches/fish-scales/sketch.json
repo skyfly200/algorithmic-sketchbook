@@ -1,0 +1,7 @@
+{
+  "title": "Fish Scales",
+  "description": "A flank of overlapping fish scales, drawn as imbricated rows where each scale laps the one below and alternate rows offset by half. A species preset sets both the palette and the pattern painted across the body — koi kohaku patches, rainbow-trout spots and pink band, wavy mackerel bars over a steely back, goldfish sheen, or a tropical rainbow — while a travelling iridescent highlight shimmers over everything as the fish turns in the light. Scale size, roundness, iridescence, shimmer speed and pattern strength are live; shimmer and iridescence are audio-mappable and beats ripple down the flank.",
+  "tags": ["fish", "scales", "pattern", "iridescent", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-25"
+}

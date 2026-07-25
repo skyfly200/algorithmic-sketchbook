@@ -1,0 +1,7 @@
+{
+  "title": "Worm Bin",
+  "description": "A writhing tangle of worms in a bin. Each worm is a head that crawls with a wandering heading and a side-to-side wriggle, its body a chain of segments trailing under a distance constraint — a little rope of inverse kinematics — drawn as a glossy tapered tube with a dorsal highlight and the pale saddle band of an earthworm. Density packs the bin from a handful to well over a hundred; length, thickness, crawl speed, wriggle and writhe (coiling) are all live. Kinds range from earthworm and nightcrawler to mealworm, bloodworm and a lurid alien. Speed and wriggle are audio-mappable, beats make the whole bin flinch, and poking sends nearby worms recoiling.",
+  "tags": ["worms", "creature", "particles", "organic", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-25"
+}

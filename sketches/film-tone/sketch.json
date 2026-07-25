@@ -1,0 +1,7 @@
+{
+  "title": "Film Tone",
+  "description": "A darkroom grade for a live source — sepia, black & white, negative or cyanotype, each with filmic contrast, brightness, film grain and a vignette. A per-pixel tone map over the shared source pipeline, so it filters the camera, a dropped photo or clip, the demo, or the layers below in the Mixer/Patch. Strength blends the tone back toward the original; grain is audio-mappable.",
+  "tags": ["filter", "sepia", "monochrome", "negative", "film", "grade"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-25"
+}
