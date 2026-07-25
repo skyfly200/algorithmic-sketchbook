@@ -1,7 +1,7 @@
 {
-  "title": "Floating Ferrofluid",
-  "description": "Ferrofluid pooled on a little speaker, dancing to the music — the desktop ferrofluid-speaker gadget. The fluid gathers into one lumpy black mass on the centre of the cone and bristles into a cluster of Rosensweig spikes that pulse in real time: bass swells the body and throws the spikes taller and shoves the pool outward before it draws back, treble bristles it finer, and the cone breathes on the bass with a glowing dust cap. Turn on the mic to feed it live sound; with no mic it runs on a synthetic kick so it's never still. It's rendered per pixel from a metaball field in a WebGL shader — the surface normal from the field gradient, shaded like oily black chrome with diffuse, a tight specular, a procedural environment reflection and Fresnel sheen — over the coned driver, its dust cap and rubber surround. Move the mouse to lean the spikes like a magnet; lobes, pool size, gather, field/spikes, speaker drive, jitter, viscosity and hue are live.",
-  "tags": ["ferrofluid", "metaballs", "speaker", "audio-reactive", "shader", "physics"],
-  "tech": ["webgl", "glsl"],
+  "title": "Ferrofluid Speaker",
+  "description": "The desktop ferrofluid-speaker gadget: a clear vial of black ferrofluid over an electromagnet, seen from the side, with the music driving the field. The flat pool goes unstable and throws up a crown of sharp Rosensweig spikes that climb, lean and dance with the bass, then sink back between beats — shaded like oily black chrome with a wet specular streak, standing in a lit glass cylinder over a glowing coil. Turn on the mic to drive it live; with no mic it runs on a synthetic kick so it always dances. Audio drive, spike height/count, sharpness, sway, viscosity, fluid amount, vessel and sheen hue are live.",
+  "tags": ["ferrofluid", "speaker", "audio-reactive", "physics", "generative"],
+  "tech": ["canvas2d"],
   "created": "2026-07-25"
 }
