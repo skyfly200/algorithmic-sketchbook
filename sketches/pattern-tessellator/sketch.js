@@ -16,6 +16,7 @@ const ctx = canvas.getContext('2d')
 
 const PALS = {
   'Coated canvas': { bg: '#b3a07c', ink: '#2b271f', hl: '#efe7d2' },
+  'Ink black': { bg: '#23241f', ink: '#000000', hl: '#d9d2bf' },
   'Mono': { bg: '#f3f1ea', ink: '#151510', hl: '#ffffff' },
   'Noir': { bg: '#0e0e11', ink: '#e9e7e0', hl: '#5f5f68' },
   'Indigo': { bg: '#e9e3d3', ink: '#233355', hl: '#fbfaf4' },
@@ -23,7 +24,7 @@ const PALS = {
   'Oxblood': { bg: '#e7dccb', ink: '#5a1f22', hl: '#fffaf0' },
 }
 const params = rt.params({
-  pattern: { value: 'Chevron weave', type: 'select', options: ['Chevron weave', 'Herringbone', 'Diamond trellis', 'Basket weave'], label: 'Tiling' },
+  pattern: { value: 'Goyard chevron', type: 'select', options: ['Goyard chevron', 'Chevron weave', 'Herringbone', 'Diamond trellis', 'Basket weave'], label: 'Tiling' },
   palette: { value: 'Coated canvas', type: 'select', options: [...Object.keys(PALS), 'Random'], label: 'Palette' },
   scale: { value: 46, min: 18, max: 140, step: 1, label: 'Scale' },
   density: { value: 0.5, min: 0.1, max: 1, step: 0.02, label: 'Dash density' },
@@ -63,6 +64,17 @@ function dash(g, x, y, ang, len, thick, col) {
   g.beginPath(); g.ellipse(0, 0, len, thick, 0, 0, TAU); g.fill()
   g.restore()
 }
+// a capsule (elongated dot) between two points
+function capsuleAB(g, ax, ay, bx, by, thick, col) {
+  const dx = bx - ax, dy = by - ay
+  dash(g, (ax + bx) / 2, (ay + by) / 2, Math.atan2(dy, dx), Math.hypot(dx, dy) / 2, thick, col)
+}
+// one chevron ">" whose apex is at (x,y) and points along +ang
+function chevron(g, x, y, ang, arm, beta, thick, col) {
+  const b = ang + Math.PI
+  capsuleAB(g, x, y, x + Math.cos(b + beta) * arm, y + Math.sin(b + beta) * arm, thick, col)
+  capsuleAB(g, x, y, x + Math.cos(b - beta) * arm, y + Math.sin(b - beta) * arm, thick, col)
+}
 // a dotted/dashed line from (x1,y1) to (x2,y2)
 function dline(g, x1, y1, x2, y2, gap, len, thick, ink, hl, emb, o) {
   const dx = x2 - x1, dy = y2 - y1
@@ -95,7 +107,36 @@ function renderPattern() {
   const line = (x1, y1, x2, y2) => dline(g, x1, y1, x2, y2, gap, len, thick, ink, hl, emb, o)
   const m = S * 2 // margin so edges are covered
 
-  if (params.pattern === 'Chevron weave') {
+  if (params.pattern === 'Goyard chevron') {
+    // The luggage-canvas "Y" weave: three families of dashed chevron arrows on a
+    // triangular lattice. Each lattice edge is a band of little ">" marks that
+    // all point the same way along their axis; where six bands cross at a node
+    // they read as the signature 6-pointed star, and the dashes alternate cream
+    // and ink like the hand-painted original.
+    const dyv = S * Math.sin(Math.PI / 3)
+    const arm = gap * 0.62 * (params.dash / 0.55)
+    const beta = 0.6
+    const cband = (x1, y1, x2, y2) => {
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy), ang = Math.atan2(dy, dx)
+      const n = Math.max(1, Math.round(L / gap))
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n, x = x1 + dx * t, y = y1 + dy * t
+        const cream = (i % 2) === 0
+        if (emb) chevron(g, x + o, y + o, ang, arm, beta, thick, 'rgba(0,0,0,0.22)')
+        chevron(g, x, y, ang, arm, beta, thick, cream ? hl : ink)
+      }
+    }
+    let j = 0
+    for (let y = -m; y < D + m; y += dyv, j++) {
+      const off = (j % 2) * S * 0.5
+      for (let x = -m; x < D + m; x += S) {
+        const px = x + off
+        cband(px, y, px + S, y)            // east
+        cband(px, y, px + S * 0.5, y - dyv) // up-right
+        cband(px, y, px - S * 0.5, y - dyv) // up-left
+      }
+    }
+  } else if (params.pattern === 'Chevron weave') {
     // triangular lattice: three dashed-line directions interlock into chevrons
     const dy = S * Math.sin(Math.PI / 3)
     let j = 0

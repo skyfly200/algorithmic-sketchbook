@@ -29,7 +29,7 @@ const PALS = {
 }
 
 const params = rt.params({
-  motif: { value: 'Birds', type: 'select', options: ['Birds', 'Fish', 'Lizards', 'Squares', 'Triangles', 'Hexagons', 'Cubes'], label: 'Tessellation' },
+  motif: { value: 'Birds', type: 'select', options: ['Birds', 'Fish', 'Lizards', 'Squares', 'Triangles', 'Hexagons', 'Cubes', 'Octagons'], label: 'Tessellation' },
   palette: { value: 'Day & Night', type: 'select', options: [...Object.keys(PALS), 'Random'], label: 'Palette' },
   scale: { value: 120, min: 50, max: 320, step: 1, label: 'Creature size' },
   plump: { value: 1, min: 0.4, max: 1.6, step: 0.02, label: 'Shape depth' },
@@ -69,6 +69,7 @@ const MOTIFS = {
   Triangles: { tiling: 'triangle', geo: true },
   Hexagons: { tiling: 'hexagon', geo: true },
   Cubes: { tiling: 'rhombille', geo: true, orient: () => 0, cls: (k) => k % 3 },
+  Octagons: { tiling: 'octagon', geo: true },
 }
 const EMPTY = []
 
@@ -182,6 +183,17 @@ function buildTiling(u) {
       for (let i = -2; i < cols; i++) {
         const cx = i * Wd + (j & 1 ? Wd / 2 : 0), cy = j * Vsp
         addTile(list, hexVerts(cx, cy, R), 0, ((i + 2 * j) % 3 + 3) % 3, R)
+      }
+    }
+  } else if (motif.tiling === 'octagon') {
+    // truncated-square tiling: octagons with little squares in the gaps
+    const c = u / (2 + Math.SQRT2)
+    const cols = Math.ceil(D / u) + 2, rows = Math.ceil(D / u) + 2
+    for (let j = -1; j < rows; j++) {
+      for (let i = -1; i < cols; i++) {
+        const X = i * u, Y = j * u
+        addTile(list, [[X + c, Y], [X + u - c, Y], [X + u, Y + c], [X + u, Y + u - c], [X + u - c, Y + u], [X + c, Y + u], [X, Y + u - c], [X, Y + c]], 0, (i + j) & 1, u)
+        addTile(list, [[X + c, Y], [X, Y + c], [X - c, Y], [X, Y - c]], 0, 2, u) // gap square (accent tone)
       }
     }
   } else {
