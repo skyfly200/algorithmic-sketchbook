@@ -29,7 +29,7 @@ const params = rt.params({
   ripple: { value: 0.3, min: 0, max: 1, step: 0.02, label: 'Ripple' },
   scale: { value: +rt.random(1.6, 3).toFixed(1), min: 0.8, max: 6, step: 0.1, label: 'Pattern scale' },
   spin: { value: 0.4, min: 0, max: 2, step: 0.05, label: 'Orbit speed' },
-  shape: { value: rt.pick(['round', 'square', 'triangle', 'hexagon', 'star', 'heart']), type: 'select', options: ['round', 'square', 'triangle', 'hexagon', 'star', 'heart'], label: 'Wire frame' },
+  shape: { value: 'round', type: 'select', options: ['round', 'square', 'triangle', 'hexagon', 'star', 'heart'], label: 'Wire frame' },
 })
 // Music: loudness stirs the film, beats slap it into ripples.
 rt.mapInput('audio.volume', 'swirl', 0.6)
@@ -121,13 +121,6 @@ const ring = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0x9aa4b8, metalness: 0.9, roughness: 0.35 }),
 )
 scene.add(ring)
-// A handle, like a bubble wand.
-const handle = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.035, 0.045, 1.6, 12),
-  new THREE.MeshStandardMaterial({ color: 0x6a7488, metalness: 0.8, roughness: 0.4 }),
-)
-handle.position.y = -2.75
-scene.add(handle)
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.5))
 const key = new THREE.PointLight(0xffffff, 80)
