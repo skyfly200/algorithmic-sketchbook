@@ -181,7 +181,7 @@ async function onPickFile(e) {
           Everything on by default.
         </p>
         <div class="mb-3">
-          <v-btn size="small" variant="tonal" :disabled="!settings.effectPool.length" @click="settings.enableAllEffects()">
+          <v-btn size="small" variant="tonal" :disabled="!settings.isFilteringEffects" @click="settings.enableAllEffects()">
             Enable all
           </v-btn>
         </div>

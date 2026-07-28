@@ -4,9 +4,12 @@ import { useRouter } from 'vue-router'
 import BrandLogo from './components/BrandLogo.vue'
 import TourOverlay from './components/TourOverlay.vue'
 import { useSettingsStore } from './stores/settings'
+import { useSketchStore } from './stores/sketches'
+import { FILTER_SLUG_SET } from './registry/filters'
 
 const router = useRouter()
 const settings = useSettingsStore()
+const sketches = useSketchStore()
 const tourActive = ref(false)
 
 // The first-open walkthrough: points at the main tools and where they live.
@@ -79,6 +82,12 @@ function finishTour(payload) {
 }
 
 onMounted(() => {
+  // Convert any legacy inclusion-list effect pool to the disabled-set model now
+  // that the full effect list is known, so newly-added effects join by default.
+  const effectSlugs = sketches.sketches
+    .filter((s) => s.embed && !s.standalone && !FILTER_SLUG_SET.has(s.slug) && s.slug !== 'bright-waves-logo')
+    .map((s) => s.slug)
+  settings.ensureMigrated(effectSlugs)
   if (settings.shouldAutoTour('app')) startTour()
 })
 </script>

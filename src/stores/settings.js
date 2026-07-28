@@ -21,22 +21,34 @@ export const SESSION_KEYS = [
 export const useSettingsStore = defineStore('settings', {
   state: () => {
     const s = load()
+    // Effect pool is stored as a *disabled* set (`effectOff`): [] means "all on",
+    // and any effect not explicitly disabled is included — so newly-added effects
+    // always join the pool by default. `legacyIn` holds a pre-migration inclusion
+    // list until we know the full effect list and can convert it (ensureMigrated).
+    let effectOff = null, legacyIn = null
+    if (Array.isArray(s.effectOff)) effectOff = s.effectOff
+    else if (Array.isArray(s.effectPool) && s.effectPool.length) legacyIn = s.effectPool
+    else effectOff = []
     return {
       tutorials: s.tutorials ?? true, // master on/off for all guided tours
       seen: s.seen ?? {}, // { app: true, patch: true, ... } — which tours have auto-run
-      effectPool: s.effectPool ?? [], // enabled effect slugs; [] means "all effects"
+      effectOff, // disabled effect slugs; [] means "all effects on"
+      legacyIn, // legacy inclusion list awaiting migration (null once migrated)
       favorites: s.favorites ?? [], // starred effect slugs — surfaced first in Featured
       persistEditors: s.persistEditors ?? true, // remember editor working state across refreshes
     }
   },
   getters: {
-    // A set of the enabled slugs, or null when everything is enabled.
-    effectPoolSet: (s) => (s.effectPool.length ? new Set(s.effectPool) : null),
     favoriteSet: (s) => new Set(s.favorites),
+    // Whether the pool is narrowed at all (used to enable/disable the "all" reset).
+    isFilteringEffects: (s) => (s.effectOff ? s.effectOff.length > 0 : !!s.legacyIn),
   },
   actions: {
     persist() {
-      localStorage.setItem(KEY, JSON.stringify({ tutorials: this.tutorials, seen: this.seen, effectPool: this.effectPool, favorites: this.favorites, persistEditors: this.persistEditors }))
+      const data = { tutorials: this.tutorials, seen: this.seen, favorites: this.favorites, persistEditors: this.persistEditors }
+      if (this.effectOff !== null) data.effectOff = this.effectOff
+      else if (this.legacyIn) data.effectPool = this.legacyIn // keep legacy until migrated
+      localStorage.setItem(KEY, JSON.stringify(data))
     },
     // Favorites: starred sketches float to the top of the Featured sort and get
     // their own section in the effect pickers.
@@ -60,22 +72,52 @@ export const useSettingsStore = defineStore('settings', {
     // hasn't been shown before.
     shouldAutoTour(view) { return this.tutorials && !this.seen[view] },
 
-    // Effect pool: an empty list is the "all effects on" sentinel.
-    isEffectEnabled(slug) { return !this.effectPool.length || this.effectPool.includes(slug) },
-    toggleEffect(slug, allSlugs) {
-      const set = this.effectPool.length ? new Set(this.effectPool) : new Set(allSlugs)
-      set.has(slug) ? set.delete(slug) : set.add(slug)
-      // collapse back to the "all" sentinel when everything ends up enabled
-      this.effectPool = set.size >= allSlugs.length ? [] : [...set]
+    // One-time conversion of a legacy inclusion list into the disabled-set model,
+    // once the full set of effect slugs is known. Anything the user had NOT
+    // enabled becomes disabled; any effect added later isn't in that frozen set,
+    // so it's enabled by default. Idempotent.
+    ensureMigrated(allSlugs) {
+      if (this.effectOff !== null) return
+      if (this.legacyIn && allSlugs && allSlugs.length) {
+        const inc = new Set(this.legacyIn)
+        this.effectOff = allSlugs.filter((sl) => !inc.has(sl))
+      } else {
+        this.effectOff = []
+      }
+      this.legacyIn = null
       this.persist()
     },
-    enableAllEffects() { this.effectPool = []; this.persist() },
-    // Filter a list of {slug} to the enabled pool (all when the pool is empty).
+    // An effect is on unless it's explicitly in the disabled set (or, pre-
+    // migration, unless the legacy inclusion list omits it).
+    isEffectEnabled(slug) {
+      if (this.effectOff) return !this.effectOff.includes(slug)
+      if (this.legacyIn) return this.legacyIn.includes(slug)
+      return true
+    },
+    toggleEffect(slug, allSlugs) {
+      if (this.effectOff === null) this.ensureMigrated(allSlugs)
+      const off = new Set(this.effectOff || [])
+      off.has(slug) ? off.delete(slug) : off.add(slug)
+      this.effectOff = [...off]
+      this.persist()
+    },
+    enableAllEffects() { this.effectOff = []; this.legacyIn = null; this.persist() },
+    // Filter a list of {slug} to the enabled pool. Disabled slugs are dropped;
+    // everything else (including brand-new effects) is kept. Never strand the
+    // feature with an empty list.
     filterToPool(list) {
-      if (!this.effectPool.length) return list
-      const set = new Set(this.effectPool)
-      const kept = list.filter((s) => set.has(s.slug))
-      return kept.length ? kept : list // never strand the feature with nothing
+      if (this.effectOff) {
+        if (!this.effectOff.length) return list
+        const off = new Set(this.effectOff)
+        const kept = list.filter((s) => !off.has(s.slug))
+        return kept.length ? kept : list
+      }
+      if (this.legacyIn) {
+        const inc = new Set(this.legacyIn)
+        const kept = list.filter((s) => inc.has(s.slug))
+        return kept.length ? kept : list
+      }
+      return list
     },
   },
 })
