@@ -1,0 +1,7 @@
+{
+  "title": "Opalescence",
+  "description": "The play-of-colour of a precious opal, from structural colour rather than pigment. Opal is a lattice of sub-micron silica spheres; each ordered patch diffracts light like a tiny grating and flashes a pure spectral colour set by the sphere spacing and the viewing angle. An animated Voronoi field stands in for those colour domains, each given its own thin-film thickness and orientation, and a thin-film interference term turns that into a spectral colour that shifts and flares as the stone tilts — only some domains firing at any angle — all floating in a milky pearl body with a scatter of pinfire sparkle. Grain, film depth, play-of-colour speed, colour intensity, milkiness, sparkle, view angle, flow and hue are live; on the beat the stone tilts and the colours flash. Runs as a fragment shader.",
+  "tags": ["opal", "iridescent", "structural-color", "shader", "audio-reactive", "generative"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-07-28"
+}
