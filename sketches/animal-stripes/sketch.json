@@ -1,7 +1,0 @@
-{
-  "title": "Animal Stripes",
-  "description": "A generator of the striped coats you find in the wild — zebra, tiger, white tiger, okapi, brindle and kudu. Real fur stripes are what biologists model as anisotropic Turing patterns: bands of pigment laid down along the body, wavering and forking into Y-branches where they spread apart. Here that's built procedurally — a directional stripe wave, domain-warped for the organic waver and given phase dislocations for the forks, then thresholded into two coat tones (with a paler belly) and finished with a little fur grain. A species preset picks the colours and character; stripe frequency, waver, forking, curve, width, softness, orientation and flow are live. Runs as a fragment shader — leave flow at zero for still fur, or drive it with the music so the coat grows and the stripes wobble on the beat.",
-  "tags": ["stripes", "animal", "fur", "turing", "pattern", "shader", "generative"],
-  "tech": ["webgl", "glsl"],
-  "created": "2026-07-28"
-}
