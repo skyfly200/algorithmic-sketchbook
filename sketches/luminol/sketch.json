@@ -1,0 +1,7 @@
+{
+  "title": "Luminol",
+  "description": "The forensic chemiluminescence reaction, in the dark. A latent blood-stain pattern — impact spatter, a cast-off arc, a smeared handprint, footprints or a pool with running drips — is invisible until a spray front sweeps across the scene; wherever it wets the stain the luminol flares up in eerie glowing blue-cyan, flashing bright and fizzing with sparks, then fading over several seconds as the reaction dies before it re-sprays and reveals it again. Turn on the mic and every beat triggers a fresh spray. Stain pattern, glow, bloom, spray speed, persistence, density, hue and sparkle are all live.",
+  "tags": ["luminol", "forensic", "chemiluminescence", "glow", "audio-reactive", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-28"
+}

@@ -1,0 +1,7 @@
+{
+  "title": "Liquid Light Show",
+  "description": "The psychedelic 'wet show' 1960s light artists projected on overhead projectors — coloured oils and inks trapped in water between clock-glasses, heated so they bloom, wobble, split and swirl into big backlit blobs of saturated colour. Translucent cells of oil drift and pulse, their organic rims wobbling, overlapping into new hues the way projected light mixes, with iridescent thin-film edges and little air bubbles riding inside. Choose backlit (additive) or ink (dye-on-light) mixing; heat, wobble, flow, saturation and blob count are live, and on the beat the whole dish blooms. Six palettes plus Random.",
+  "tags": ["liquid", "psychedelic", "oil", "retro", "audio-reactive", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-28"
+}
