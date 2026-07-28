@@ -1,0 +1,7 @@
+{
+  "title": "Reishi Spore Cloud",
+  "description": "A lacquered reishi (lingzhi) conk quietly releasing clouds of fine cocoa-brown spores from its pore surface. The spores billow out and drift on slow turbulence, backlit so the dense parts glow golden-brown like dust in a shaft of light, thinning as they rise and fade. An optional iridescent glimmer gives a fraction of the spores an oil-slick sparkle that shifts through the spectrum. Emission, turbulence, rise-versus-settle, wind, iridescence, spore hue and glow are live; the mushroom can be hidden, and with the mic on each beat sends up a fresh puff.",
+  "tags": ["mushroom", "spores", "reishi", "iridescent", "audio-reactive", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-28"
+}

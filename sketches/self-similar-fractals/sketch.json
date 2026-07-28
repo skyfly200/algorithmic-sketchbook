@@ -1,0 +1,7 @@
+{
+  "title": "Self-Similar Fractals",
+  "description": "Three classic self-similar figures that repeat their own shape at every scale. The Sierpinski triangle recursively removes the middle of each triangle; the Koch snowflake pushes a bump out of the middle of every edge; and the Barnsley fern is drawn by the chaos game — a quarter-million dots, each mapped from the last by one of four affine transforms — growing a fern frond by frond as you watch. Pick a figure, set the recursion depth (or let the fern fill in), choose a palette, and spin the whole thing; it renders once to a buffer and blits so it stays crisp while it turns. Seven palettes plus Random.",
+  "tags": ["fractal", "self-similar", "sierpinski", "koch", "geometric", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-28"
+}
