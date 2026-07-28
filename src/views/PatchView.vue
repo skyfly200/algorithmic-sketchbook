@@ -1487,12 +1487,58 @@ function updateObject(obj, geo, time) {
     if (geo.material === 'Solid') g.computeVertexNormals()
   }
 }
-// A little rotating wireframe cube for the Geometry node's own thumbnail (2D, so
-// each source node stays cheap — the real 3D render happens at the Camera).
-function drawGeoGlyph(ctx, ang, hue, warp) {
+// Cheap wireframe skeletons (verts + edge index pairs) for the Geometry node's
+// 2D thumbnail — one per shape so the preview matches the selected shape. Cached
+// per shape since evalGeo runs every frame; the real 3D render is at the Camera.
+const geoWireCache = new Map()
+function geoWire(shape) {
+  if (geoWireCache.has(shape)) return geoWireCache.get(shape)
+  const V = [], E = []
+  const ringEdges = (idx) => { for (let i = 0; i < idx.length; i++) E.push([idx[i], idx[(i + 1) % idx.length]]) }
+  const circle = (n, rad, y) => { const idx = []; for (let i = 0; i < n; i++) { const a = (2 * Math.PI * i) / n; idx.push(V.length); V.push([Math.cos(a) * rad, y, Math.sin(a) * rad]) } return idx }
+  if (shape === 'Sphere') {
+    const nlat = 4, nlon = 8, top = V.length; V.push([0, 1, 0]); const bot = V.length; V.push([0, -1, 0])
+    const grid = []
+    for (let i = 1; i < nlat; i++) { const phi = (Math.PI * i) / nlat, y = Math.cos(phi), r = Math.sin(phi); grid.push(circle(nlon, r, y)) }
+    for (const row of grid) ringEdges(row)
+    for (let j = 0; j < nlon; j++) { E.push([top, grid[0][j]]); for (let i = 0; i < grid.length - 1; i++) E.push([grid[i][j], grid[i + 1][j]]); E.push([grid[grid.length - 1][j], bot]) }
+  } else if (shape === 'Icosahedron') {
+    const t = 1.618033988749
+    const raw = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]]
+    for (const v of raw) { const L = Math.hypot(v[0], v[1], v[2]); V.push([(v[0] / L) * 1.15, (v[1] / L) * 1.15, (v[2] / L) * 1.15]) }
+    for (let i = 0; i < V.length; i++) for (let j = i + 1; j < V.length; j++) {
+      const dx = V[i][0] - V[j][0], dy = V[i][1] - V[j][1], dz = V[i][2] - V[j][2]
+      if (dx * dx + dy * dy + dz * dz < 1.6) E.push([i, j])
+    }
+  } else if (shape === 'Torus') {
+    const Rr = 0.85, tr = 0.34, nu = 12, nv = 6, grid = []
+    for (let i = 0; i < nu; i++) { const u = (2 * Math.PI * i) / nu, row = []; for (let j = 0; j < nv; j++) { const vv = (2 * Math.PI * j) / nv, cr = Rr + tr * Math.cos(vv); row.push(V.length); V.push([cr * Math.cos(u), tr * Math.sin(vv), cr * Math.sin(u)]) } grid.push(row) }
+    for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) { E.push([grid[i][j], grid[(i + 1) % nu][j]]); E.push([grid[i][j], grid[i][(j + 1) % nv]]) }
+  } else if (shape === 'Torus knot') {
+    const p = 2, q = 3, n = 48, idx = []
+    for (let i = 0; i < n; i++) { const a = (2 * Math.PI * i) / n, r = 0.6 + 0.28 * Math.cos(q * a); idx.push(V.length); V.push([r * Math.cos(p * a), 0.3 * Math.sin(q * a), r * Math.sin(p * a)]) }
+    ringEdges(idx)
+  } else if (shape === 'Cone') {
+    const apex = V.length; V.push([0, 1.1, 0]); const idx = circle(12, 1, -0.7); ringEdges(idx)
+    for (let i = 0; i < idx.length; i += 2) E.push([apex, idx[i]])
+  } else if (shape === 'Cylinder') {
+    const top = circle(12, 0.8, 0.85), bot = circle(12, 0.8, -0.85); ringEdges(top); ringEdges(bot)
+    for (let i = 0; i < top.length; i += 2) E.push([top[i], bot[i]])
+  } else if (shape === 'Plane') {
+    const n = 4, s = 1.1, grid = []
+    for (let i = 0; i <= n; i++) { const row = []; for (let j = 0; j <= n; j++) { row.push(V.length); V.push([(j / n * 2 - 1) * s, (i / n * 2 - 1) * s, 0]) } grid.push(row) }
+    for (let i = 0; i <= n; i++) for (let j = 0; j <= n; j++) { if (j < n) E.push([grid[i][j], grid[i][j + 1]]); if (i < n) E.push([grid[i][j], grid[i + 1][j]]) }
+  } else {
+    V.push([-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1])
+    E.push([0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7])
+  }
+  const w = { V, E }
+  geoWireCache.set(shape, w)
+  return w
+}
+function drawGeoGlyph(ctx, ang, hue, warp, shape) {
   const cx = W / 2, cy = H * 0.44, R = Math.min(W, H) * 0.26
-  const V = [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]]
-  const E = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]]
+  const { V, E } = geoWire(shape)
   const ca = Math.cos(ang), sa = Math.sin(ang), cb = Math.cos(ang * 0.6), sb = Math.sin(ang * 0.6)
   const proj = V.map(([x, y, z]) => {
     let X = x * ca - z * sa, Z = x * sa + z * ca
@@ -1513,7 +1559,7 @@ function evalGeo(node, octx) {
   const t = performance.now() * 0.001
   octx.fillStyle = '#0a0e14'
   octx.fillRect(0, 0, W, H)
-  drawGeoGlyph(octx, t * (0.4 + (p.spin ?? 0.5) * 0.6), p.hue ?? 160, p.displace ?? 0)
+  drawGeoGlyph(octx, t * (0.4 + (p.spin ?? 0.5) * 0.6), p.hue ?? 160, p.displace ?? 0, p.shape ?? 'Box')
   octx.fillStyle = 'rgba(230,240,255,0.85)'
   octx.font = `${Math.round(H * 0.07)}px system-ui, sans-serif`
   octx.textAlign = 'center'
