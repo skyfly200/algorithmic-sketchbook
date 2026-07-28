@@ -8,7 +8,7 @@
  * Scores are relative to the machine that ran the audit — re-run
  * `npm run perf` (dev server up) to regenerate on your own hardware.
  */
-import { readdirSync, existsSync, writeFileSync } from 'node:fs'
+import { readdirSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
 // playwright as a project devDependency if present, else a global install
@@ -35,7 +35,11 @@ const browser = await chromium.launch({
 })
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
 
-const scores = {}
+// Start from the existing scores and only overwrite what we successfully
+// measure this run, so a sketch that fails to load headless (mic/camera/heavy)
+// keeps its prior grade instead of being dropped.
+let scores = {}
+try { scores = JSON.parse(readFileSync('src/registry/perf.json', 'utf8')) } catch { scores = {} }
 for (const slug of slugs) {
   try {
     await page.goto(`${BASE}/sketches/${slug}/?quality=high`, { timeout: 15000 })
