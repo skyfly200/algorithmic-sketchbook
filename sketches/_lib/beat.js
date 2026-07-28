@@ -13,12 +13,11 @@
  *   beat.state.level     // live bass energy 0..1
  *   beat.trigger()       // fire a beat manually (click/keyboard fallback)
  */
-export function createBeatDetector({
-  threshold = 1.35, // energy must exceed rolling average by this factor
-  minEnergy = 0.12, // ignore near-silence
-  minIntervalMs = 220, // refractory period (~270 BPM ceiling)
-  pulseDecay = 0.94, // per-frame decay of state.pulse
-} = {}) {
+export function createBeatDetector(opts = {}) {
+  let threshold = opts.threshold ?? 1.35 // energy must exceed rolling average by this factor
+  let minEnergy = opts.minEnergy ?? 0.12 // ignore near-silence
+  const minIntervalMs = opts.minIntervalMs ?? 220 // refractory period (~270 BPM ceiling)
+  const pulseDecay = opts.pulseDecay ?? 0.94 // per-frame decay of state.pulse
   let audioCtx = null
   let analyser = null
   let stream = null
@@ -158,12 +157,19 @@ export function createBeatDetector({
     }
   }
 
+  // Live sensitivity: lower `threshold`/`minEnergy` makes beats trip more easily.
+  function configure(o = {}) {
+    if (typeof o.threshold === 'number') threshold = o.threshold
+    if (typeof o.minEnergy === 'number') minEnergy = o.minEnergy
+  }
+
   return {
     state,
     start,
     stop,
     update,
     trigger,
+    configure,
     // Live FFT magnitude spectrum (Uint8Array 0..255) for spectrum visualizers,
     // or null until the mic is active. `sampleRate` lets a sketch label the axis.
     getSpectrum: () => bins,

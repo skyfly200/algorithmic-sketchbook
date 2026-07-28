@@ -41,6 +41,7 @@ const showControls = ref(false)
 
 // Populated when the sketch announces its params over postMessage.
 const controls = ref(null) // { schema, values, mappings }
+const audio = ref({ gain: 1, sens: 0.5 }) // audio-input sensitivity (mirrors runtime)
 const openPanels = ref(['params']) // which controls sections are expanded
 let pendingScene = null
 
@@ -67,6 +68,7 @@ function onMessage(e) {
     values: { ...e.data.values },
     mappings: [...(e.data.mappings ?? [])],
   }
+  if (e.data.audio) audio.value = { gain: e.data.audio.gain ?? 1, sens: e.data.audio.sens ?? 0.5 }
   if (pendingScene) {
     const scene = pendingScene
     pendingScene = null
@@ -82,6 +84,14 @@ function setParam(name, value) {
 function syncMappings() {
   post({ type: 'sketch:set-mappings', mappings: controls.value.mappings })
 }
+
+function syncAudio() {
+  post({ type: 'sketch:set-audio', gain: audio.value.gain, sens: audio.value.sens })
+}
+// whether any mapping (or the sketch's own onBeat) uses audio — gate the panel
+const usesAudio = computed(() =>
+  (controls.value?.mappings ?? []).some((m) => m.source?.startsWith('audio.') || m.source?.startsWith('beat.')),
+)
 
 function addMapping() {
   const firstNumeric = Object.entries(controls.value.schema).find(
@@ -111,6 +121,7 @@ function saveScene() {
     viewer: { showFps: viewer.showFps, quality: viewer.quality },
     values: { ...controls.value.values },
     mappings: controls.value.mappings.map((m) => ({ ...m })),
+    audio: { ...audio.value },
   })
   sceneName.value = ''
 }
@@ -122,10 +133,11 @@ function applyScene(scene) {
     scene.viewer.showFps !== viewer.showFps || scene.viewer.quality !== viewer.quality
   if (willReload || !controls.value) pendingScene = scene
   viewer.update({ ...scene.viewer })
+  if (scene.audio) audio.value = { gain: scene.audio.gain ?? 1, sens: scene.audio.sens ?? 0.5 }
   if (controls.value) {
     controls.value.values = { ...controls.value.values, ...scene.values }
     controls.value.mappings = scene.mappings.map((m) => ({ ...m }))
-    post({ type: 'sketch:apply-scene', values: scene.values, mappings: scene.mappings })
+    post({ type: 'sketch:apply-scene', values: scene.values, mappings: scene.mappings, audio: scene.audio })
   }
 }
 
@@ -428,7 +440,60 @@ onUnmounted(() => {
                   label="smooth"
                   @update:model-value="(v) => { m.smooth = v; syncMappings() }"
                 />
+                <v-slider
+                  :model-value="m.curve ?? 0"
+                  :min="-1"
+                  :max="1"
+                  :step="0.05"
+                  density="compact"
+                  hide-details
+                  thumb-label
+                  label="curve"
+                  title="Response shape: right eases out (more sensitive to quiet input), left eases in (only strong input registers)"
+                  @update:model-value="(v) => { m.curve = v; syncMappings() }"
+                />
+                <v-slider
+                  :model-value="m.gate ?? 0"
+                  :min="0"
+                  :max="0.9"
+                  :step="0.02"
+                  density="compact"
+                  hide-details
+                  thumb-label
+                  label="gate"
+                  title="Ignore input below this level, then rescale above it — cuts the noise floor"
+                  @update:model-value="(v) => { m.gate = v; syncMappings() }"
+                />
               </v-card>
+
+              <!-- Audio input sensitivity (shown when something maps audio) -->
+              <div v-if="usesAudio" class="audio-sens mt-3 pt-2">
+                <div class="text-caption text-medium-emphasis mb-1">Audio input</div>
+                <v-slider
+                  :model-value="audio.sens"
+                  :min="0"
+                  :max="1"
+                  :step="0.02"
+                  density="compact"
+                  hide-details
+                  thumb-label
+                  label="sensitivity"
+                  title="How readily beats trip and how much quiet audio counts"
+                  @update:model-value="(v) => { audio.sens = v; syncAudio() }"
+                />
+                <v-slider
+                  :model-value="audio.gain"
+                  :min="0.3"
+                  :max="4"
+                  :step="0.1"
+                  density="compact"
+                  hide-details
+                  thumb-label
+                  label="gain"
+                  title="Boost the audio bands (level/low/mid/high/volume) feeding the mappings"
+                  @update:model-value="(v) => { audio.gain = v; syncAudio() }"
+                />
+              </div>
             </v-expansion-panel-text>
           </v-expansion-panel>
 
@@ -562,5 +627,8 @@ onUnmounted(() => {
 /* tighten the accordion so more controls fit */
 .controls-panel :deep(.v-expansion-panel-text__wrapper) {
   padding: 8px 12px 12px;
+}
+.audio-sens {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 </style>

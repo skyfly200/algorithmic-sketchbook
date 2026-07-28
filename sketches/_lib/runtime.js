@@ -265,6 +265,10 @@ export function createRuntime() {
   }
 
   const beat = createBeatDetector()
+  // Audio input sensitivity: `audioGain` scales the continuous audio bands
+  // (louder = fuller drive), `audioSens` (0..1) loosens the beat detector.
+  let audioGain = 1
+  let audioSens = 0.5
   // External inputs, started lazily the first time a mapping uses them.
   const midi = createMidiInput()
   const leap = createLeapInput()
@@ -387,15 +391,16 @@ export function createRuntime() {
     // listed in INPUT_SOURCES.
     if (s.startsWith('midi.cc')) return midi.state.cc[parseInt(s.slice(7), 10)] ?? 0
     if (s.startsWith('artnet.ch')) return artnet.state.ch[parseInt(s.slice(9), 10) - 1] ?? 0
+    const aud = (x) => Math.min(1, x * audioGain) // input sensitivity on the bands
     switch (s) {
       case 'audio.pulse': return beat.state.pulse
-      case 'audio.level': return beat.state.level
-      case 'audio.low': return beat.state.low
-      case 'audio.mid': return beat.state.mid
-      case 'audio.high': return beat.state.high
-      case 'audio.volume': return beat.state.volume
-      case 'audio.centroid': return beat.state.centroid
-      case 'audio.flux': return beat.state.flux
+      case 'audio.level': return aud(beat.state.level)
+      case 'audio.low': return aud(beat.state.low)
+      case 'audio.mid': return aud(beat.state.mid)
+      case 'audio.high': return aud(beat.state.high)
+      case 'audio.volume': return aud(beat.state.volume)
+      case 'audio.centroid': return beat.state.centroid // a ratio, not a level
+      case 'audio.flux': return aud(beat.state.flux)
       case 'mouse.x': return mouse.x
       case 'mouse.y': return mouse.y
       case 'touch.x': return touch.x
@@ -443,6 +448,12 @@ export function createRuntime() {
       const def = schema[m.param]
       if (!def || typeof def.min !== 'number') continue
       let v = sourceValue(m.source, now)
+      // Advanced output shaping (all sources are 0..1 here):
+      //  • gate — ignore input below a floor, then rescale [gate..1] → [0..1]
+      //  • curve — response shape: >0 eases out (boosts low input, more
+      //    sensitive), <0 eases in (only strong input registers, punchy)
+      if (m.gate > 0) v = v <= m.gate ? 0 : (v - m.gate) / (1 - m.gate)
+      if (m.curve) v = Math.pow(clamp(v, 0, 1), Math.pow(2, -m.curve * 2.5))
       const sm = m.smooth ?? 0
       if (sm > 0) {
         const key = m.source + '>' + m.param
@@ -470,15 +481,25 @@ export function createRuntime() {
     if (mappings.some((m) => m.source.startsWith('artnet.'))) artnet.start()
   }
 
+  function readyMsg() {
+    return {
+      type: 'sketch:ready', schema, values: { ...base },
+      mappings: [...mappings], defaultMappings: [...defaultMappings],
+      audio: { gain: audioGain, sens: audioSens },
+    }
+  }
+  function applyAudio(msg) {
+    if (typeof msg.gain === 'number') audioGain = Math.max(0, Math.min(6, msg.gain))
+    if (typeof msg.sens === 'number') {
+      audioSens = Math.max(0, Math.min(1, msg.sens))
+      // higher sensitivity → lower threshold & noise floor, so beats trip easily
+      beat.configure({ threshold: 1.6 - audioSens * 0.54, minEnergy: 0.2 - audioSens * 0.18 })
+    }
+  }
   function announce() {
     if (announced) return
     announced = true
-    queueMicrotask(() => {
-      window.parent?.postMessage(
-        { type: 'sketch:ready', schema, values: { ...base }, mappings: [...mappings], defaultMappings: [...defaultMappings] },
-        '*',
-      )
-    })
+    queueMicrotask(() => { window.parent?.postMessage(readyMsg(), '*') })
   }
 
   window.addEventListener('message', (e) => {
@@ -489,9 +510,12 @@ export function createRuntime() {
       applyModulation(performance.now())
     } else if (msg.type === 'sketch:set-mappings') {
       setMappings(msg.mappings)
+    } else if (msg.type === 'sketch:set-audio') {
+      applyAudio(msg)
     } else if (msg.type === 'sketch:apply-scene') {
       for (const [k, v] of Object.entries(msg.values ?? {})) if (k in base) base[k] = v
       setMappings(msg.mappings)
+      if (msg.audio) applyAudio(msg.audio)
       applyModulation(performance.now())
     } else if (msg.type === 'input:beat' && msg.state) {
       // A parent compositor (Mixer/Patch) runs its own mic and feeds beat
@@ -502,10 +526,7 @@ export function createRuntime() {
     } else if (msg.type === 'sketch:announce') {
       // A host that missed the one-shot sketch:ready (it can race the host's
       // iframe bookkeeping) asks us to say it again with the current state.
-      window.parent?.postMessage(
-        { type: 'sketch:ready', schema, values: { ...base }, mappings: [...mappings], defaultMappings: [...defaultMappings] },
-        '*',
-      )
+      window.parent?.postMessage(readyMsg(), '*')
     } else if (msg.type === 'sketch:action') {
       actions[msg.name]?.()
     } else if (msg.type === 'sketch:pause') {
