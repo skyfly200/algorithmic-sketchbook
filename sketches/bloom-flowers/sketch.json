@@ -1,6 +1,6 @@
 {
   "title": "Bloom",
-  "description": "Hyperreal generative flowers in the spirit of Flume's album art — glossy parametric petals with cup, curl and ruffle stacked in golden-angle whorls around a stamen crown, unfurling on a slow bloom cycle. Every seed grows a different cultivar.",
+  "description": "Hyperreal generative flowers in the spirit of Flume's album art — velvety parametric petals with cup, curl, ruffle and tapered tips, arranged in packed golden-angle spirals or flat whorls and unfurling on a slow bloom cycle. Pick a species — rose, dahlia, daisy, tulip, lily or poppy, or Assorted for a mixed bed — each with its own petal shape, colour character and flower centre (a florets disc, a dark poppy boss, long lily stamens, or a tucked rose heart). Every seed grows a different cultivar.",
   "tags": ["3d", "generative", "organic", "flowers", "audio-reactive"],
   "tech": [
     "three.js",
