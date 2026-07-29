@@ -439,8 +439,9 @@ function randomPatch() {
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
   const chance = (p) => Math.random() < p
 
-  // Keep locked nodes (and any wiring purely among them); randomize the rest.
-  const keptIds = new Set(nodes.filter((n) => n.locked).map((n) => n.id))
+  // Keep locked / kept nodes (and any wiring purely among them); randomize the
+  // rest. "keep" (pin) protects from reshuffle without locking editing.
+  const keptIds = new Set(nodes.filter((n) => n.locked || n.keep).map((n) => n.id))
   const keptNodes = nodes.filter((n) => keptIds.has(n.id))
   const keptEdges = edges.filter((e) => keptIds.has(e.from) && keptIds.has(e.to))
   const keptLinks = links.filter((l) => keptIds.has(l.from) && keptIds.has(l.to))
@@ -476,6 +477,17 @@ function randomPatch() {
     heads.push(prev)
   }
 
+  // Integrate any kept producer nodes that currently feed nothing: fold them
+  // into the mix as extra heads so locked/pinned nodes (and blocks) actually
+  // appear in the new routing instead of being left dangling. A kept output is
+  // reused as the sink; drop its stale inputs so we can rewire it to the mix.
+  const PRODUCER = new Set(['effect', 'filter', 'media', 'text', 'portal', 'blend', 'vcam', 'mask'])
+  const keptOut = keptNodes.find((n) => n.type === 'output')
+  if (keptOut) { for (let i = edges.length - 1; i >= 0; i--) if (edges[i].to === keptOut.id) edges.splice(i, 1) }
+  for (const kn of keptNodes) {
+    if (PRODUCER.has(kn.type) && !edges.some((e) => e.from === kn.id)) heads.push(kn)
+  }
+
   // Fold the chains together pairwise with blends (or the odd mask).
   let c = maxCol + 1
   const blends = []
@@ -493,7 +505,7 @@ function randomPatch() {
     c++
   }
 
-  const outNode = mk('output', {}, c, heads[0].y + 10)
+  const outNode = keptOut || mk('output', {}, c, heads[0].y + 10)
   edges.push({ from: heads[0].id, to: outNode.id, port: 0 })
 
   // A control node driving a blend's mix, when there is one.
@@ -546,7 +558,7 @@ function freeSpot(x, y, ignore = new Set()) {
 function rerollUpstream(node) {
   if (!node || TYPES[node.type].ins === 0) return
   const anc = ancestorsOf(node.id)
-  const rm = new Set([...anc].filter((id) => !nodeById(id)?.locked))
+  const rm = new Set([...anc].filter((id) => !nodeById(id)?.locked && !nodeById(id)?.keep))
   for (let i = nodes.length - 1; i >= 0; i--) if (rm.has(nodes[i].id)) { disposeRuntime(nodes[i].id); rtState.delete(nodes[i].id); nodes.splice(i, 1) }
   for (let i = edges.length - 1; i >= 0; i--) if (rm.has(edges[i].from) || rm.has(edges[i].to)) edges.splice(i, 1)
   for (let i = links.length - 1; i >= 0; i--) if (rm.has(links[i].from) || rm.has(links[i].node)) links.splice(i, 1)
@@ -609,9 +621,15 @@ function slugPool(n) {
   const base = n.type === 'filter' ? filterOptions.value : settings.filterToPool(effectOptions.value)
   return base.length ? base : (n.type === 'filter' ? filterOptions.value : effectOptions.value)
 }
+// Would autopilot ever mutate this node? (swap a slug, restyle a blend, or
+// reroll its upstream branch) — only those get the "keep" pin.
+function autoCanTouch(n) {
+  if (n.type === 'output') return false
+  return n.type === 'effect' || n.type === 'filter' || n.type === 'blend' || TYPES[n.type].ins > 0
+}
 function autoStep() {
   if (!autoOn.value) return
-  const swappable = nodes.filter((n) => (n.type === 'effect' || n.type === 'filter') && !n.locked)
+  const swappable = nodes.filter((n) => (n.type === 'effect' || n.type === 'filter') && !n.locked && !n.keep)
 
   // Perf watchdog: if the frame rate is under the floor, don't add churn — swap
   // the most expensive unlocked node for a cheaper sketch and stop for this tick.
@@ -626,8 +644,8 @@ function autoStep() {
     }
   }
 
-  const blends = nodes.filter((n) => n.type === 'blend' && !n.locked)
-  const branchable = nodes.filter((n) => TYPES[n.type].ins > 0 && !n.locked && edges.some((e) => e.to === n.id))
+  const blends = nodes.filter((n) => n.type === 'blend' && !n.locked && !n.keep)
+  const branchable = nodes.filter((n) => TYPES[n.type].ins > 0 && !n.locked && !n.keep && edges.some((e) => e.to === n.id))
   // weight gentle moves (slug swap, blend restyle) over the drastic branch reroll
   const bag = []
   if (swappable.length) bag.push('swap', 'swap', 'swap')
@@ -3425,6 +3443,7 @@ onBeforeUnmount(() => {
           <span v-else class="node-name" title="Double-click to rename">{{ nodeTitle(n) }}</span>
           <v-icon v-if="nodeSlow(n)" icon="mdi-alert" size="16" class="node-warn" :title="nodeSlowReason(n)" @pointerdown.stop />
           <v-icon v-if="TYPES[n.type].ins > 0" icon="mdi-backup-restore" size="13" class="node-lock" title="Replace the whole branch feeding this node" @pointerdown.stop @click="rerollUpstream(n)" />
+          <v-icon v-if="autoCanTouch(n)" :icon="n.keep ? 'mdi-pin' : 'mdi-pin-outline'" size="13" class="node-lock" :class="{ 'node-keep-on': n.keep }" :title="n.keep ? 'Kept — Autopilot won’t reshuffle this (click to allow)' : 'Keep — protect from Autopilot reshuffle'" @pointerdown.stop @click="n.keep = !n.keep; persist()" />
           <v-icon :icon="n.locked ? 'mdi-lock' : 'mdi-lock-open-variant-outline'" size="13" class="node-lock" :title="n.locked ? 'Locked — click to unlock' : 'Lock this node'" @pointerdown.stop @click="n.locked = !n.locked; persist()" />
           <v-icon v-if="!n.locked" icon="mdi-close" size="14" class="node-close" @pointerdown.stop @click="removeNode(n.id)" />
         </div>
@@ -3833,6 +3852,7 @@ onBeforeUnmount(() => {
 @keyframes warnPulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
 .node-lock { cursor: pointer; color: rgba(0,0,0,0.55); margin-right: 2px; }
 .node-lock:hover { color: rgba(0,0,0,0.85); }
+.node-keep-on { color: #2b6cff; }
 /* A locked node resists moving/removal and its params can't be edited. */
 .node--locked { outline: 1px dashed rgba(124,140,255,0.5); }
 .node--locked .node-head { cursor: default; }
