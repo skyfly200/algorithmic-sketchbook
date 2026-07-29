@@ -2875,8 +2875,10 @@ async function importPatch() {
   savedRoutings.value.push({ id: Date.now().toString(36), name: data.name || 'Imported patch', nodes: patch.nodes, edges: patch.edges || [], links: patch.links || [] })
   persistSaved()
 }
-function exportShow() {
-  downloadJson({ type: 'sketchbook-show', version: 1, cues: JSON.parse(JSON.stringify(cues)) }, `${fileSlug('show')}.show.json`)
+function exportShow(show = null) {
+  const src = show && show.cues ? show.cues : cues
+  const name = show?.name || 'show'
+  downloadJson({ type: 'sketchbook-show', version: 1, name, mode: show?.mode ?? showMode.value, cues: JSON.parse(JSON.stringify(src)) }, `${fileSlug(name)}.show.json`)
 }
 async function importShow() {
   const data = await pickJsonFile()
@@ -2889,6 +2891,39 @@ async function importShow() {
 }
 function alertBadFile() {
   console.warn('Patch: could not read that JSON file')
+}
+
+// --- named show files: save a set of cues (+ mode) to a persisted library ---
+const SHOWS_KEY = 'sketchbook-patch-shows'
+function loadShows() { try { return JSON.parse(localStorage.getItem(SHOWS_KEY)) || [] } catch { return [] } }
+const savedShows = ref(loadShows())
+const newShowName = ref('')
+function persistShows() { localStorage.setItem(SHOWS_KEY, JSON.stringify(savedShows.value)) }
+function saveShowAs() {
+  if (!cues.length) { showToast('No cues to save yet'); return }
+  const name = newShowName.value.trim() || `Show ${savedShows.value.length + 1}`
+  savedShows.value.push({
+    id: Date.now().toString(36),
+    name,
+    mode: showMode.value,
+    cues: JSON.parse(JSON.stringify(cues)),
+  })
+  persistShows()
+  newShowName.value = ''
+  showToast(`Saved show “${name}”`)
+}
+function loadShowFile(s) {
+  cues.splice(0, cues.length, ...JSON.parse(JSON.stringify(s.cues || [])))
+  if (s.mode) showMode.value = s.mode
+  activeCue.value = -1
+  curSeg = -1
+  stopShow()
+  persistShow()
+  showToast(`Loaded show “${s.name}”`)
+}
+function deleteShowFile(s) {
+  const i = savedShows.value.findIndex((x) => x.id === s.id)
+  if (i >= 0) { savedShows.value.splice(i, 1); persistShows() }
 }
 
 // --- guided tour -------------------------------------------------------------
@@ -3377,7 +3412,28 @@ onBeforeUnmount(() => {
         </div>
         <button class="show-capture" title="Capture the current patch as a new cue" @click="captureCue">＋ Capture cue</button>
         <span class="show-spacer" />
-        <v-btn icon="mdi-download" size="x-small" variant="text" :disabled="!cues.length" title="Export show as a .json file" @click="exportShow" />
+        <!-- Named show files: save the current cue set to a persisted library -->
+        <v-menu :close-on-content-click="false" location="bottom end">
+          <template #activator="{ props }">
+            <v-btn v-bind="props" size="x-small" variant="tonal" prepend-icon="mdi-content-save-outline" class="mr-1">Shows</v-btn>
+          </template>
+          <v-card class="pa-2" min-width="260">
+            <div class="d-flex ga-1 mb-2">
+              <v-text-field v-model="newShowName" density="compact" hide-details placeholder="Name this show" @keyup.enter="saveShowAs" />
+              <v-btn size="small" variant="tonal" :disabled="!cues.length" prepend-icon="mdi-content-save" @click="saveShowAs">Save</v-btn>
+            </div>
+            <v-list density="compact" max-height="300">
+              <v-list-item v-for="s in savedShows" :key="s.id" :title="s.name" :subtitle="`${s.cues.length} cue${s.cues.length === 1 ? '' : 's'} · ${s.mode}`" @click="loadShowFile(s)">
+                <template #append>
+                  <v-icon icon="mdi-download" size="16" class="mr-2" title="Export this show as a file" @click.stop="exportShow(s)" />
+                  <v-icon icon="mdi-delete" size="16" title="Delete" @click.stop="deleteShowFile(s)" />
+                </template>
+              </v-list-item>
+              <v-list-item v-if="!savedShows.length" title="No saved shows yet" disabled />
+            </v-list>
+          </v-card>
+        </v-menu>
+        <v-btn icon="mdi-download" size="x-small" variant="text" :disabled="!cues.length" title="Export current show as a .json file" @click="exportShow()" />
         <v-btn icon="mdi-upload" size="x-small" variant="text" title="Import a show .json file" @click="importShow" />
         <v-btn icon="mdi-close" size="x-small" variant="text" @click="showOpen = false" />
       </div>
