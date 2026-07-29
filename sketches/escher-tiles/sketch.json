@@ -1,5 +1,5 @@
 {
-  "title": "Escher Tiles",
+  "title": "Tiles",
   "description": "A polygon-tessellation studio in the spirit of M.C. Escher. Pick a base tiling — squares, triangles, hexagons, tumbling-block rhombi or octagon-and-square — then choose how the edges behave: leave them as clean straight polygons, or deform them into arcs, zigzags or scallops. The deformation is keyed to each shared edge, so neighbouring tiles always lock together with no gaps, the translation trick behind Escher's interlocking creatures. Every tile of the block can then be filled with a polygon motif: concentric rings, radial fans, pinwheels, nested stars or midpoint subdivisions, so the whole field reads as a dense weave of polygons. Two-tone, multi, gradient, rainbow or outline colouring across nine palettes plus Random; edge depth, arcs-per-edge, pattern density and irregularity are live; it renders once and holds, re-deals on a new seed, and the whole field can be rotated.",
   "tags": ["tessellation", "escher", "geometric", "polygon", "pattern", "generative"],
   "tech": ["canvas2d"],
