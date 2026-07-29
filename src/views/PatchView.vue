@@ -169,6 +169,7 @@ const PARAM_RANGES = {
 const TEXT_FONTS = ['sans-serif', 'serif', 'monospace', 'system-ui', 'cursive']
 // Portal destination shapes + aspect-ratio presets (for lock-proportions).
 const PORTAL_SHAPES = ['rectangle', 'ellipse', 'triangle', 'diamond', 'hexagon', 'star', 'heart']
+const MASK_MODES = ['multiply', 'screen', 'lighten', 'darken', 'overlay', 'add']
 const ASPECTS = { '1:1': 1, '4:3': 4 / 3, '3:2': 3 / 2, '16:9': 16 / 9, '2:1': 2, '9:16': 9 / 16, '3:4': 3 / 4 }
 // Build a path for a portal shape inscribed in the rect (x,y,w,h).
 function portalShapePath(ctx, shape, x, y, w, h) {
@@ -344,7 +345,7 @@ function addNode(type) {
             : type === 'input'
               ? { source: 'audio.volume', scale: 1, offset: 0, invert: false, curve: 'linear' }
               : type === 'xy'
-                ? { x: 0.5, y: 0.5 }
+                ? { x: 0.5, y: 0.5, recenter: false }
                 : type === 'tracker'
                   ? { thresh: 0.5, smooth: 0.7 }
                   : type === 'media'
@@ -359,7 +360,9 @@ function addNode(type) {
                             ? { shape: 'Icosahedron', material: 'Solid', hue: 160, displace: 0.25, freq: 2, spin: 0.5, detail: 2 }
                             : type === 'vcam'
                               ? { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, spin: true }
-                              : {},
+                              : type === 'mask'
+                                ? { mode: 'multiply', strength: 1, invert: false }
+                                : {},
   })
   // Polygon Mask nodes lock by default so a mapped mask isn't nudged or
   // randomized by accident — its corners are still editable via "Edit masks".
@@ -1020,6 +1023,10 @@ function xyDown(n, e) {
 }
 function xyMove(n, e) {
   if (e.buttons) xySet(n, e)
+}
+function xyUp(n) {
+  if (n.params.recenter) { n.params.x = 0.5; n.params.y = 0.5 } // spring back to centre
+  persist()
 }
 function startWire(n, e, port = 0) {
   e.stopPropagation()
@@ -1725,8 +1732,21 @@ function evalNode(node) {
     const mask = inputCanvas(node, 1)
     if (content) octx.drawImage(content, 0, 0, W, H)
     if (mask) {
-      octx.globalCompositeOperation = 'multiply'
-      octx.drawImage(mask, 0, 0, W, H)
+      let m = mask
+      if (node.params.invert) {
+        // build an inverted matte (white − mask) in the node's temp canvas
+        const t = s.matte || (s.matte = document.createElement('canvas'))
+        if (t.width !== W || t.height !== H) { t.width = W; t.height = H }
+        const tx = t.getContext('2d')
+        tx.globalCompositeOperation = 'source-over'; tx.fillStyle = '#fff'; tx.fillRect(0, 0, W, H)
+        tx.globalCompositeOperation = 'difference'; tx.drawImage(mask, 0, 0, W, H)
+        tx.globalCompositeOperation = 'source-over'
+        m = t
+      }
+      octx.globalAlpha = node.params.strength ?? 1
+      octx.globalCompositeOperation = node.params.mode === 'add' ? 'lighter' : (node.params.mode || 'multiply')
+      octx.drawImage(m, 0, 0, W, H)
+      octx.globalAlpha = 1
       octx.globalCompositeOperation = 'source-over'
     }
   } else if (node.type === 'shape') {
@@ -3284,7 +3304,7 @@ onBeforeUnmount(() => {
           :style="{ height: THUMB_H + 'px', cursor: n.type === 'xy' ? 'crosshair' : undefined, touchAction: n.type === 'xy' ? 'none' : undefined }"
           @pointerdown="n.type === 'xy' && xyDown(n, $event)"
           @pointermove="n.type === 'xy' && xyMove(n, $event)"
-          @pointerup="n.type === 'xy' && persist()"
+          @pointerup="n.type === 'xy' && xyUp(n)"
         />
 
         <!-- input ports (centered on the wire endpoint; diamond = matte/mask) -->
@@ -3531,6 +3551,29 @@ onBeforeUnmount(() => {
               <button class="shape-btn" @pointerdown.stop @click="resetShape(n.id)">reset</button>
             </div>
             <div class="shape-hint">Turn on “edit points”, then drag the corners on the output. Double-click an edge to add a point, a point to remove it.</div>
+          </template>
+
+          <template v-if="n.type === 'mask'">
+            <div class="media-hint">Wire the picture into <b>content</b> and a matte into <b>mask</b>.</div>
+            <label>combine
+              <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
+                <option v-for="m in MASK_MODES" :key="m" :value="m">{{ m }}</option>
+              </select>
+            </label>
+            <label>strength <input type="range" min="0" max="1" step="0.02" :value="n.params.strength ?? 1" @input="n.params.strength = +$event.target.value; persist()" @pointerdown.stop /></label>
+            <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert matte</label>
+          </template>
+
+          <template v-if="n.type === 'xy'">
+            <div class="media-hint">Drag on the pad above to set X / Y — its output jacks drive linked params.</div>
+            <label class="chk"><input type="checkbox" v-model="n.params.recenter" @change="persist" @pointerdown.stop /> spring back to centre on release</label>
+            <div class="shape-row">
+              <button class="shape-btn" @pointerdown.stop @click="n.params.x = 0.5; n.params.y = 0.5; persist()">reset to centre</button>
+            </div>
+          </template>
+
+          <template v-if="n.type === 'output'">
+            <div class="media-hint">The final mix. Wire your last node into the port on the left — this is what the show displays.</div>
           </template>
         </div>
       </div>
