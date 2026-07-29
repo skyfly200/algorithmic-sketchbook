@@ -63,7 +63,8 @@ const showControls = ref(false)
 
 // Populated when the sketch announces its params over postMessage.
 const controls = ref(null) // { schema, values, mappings }
-const audio = ref({ gain: 1, sens: 0.5 }) // audio-input sensitivity (mirrors runtime)
+const audio = ref({ gain: 1, sens: 0.5, reactive: true }) // audio-input settings (mirrors runtime)
+const hasAudioDefaults = ref(false) // does the sketch ship any built-in audio reactivity?
 const openPanels = ref(['params']) // which controls sections are expanded
 let pendingScene = null
 
@@ -90,7 +91,9 @@ function onMessage(e) {
     values: { ...e.data.values },
     mappings: [...(e.data.mappings ?? [])],
   }
-  if (e.data.audio) audio.value = { gain: e.data.audio.gain ?? 1, sens: e.data.audio.sens ?? 0.5 }
+  if (e.data.audio) audio.value = { gain: e.data.audio.gain ?? 1, sens: e.data.audio.sens ?? 0.5, reactive: e.data.audio.reactive ?? true }
+  const isAudio = (m) => m.source?.startsWith('audio.') || m.source?.startsWith('beat.')
+  hasAudioDefaults.value = (e.data.defaultMappings ?? []).some(isAudio)
   if (pendingScene) {
     const scene = pendingScene
     pendingScene = null
@@ -111,12 +114,15 @@ function syncMappings() {
 }
 
 function syncAudio() {
-  post({ type: 'sketch:set-audio', gain: audio.value.gain, sens: audio.value.sens })
+  post({ type: 'sketch:set-audio', gain: audio.value.gain, sens: audio.value.sens, reactive: audio.value.reactive })
 }
 // whether any mapping (or the sketch's own onBeat) uses audio — gate the panel
 const usesAudio = computed(() =>
   (controls.value?.mappings ?? []).some((m) => m.source?.startsWith('audio.') || m.source?.startsWith('beat.')),
 )
+// show the audio section whenever the sketch can react to audio at all, so the
+// built-in-reactivity toggle stays reachable even after it strips the mappings
+const audioCapable = computed(() => usesAudio.value || hasAudioDefaults.value)
 
 function addMapping() {
   const firstNumeric = Object.entries(controls.value.schema).find(
@@ -500,10 +506,20 @@ onUnmounted(() => {
                 />
               </v-card>
 
-              <!-- Audio input sensitivity (shown when something maps audio) -->
-              <div v-if="usesAudio" class="audio-sens mt-3 pt-2">
+              <!-- Audio input (shown when the sketch can react to audio) -->
+              <div v-if="audioCapable" class="audio-sens mt-3 pt-2">
                 <div class="text-caption text-medium-emphasis mb-1">Audio input</div>
+                <v-switch
+                  :model-value="audio.reactive"
+                  label="Built-in audio reactivity"
+                  density="compact"
+                  hide-details
+                  color="primary"
+                  title="Off suppresses the sketch's own audio mappings and beat response, so you can wire your own input routings"
+                  @update:model-value="(v) => { audio.reactive = v; syncAudio() }"
+                />
                 <v-slider
+                  v-if="audio.reactive && usesAudio"
                   :model-value="audio.sens"
                   :min="0"
                   :max="1"
@@ -516,6 +532,7 @@ onUnmounted(() => {
                   @update:model-value="(v) => { audio.sens = v; syncAudio() }"
                 />
                 <v-slider
+                  v-if="audio.reactive && usesAudio"
                   :model-value="audio.gain"
                   :min="0.3"
                   :max="4"

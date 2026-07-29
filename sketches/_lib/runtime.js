@@ -269,6 +269,10 @@ export function createRuntime() {
   // (louder = fuller drive), `audioSens` (0..1) loosens the beat detector.
   let audioGain = 1
   let audioSens = 0.5
+  // Master switch for the sketch's *built-in* audio reactivity: when off, the
+  // sketch's own default audio mappings and onBeat handlers are suppressed, so
+  // you can wire your own input routings without the baked ones fighting.
+  let audioReactive = true
   // External inputs, started lazily the first time a mapping uses them.
   const midi = createMidiInput()
   const leap = createLeapInput()
@@ -485,11 +489,26 @@ export function createRuntime() {
     return {
       type: 'sketch:ready', schema, values: { ...base },
       mappings: [...mappings], defaultMappings: [...defaultMappings],
-      audio: { gain: audioGain, sens: audioSens },
+      audio: { gain: audioGain, sens: audioSens, reactive: audioReactive },
+    }
+  }
+  const isAudioSrc = (s) => s.startsWith('audio.') || s.startsWith('beat.')
+  // Toggle the built-in reactivity: off drops the sketch's *default* audio
+  // mappings (leaving any you added), on restores the missing ones. onBeat is
+  // gated separately so the sketch's own beat handlers go quiet too.
+  function setAudioReactive(on) {
+    if (on === audioReactive) return
+    audioReactive = on
+    if (!on) {
+      setMappings(mappings.filter((m) => !(isAudioSrc(m.source) && defaultMappings.some((d) => d.source === m.source && d.param === m.param))))
+    } else {
+      const missing = defaultMappings.filter((d) => isAudioSrc(d.source) && !mappings.some((m) => m.source === d.source && m.param === d.param))
+      setMappings([...mappings, ...missing])
     }
   }
   function applyAudio(msg) {
     if (typeof msg.gain === 'number') audioGain = Math.max(0, Math.min(6, msg.gain))
+    if (typeof msg.reactive === 'boolean') setAudioReactive(msg.reactive)
     if (typeof msg.sens === 'number') {
       audioSens = Math.max(0, Math.min(1, msg.sens))
       // higher sensitivity → lower threshold & noise floor, so beats trip easily
@@ -554,7 +573,9 @@ export function createRuntime() {
 
     onBeat(cb) {
       if (!preview) mountMicButton(beat)
-      beat.onBeat(cb)
+      // gated by the built-in-reactivity switch, so turning it off quiets the
+      // sketch's own beat response too (not just its default mappings)
+      beat.onBeat((e) => { if (audioReactive) cb(e) })
     },
 
     // Opt in to accelerometer/gyro without a mapping (prompts on iOS).
