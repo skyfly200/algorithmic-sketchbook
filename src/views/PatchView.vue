@@ -948,22 +948,58 @@ function endLink(node, param) {
   persist()
 }
 function removeLink(idx) {
+  const l = links[idx]
   links.splice(idx, 1)
+  // Restore the knob's base value to a freed effect param (we'd been posting a
+  // live value; without the link the sketch should sit at the knob again).
+  if (l) {
+    const tgt = nodes.find((n) => n.id === l.node)
+    if (tgt && (tgt.type === 'effect' || tgt.type === 'filter')) {
+      const c = effectControls.get(tgt.id)
+      if (c && l.param in c.values) postToEffect(tgt.id, { type: 'sketch:set-param', name: l.param, value: c.values[l.param] })
+    }
+  }
   persist()
 }
-// Push each Input node's live value onto the params it's wired to.
+// Live (post-modulation) values for wired params, rebuilt each frame. The
+// renderer reads these via pval() while the node's own knob keeps the *base*
+// value — so a wired param behaves like modular synthesis: the knob sets the
+// operating point and the input signal modulates up from it, and you can still
+// turn the knob while it's patched.
+const liveParams = new Map() // nodeId -> { param: liveValue }
+function pval(n, key) {
+  const lv = liveParams.get(n.id)
+  return lv && key in lv ? lv[key] : n.params[key]
+}
 function applyLinks(now) {
+  liveParams.clear()
   for (const l of links) {
     const from = nodes.find((n) => n.id === l.from)
     const tgt = nodes.find((n) => n.id === l.node)
     if (!from || !tgt || outKind(from) !== 'control') continue
-    const v = controlValue(from, l.srcPort ?? 0, now)
+    const v = controlValue(from, l.srcPort ?? 0, now) // 0..1 control signal
+    const depth = l.depth ?? 1
     if (tgt.type === 'effect' || tgt.type === 'filter') {
       const spec = effectControls.get(tgt.id)?.schema?.[l.param]
-      if (spec && typeof spec.min === 'number') setEffectParam(tgt.id, l.param, spec.min + v * (spec.max - spec.min))
+      if (spec && typeof spec.min === 'number') {
+        const span = spec.max - spec.min || 1
+        const base = effectControls.get(tgt.id).values[l.param] // the knob value
+        const bn = (base - spec.min) / span
+        const live = spec.min + clamp(bn + v * depth, 0, 1) * span
+        // post the live value only — never write it back into the knob's value
+        postToEffect(tgt.id, { type: 'sketch:set-param', name: l.param, value: live })
+      }
     } else {
       const rng = PARAM_RANGES[tgt.type]?.[l.param]
-      if (rng) tgt.params[l.param] = rng[0] + v * (rng[1] - rng[0])
+      if (rng) {
+        const span = rng[1] - rng[0] || 1
+        const base = tgt.params[l.param] ?? rng[0]
+        const bn = (base - rng[0]) / span
+        const live = rng[0] + clamp(bn + v * depth, 0, 1) * span
+        let m = liveParams.get(tgt.id)
+        if (!m) { m = {}; liveParams.set(tgt.id, m) }
+        m[l.param] = live
+      }
     }
   }
 }
@@ -1781,19 +1817,21 @@ function evalNode(node) {
     }
   } else if (node.type === 'text') {
     const p = node.params
+    // numeric params read through pval() so wired inputs modulate them live
+    const hue = pval(node, 'hue')
     if (p.bg) { octx.fillStyle = '#000'; octx.fillRect(0, 0, W, H) }
     else octx.clearRect(0, 0, W, H)
-    const px = Math.max(4, p.size * H)
+    const px = Math.max(4, pval(node, 'size') * H)
     octx.save()
-    octx.translate(p.x * W, p.y * H)
-    octx.rotate(((p.rotate ?? 0) * Math.PI) / 180)
-    octx.font = `${p.italic ? 'italic ' : ''}${Math.round(p.weight)} ${px}px "${p.font || 'sans-serif'}"`
+    octx.translate(pval(node, 'x') * W, pval(node, 'y') * H)
+    octx.rotate(((pval(node, 'rotate') ?? 0) * Math.PI) / 180)
+    octx.font = `${p.italic ? 'italic ' : ''}${Math.round(pval(node, 'weight'))} ${px}px "${p.font || 'sans-serif'}"`
     octx.textAlign = 'center'
     octx.textBaseline = 'middle'
-    octx.fillStyle = hsvCss(p.hue, p.sat ?? 82, p.val ?? 96)
-    if (p.glow > 0.01) { octx.shadowColor = hsvCss(p.hue, 100, 100); octx.shadowBlur = px * 0.4 * p.glow }
+    octx.fillStyle = hsvCss(hue, p.sat ?? 82, p.val ?? 96)
+    if (p.glow > 0.01) { octx.shadowColor = hsvCss(hue, 100, 100); octx.shadowBlur = px * 0.4 * p.glow }
     // letter-spacing (tracking) drawn glyph-by-glyph; multiple lines stacked
-    const track = (p.tracking ?? 0) * px
+    const track = (pval(node, 'tracking') ?? 0) * px
     const lines = String(p.text ?? '').split('\n')
     const lineH = px * 1.18
     const top = -(lineH * (lines.length - 1)) / 2
@@ -1815,10 +1853,10 @@ function evalNode(node) {
     const input = inputCanvas(node, 0)
     if (input) octx.drawImage(input, 0, 0, W, H)
     const p = node.params
-    const sx = p.srcX * W, sy = p.srcY * H, sw = p.srcW * W, sh = p.srcH * H
-    const dx = p.dstX * W, dy = p.dstY * H
-    let dw = p.dstW * W
-    let dh = p.dstH * H
+    const sx = pval(node, 'srcX') * W, sy = pval(node, 'srcY') * H, sw = pval(node, 'srcW') * W, sh = pval(node, 'srcH') * H
+    const dx = pval(node, 'dstX') * W, dy = pval(node, 'dstY') * H
+    let dw = pval(node, 'dstW') * W
+    let dh = pval(node, 'dstH') * H
     // Lock proportions: derive the destination height from its width so the
     // portal keeps a chosen aspect ratio (in real pixels).
     if (p.lockAspect) dh = dw / (ASPECTS[p.aspect] ?? 1)
@@ -1869,7 +1907,7 @@ function evalNode(node) {
     const pts = node.params.points || []
     if (content && pts.length >= 3) {
       const invert = !!node.params.invert
-      const feather = node.params.feather || 0
+      const feather = pval(node, 'feather') || 0
       octx.globalCompositeOperation = 'destination-in'
       if (feather > 0.001) {
         // Soft edge: build a blurred matte and keep the content under it.
@@ -1891,12 +1929,13 @@ function evalNode(node) {
       octx.globalCompositeOperation = 'source-over'
     }
   } else if (node.type === 'blend') {
-    const a = inputCanvas(node, 0)
-    const b = inputCanvas(node, 1)
+    // "swap" flips which input is the base and which is composited on top.
+    const a = inputCanvas(node, node.params.swap ? 1 : 0)
+    const b = inputCanvas(node, node.params.swap ? 0 : 1)
     if (a) octx.drawImage(a, 0, 0, W, H)
     if (b) {
       octx.globalCompositeOperation = node.params.mode === 'add' ? 'lighter' : node.params.mode
-      octx.globalAlpha = node.params.mix ?? 1 // top input's contribution
+      octx.globalAlpha = pval(node, 'mix') ?? 1 // top input's contribution (modulated)
       octx.drawImage(b, 0, 0, W, H)
       octx.globalAlpha = 1
       octx.globalCompositeOperation = 'source-over'
@@ -3443,7 +3482,7 @@ onBeforeUnmount(() => {
         :data-node-id="n.id"
         class="node"
         :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked, 'node--slow': nodeSlow(n) }"
-        :style="{ left: n.x + 'px', top: n.y + 'px', width: nodeW(n) + 'px', zIndex: selected === n.id || n.id === frontNodeId ? 6 : (selectedSet.has(n.id) ? 5 : undefined) }"
+        :style="{ left: n.x + 'px', top: n.y + 'px', width: nodeW(n) + 'px', zIndex: selected === n.id || n.id === frontNodeId ? 20 : (selectedSet.has(n.id) ? 14 : undefined) }"
         @pointerdown.capture="frontNodeId = n.id"
       >
         <div
@@ -3624,6 +3663,7 @@ onBeforeUnmount(() => {
               <option v-for="b in BLENDS" :key="b" :value="b">{{ b }}</option>
             </select>
             <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" :data-jack-node="n.id" data-jack-param="mix" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <NumSlider :min="0" :max="1" :step="0.02" :model-value="n.params.mix ?? 1" @update:model-value="n.params.mix = $event" @commit="persist" /></label>
+            <label class="chk"><input type="checkbox" v-model="n.params.swap" @change="persist" @pointerdown.stop /> swap A/B order</label>
           </template>
           <template v-if="n.type === 'geo'">
             <label>shape
