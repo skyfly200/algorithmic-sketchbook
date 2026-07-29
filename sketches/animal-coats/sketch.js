@@ -18,7 +18,7 @@
  */
 import { createRuntime } from '../_lib/runtime.js'
 
-const MODE = { stripes: 0, spots: 1, rosettes: 2, giraffe: 3 }
+const MODE = { stripes: 0, spots: 1, rosettes: 2, giraffe: 3, blotch: 4 }
 const PRESETS = {
   Zebra: { mode: 'stripes', coat: '#f3efe6', mark: '#141109', mark2: '#141109', belly: '#ece7db', freq: 0.85, warp: 1.15, fork: 0.85, curve: 1.1, width: 0.5, inner: 0 },
   Tiger: { mode: 'stripes', coat: '#d67b2b', mark: '#180f06', mark2: '#180f06', belly: '#efe4cf', freq: 1.0, warp: 0.8, fork: 0.6, curve: 0.7, width: 0.64, inner: 0 },
@@ -28,11 +28,12 @@ const PRESETS = {
   Leopard: { mode: 'rosettes', coat: '#cfa25a', mark: '#241a0f', mark2: '#a9752f', belly: '#ecdcbc', freq: 2.0, warp: 0.6, fork: 0.7, curve: 0, width: 0.5, inner: 0 },
   Jaguar: { mode: 'rosettes', coat: '#c8913f', mark: '#20140a', mark2: '#9d661f', belly: '#e6d3a2', freq: 1.4, warp: 0.5, fork: 0.6, curve: 0, width: 0.56, inner: 1 },
   Giraffe: { mode: 'giraffe', coat: '#b0742f', mark: '#f0e6cf', mark2: '#f0e6cf', belly: '#9a6428', freq: 1.0, warp: 0.7, fork: 0.3, curve: 0, width: 0.5, inner: 0 },
+  Dartfrog: { mode: 'blotch', coat: '#1f7ae0', mark: '#0a0d12', mark2: '#0a0d12', belly: '#123a86', freq: 1.2, warp: 0.9, fork: 0.5, curve: 0, width: 0.52, inner: 0 },
 }
 const rt = createRuntime()
 const params = rt.params({
   species: { value: 'Zebra', type: 'select', options: Object.keys(PRESETS), label: 'Species' },
-  pattern: { value: 'Auto', type: 'select', options: ['Auto', 'Stripes', 'Spots', 'Rosettes', 'Giraffe'], label: 'Pattern' },
+  pattern: { value: 'Auto', type: 'select', options: ['Auto', 'Stripes', 'Spots', 'Rosettes', 'Giraffe', 'Blotch'], label: 'Pattern' },
   frequency: { value: 14, min: 3, max: 44, step: 0.5, label: 'Scale / density' },
   warp: { value: 1, min: 0, max: 2.2, step: 0.05, label: 'Waver' },
   forking: { value: 0.7, min: 0, max: 1.6, step: 0.05, label: 'Forking / break' },
@@ -133,12 +134,18 @@ void main() {
       col = mix(base, u_mark2, centre * 0.85);
       col = mix(col, u_mark, ring);
       if (u_inner > 0.5) col = mix(col, u_mark, smoothstep(0.06, 0.02, d)); // jaguar inner spot
-    } else {
+    } else if (u_mode < 3.5) {
       // giraffe: brown cells with pale cracks
       float bw = 0.02 + u_width * 0.1;
       float border = smoothstep(bw + e, bw - e, ed);
       vec3 patch = u_coat * (0.78 + 0.3 * cr);
       col = mix(patch, u_mark, border);
+    } else {
+      // blotch (dart frog): bold irregular dark patches from thresholded noise
+      float n = fbm(cq * 1.5) * 0.65 + fbm(cq * 3.1 + 4.0) * 0.35;
+      float thr = 0.5 - (u_width - 0.5) * 0.5;
+      float be = u_crisp * 0.6 + fwidth(n) * 1.5;
+      col = mix(base, u_mark, smoothstep(thr - be, thr + be, n));
     }
   }
 
