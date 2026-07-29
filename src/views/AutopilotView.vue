@@ -85,6 +85,11 @@ const evolveOptions = ref(savedSet.evolveOptions ?? true) // auto-drift each lay
 const useCamera = ref(savedSet.useCamera ?? true)
 const useMedia = ref(savedSet.useMedia ?? true)
 const useAudioMap = ref(savedSet.useAudioMap ?? true)
+// Which layer/node types the router is allowed to reach for. Effects are the
+// base and always on; filters, live camera, media clips and text captions can
+// each be switched off so the show only uses the node types you want.
+const useFilters = ref(savedSet.useFilters ?? true)
+const useText = ref(savedSet.useText ?? false)
 // Smooth changes: route every committed change through a final blend step — a
 // frozen snapshot of the outgoing composite laid over the top and cross-faded
 // out — so even hard swaps (feed switch, restyle, a whole new branch) dissolve
@@ -117,6 +122,7 @@ function persistSettings() {
     resolution: resolution.value, evolveMode: evolveMode.value, showNotes: showNotes.value,
     evolveOptions: evolveOptions.value, sections: { ...sections },
     useCamera: useCamera.value, useMedia: useMedia.value, useAudioMap: useAudioMap.value,
+    useFilters: useFilters.value, useText: useText.value,
     smoothChanges: smoothChanges.value,
   }))
 }
@@ -448,6 +454,7 @@ function opRemove() {
   return true
 }
 function opAddFilter() {
+  if (!useFilters.value) return false
   const s = pickSketch(filterPool.value, perfBudget.value - stackCost())
   if (!s) return false
   const l = makeLayer(s.slug, 'filter', 'normal', 1)
@@ -456,6 +463,25 @@ function opAddFilter() {
   if (chance(0.5)) l.feed = pickFeed()
   insertLayer(l)
   say(l.feed ? `filter ${titleOf(s.slug)} · ${feedLabel(l.feed)}` : `adding filter ${titleOf(s.slug)}`)
+  return true
+}
+
+// --- text captions: a lightweight overlay node the router can flash up -------
+const WORDS = ['DREAM', 'FLOW', 'PULSE', 'GLOW', 'WAVE', 'BLOOM', 'DRIFT', 'ECHO', 'LUMEN', 'AURORA', 'STATIC', 'ORBIT', 'NEON', 'PRISM', 'VOID', 'SIGNAL', 'RIPPLE', 'HAZE', 'SPARK', 'MIRAGE', 'RADIANT', 'SUBLIME']
+const textLayer = reactive({ show: false, text: '', x: 50, y: 50, size: 8, hue: 0, blend: 'normal', rot: 0, weight: 800 })
+function opText() {
+  if (!useText.value) return false
+  if (textLayer.show && Math.random() < 0.35) { textLayer.show = false; say('caption off'); return true }
+  textLayer.text = pick(WORDS)
+  textLayer.x = 10 + Math.random() * 80
+  textLayer.y = 16 + Math.random() * 66
+  textLayer.size = 5 + Math.random() * 12
+  textLayer.hue = Math.floor(Math.random() * 360)
+  textLayer.rot = (Math.random() * 2 - 1) * 8
+  textLayer.blend = pick(['normal', 'plus-lighter', 'difference', 'overlay', 'exclusion'])
+  textLayer.weight = pick([400, 700, 900])
+  textLayer.show = true
+  say(`caption: ${textLayer.text}`)
   return true
 }
 // Switch a filter's source: cycle its feed among the live sources (camera /
@@ -537,9 +563,10 @@ function mutate() {
       // when a live source is on, favour swapping the filter's feed (camera /
       // clip ↔ scene) — it's a striking, cheap change
       if (!filter.locked && availableFeeds().length) moves.push([opSwitchFeed, 2.4])
-    } else if (budgetLeft >= 1) {
+    } else if (useFilters.value && budgetLeft >= 1) {
       moves.push([opAddFilter, 2])
     }
+    if (useText.value) moves.push([opText, 1.2])
     if (unlocked(eff.slice(1)).length) moves.push([opRestyle, 1.6])
     // occasionally swap the whole unlocked branch at once (bigger scene change)
     if (liveLayers().filter((l) => !l.locked).length >= 2) moves.push([opSwapBranch, evolveMode.value === 'Chaos' ? 1.8 : 0.9])
@@ -1367,6 +1394,18 @@ onBeforeUnmount(() => {
         :src="srcFor(l)"
         allow="microphone; camera; midi; accelerometer; gyroscope"
       />
+      <!-- text caption node: a decoupled overlay above the layer stack -->
+      <div
+        v-if="useText && textLayer.show"
+        class="text-overlay"
+        :style="{
+          left: textLayer.x + '%', top: textLayer.y + '%',
+          fontSize: textLayer.size + 'vw', fontWeight: textLayer.weight,
+          color: `hsl(${textLayer.hue},92%,74%)`,
+          mixBlendMode: textLayer.blend === 'add' ? 'plus-lighter' : textLayer.blend,
+          transform: `translate(-50%,-50%) rotate(${textLayer.rot}deg)`,
+        }"
+      >{{ textLayer.text }}</div>
     </div>
 
     <!-- the final blend step: a frozen snapshot of the outgoing mix, cross-faded
@@ -1493,9 +1532,12 @@ onBeforeUnmount(() => {
             <v-checkbox v-model="lowSkip" density="compact" hide-details label="Auto-thin the mix on low FPS" @change="persistSettings" />
             <div v-if="lowSkip" class="set-row">FPS floor: {{ fpsFloor }}</div>
             <v-slider v-if="lowSkip" v-model="fpsFloor" density="compact" hide-details :min="10" :max="50" :step="1" @end="persistSettings" />
-            <div class="panel-sub">Live sources</div>
-            <v-checkbox v-model="useCamera" density="compact" hide-details label="Feed the shared camera (when on)" @change="persistSettings" />
-            <v-checkbox v-model="useMedia" density="compact" hide-details label="Feed the media library" @change="persistSettings" />
+            <div class="panel-sub">Layer types</div>
+            <p class="set-sub mb-1">Effects are always the base. Pick which other node types the mix may reach for.</p>
+            <v-checkbox v-model="useFilters" density="compact" hide-details label="Filters (post-process the mix)" @change="persistSettings" />
+            <v-checkbox v-model="useText" density="compact" hide-details label="Text captions" @change="persistSettings" />
+            <v-checkbox v-model="useCamera" density="compact" hide-details label="Camera (as a filter source)" @change="persistSettings" />
+            <v-checkbox v-model="useMedia" density="compact" hide-details label="Media clips (as a filter source)" @change="persistSettings" />
             <v-checkbox v-model="useAudioMap" density="compact" hide-details label="Audio-map effects when the mic is on" @change="onAudioMapToggle" />
             <p class="set-sub mb-1">
               {{ liveSourceHint }}
@@ -1584,6 +1626,14 @@ onBeforeUnmount(() => {
   position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
   transition: opacity 1.5s ease;
 }
+/* Text-caption node: a decoupled overlay above the layer stack. */
+.text-overlay {
+  position: absolute; z-index: 3; pointer-events: none; white-space: nowrap;
+  font-family: 'Poppins', system-ui, sans-serif; letter-spacing: 0.04em; line-height: 1;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
+  animation: cap-in 0.8s ease;
+}
+@keyframes cap-in { from { opacity: 0; filter: blur(6px); } to { opacity: 1; filter: none; } }
 /* The final blend step: a frozen frame of the outgoing mix, snapped opaque then
    cross-faded out so every change dissolves instead of cutting. */
 .dissolve {
