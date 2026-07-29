@@ -2523,6 +2523,9 @@ const newName = ref('')
 // overwrite it in place while "Save as" always forks a new one.
 const currentRoutingId = ref(null)
 const currentRoutingName = computed(() => savedRoutings.value.find((r) => r.id === currentRoutingId.value)?.name || '')
+// Two-step guard so an in-place overwrite (Update) can't happen by accident.
+const confirmUpdate = ref(false)
+watch(currentRoutingId, () => { confirmUpdate.value = false })
 // Grab a small JPEG of the composited output for a routing's preview thumbnail.
 function capturePreview() {
   try {
@@ -2667,24 +2670,28 @@ function commitRenameBlock() {
   editBlockId.value = null
 }
 // Save: overwrite the routing you're currently editing (if any), else fork one.
+// Overwrite the routing being edited in place. Guarded by confirmUpdate in the
+// UI so it can't clobber a saved file by accident; keeps the file's own name
+// (renaming lives in the Load list) so a name typed for "Save as new" can't
+// silently rename the old file.
 function saveRouting() {
-  if (currentRoutingId.value) {
-    const r = savedRoutings.value.find((x) => x.id === currentRoutingId.value)
-    if (r) {
-      const nm = newName.value.trim()
-      if (nm) r.name = nm
-      r.nodes = JSON.parse(JSON.stringify(nodes))
-      r.edges = JSON.parse(JSON.stringify(edges))
-      r.links = JSON.parse(JSON.stringify(links))
-      r.effects = currentEffects()
-      r.preview = capturePreview()
-      persistSaved()
-      showToast(`Updated “${r.name}”`)
-      newName.value = ''
-      return
-    }
-  }
-  saveAsRouting()
+  const r = savedRoutings.value.find((x) => x.id === currentRoutingId.value)
+  if (!r) { saveAsRouting(); return }
+  r.nodes = JSON.parse(JSON.stringify(nodes))
+  r.edges = JSON.parse(JSON.stringify(edges))
+  r.links = JSON.parse(JSON.stringify(links))
+  r.effects = currentEffects()
+  r.preview = capturePreview()
+  persistSaved()
+  confirmUpdate.value = false
+  showToast(`Updated “${r.name}”`)
+}
+// Discard unsaved edits and reload the saved version of the current routing.
+function revertRouting() {
+  const r = savedRoutings.value.find((x) => x.id === currentRoutingId.value)
+  if (!r) return
+  loadRouting(r)
+  showToast(`Reverted to saved “${r.name}”`)
 }
 // Save as: always store a new routing and switch to editing it.
 function saveAsRouting() {
@@ -2984,22 +2991,37 @@ onBeforeUnmount(() => {
         <template #activator="{ props }">
           <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-content-save-outline">Save</v-btn>
         </template>
-        <v-card class="pa-2" min-width="270">
+        <v-card class="pa-2" min-width="290">
           <div v-if="currentRoutingId" class="text-caption text-medium-emphasis mb-1" style="font-size:11px">
-            Editing “{{ currentRoutingName }}”
+            Editing “{{ currentRoutingName }}” — changes aren’t saved until you Update it or Save as new.
           </div>
           <v-text-field
             v-model="newName"
             density="compact"
             hide-details
             class="mb-2"
-            :placeholder="currentRoutingId ? 'Rename (optional)' : 'Name this routing'"
-            @keyup.enter="saveRouting"
+            :placeholder="currentRoutingId ? 'Name for the new copy' : 'Name this routing'"
+            @keyup.enter="saveAsRouting"
           />
-          <div class="d-flex ga-1 mb-2">
-            <v-btn size="small" variant="tonal" prepend-icon="mdi-content-save" @click="saveRouting">Save</v-btn>
-            <v-btn size="small" variant="tonal" prepend-icon="mdi-content-save-plus-outline" @click="saveAsRouting">Save as new</v-btn>
-          </div>
+          <!-- Primary action is always making a NEW file, so you can't clobber
+               the loaded one by reflex. -->
+          <v-btn block size="small" color="primary" variant="flat" prepend-icon="mdi-content-save-plus-outline" class="mb-2" @click="saveAsRouting">
+            Save as new file
+          </v-btn>
+          <!-- Overwriting the loaded routing is a guarded, two-step action. -->
+          <template v-if="currentRoutingId">
+            <div v-if="!confirmUpdate" class="d-flex ga-1 mb-2">
+              <v-btn size="small" variant="tonal" prepend-icon="mdi-content-save" @click="confirmUpdate = true">Update “{{ currentRoutingName }}”</v-btn>
+              <v-btn size="small" variant="text" prepend-icon="mdi-backup-restore" title="Discard changes and reload the saved version" @click="revertRouting">Revert</v-btn>
+            </div>
+            <div v-else class="overwrite-warn mb-2">
+              <div class="ow-msg">Overwrite the saved “{{ currentRoutingName }}”? The stored version is replaced.</div>
+              <div class="d-flex ga-1 mt-1">
+                <v-btn size="small" color="warning" variant="flat" prepend-icon="mdi-content-save-alert" @click="saveRouting">Overwrite</v-btn>
+                <v-btn size="small" variant="text" @click="confirmUpdate = false">Cancel</v-btn>
+              </div>
+            </div>
+          </template>
           <div class="d-flex ga-1">
             <v-btn size="small" variant="text" prepend-icon="mdi-download" @click="exportPatch">Export .json</v-btn>
             <v-btn size="small" variant="text" prepend-icon="mdi-upload" @click="importPatch">Import file</v-btn>
@@ -3853,6 +3875,8 @@ onBeforeUnmount(() => {
 .node-lock { cursor: pointer; color: rgba(0,0,0,0.55); margin-right: 2px; }
 .node-lock:hover { color: rgba(0,0,0,0.85); }
 .node-keep-on { color: #2b6cff; }
+.overwrite-warn { border: 1px solid rgba(255, 176, 32, 0.5); background: rgba(255, 176, 32, 0.08); border-radius: 6px; padding: 6px 8px; }
+.overwrite-warn .ow-msg { font: 11px system-ui; color: #ffcf87; line-height: 1.35; }
 /* A locked node resists moving/removal and its params can't be edited. */
 .node--locked { outline: 1px dashed rgba(124,140,255,0.5); }
 .node--locked .node-head { cursor: default; }
