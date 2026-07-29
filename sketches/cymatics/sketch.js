@@ -3,6 +3,8 @@
 // lines, so a random walk whose step is scaled by the local vibration amplitude
 // naturally migrates every grain onto the nodes, drawing the resonant figure.
 // Sweep the frequency to morph modes, or let the live mic's pitch drive it.
+// The plate can be a full-screen rectangle, a square, a disc, or a regular
+// polygon (triangle … octagon).
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
@@ -13,7 +15,7 @@ const params = rt.params({
   frequency: { value: 3.2, min: 1, max: 10, step: 0.05, label: 'Frequency (mode)' },
   amplitude: { value: 1, min: 0.2, max: 3, step: 0.05, label: 'Drive amplitude' },
   grains: { value: 1, min: 0.3, max: 2.5, step: 0.05, label: 'Grain count' },
-  plate: { value: 'Square', type: 'select', options: ['Square', 'Circle'], label: 'Plate' },
+  plate: { value: 'Rectangle', type: 'select', options: ['Rectangle', 'Square', 'Circle', 'Triangle', 'Pentagon', 'Hexagon', 'Octagon'], label: 'Plate shape' },
   audioDrive: { value: true, type: 'bool', label: 'Audio pitch drives it (mic)' },
   settle: { value: 1, min: 0.2, max: 3, step: 0.05, label: 'Settle speed' },
   hue: { value: 40, min: 0, max: 360, step: 1, label: 'Sand hue' },
@@ -21,9 +23,37 @@ const params = rt.params({
 rt.mapInput('audio.level', 'amplitude', 0.4)
 rt.onBeat(() => {}) // mount the mic toggle for audio-drive
 
-let W = 0, H = 0, PR = 1, S = 0, ox = 0, oy = 0
+let W = 0, H = 0, PR = 1, S = 0, OX = 0, OY = 0, PW = 0, PH = 0
 let grains = null // packed [x, y] * N in plate coords 0..1
 let nG = 0
+
+// --- plate shape -------------------------------------------------------------
+const POLY = { Triangle: 3, Pentagon: 5, Hexagon: 6, Octagon: 8 }
+function plateSides() { return POLY[params.plate] || 0 }
+// radial (drumhead) modes for the disc and polygons; rectangular modes otherwise
+function isRadial() { return params.plate === 'Circle' || plateSides() > 0 }
+const _verts = new Map()
+function vertsFor(sides) {
+  if (_verts.has(sides)) return _verts.get(sides)
+  const v = []
+  for (let k = 0; k < sides; k++) { const a = -Math.PI / 2 + (k * 2 * Math.PI) / sides; v.push([0.5 + Math.cos(a) * 0.5, 0.5 + Math.sin(a) * 0.5]) }
+  _verts.set(sides, v); return v
+}
+function pointInPoly(x, y, verts) {
+  let inside = false
+  for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+    const [xi, yi] = verts[i], [xj, yj] = verts[j]
+    if (((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)) inside = !inside
+  }
+  return inside
+}
+// The plate's pixel rect — the full screen for Rectangle, a centred square box
+// for everything else.
+function layout() {
+  if (params.plate === 'Rectangle') { OX = 0; OY = 0; PW = W; PH = H }
+  else { PW = PH = S; OX = (W - S) / 2; OY = (H - S) / 2 }
+}
+
 function want() { return Math.min(60000, Math.round(14000 * params.grains * rt.detail)) }
 function seed() {
   nG = want()
@@ -35,7 +65,7 @@ function resize() {
   W = canvas.width = Math.floor(window.innerWidth * PR)
   H = canvas.height = Math.floor(window.innerHeight * PR)
   S = Math.min(W, H) * 0.86
-  ox = (W - S) / 2; oy = (H - S) / 2
+  layout()
   seed()
 }
 
@@ -58,7 +88,7 @@ function driveFreq() {
 
 // Chladni standing-wave amplitude at plate coords (u,v)∈[0,1], mode from freq.
 function amp(u, v, m, n) {
-  if (params.plate === 'Circle') {
+  if (isRadial()) {
     const du = u - 0.5, dv = v - 0.5
     const r = Math.hypot(du, dv) * 2
     const th = Math.atan2(dv, du)
@@ -69,25 +99,49 @@ function amp(u, v, m, n) {
 }
 function inPlate(u, v) {
   if (params.plate === 'Circle') return Math.hypot(u - 0.5, v - 0.5) <= 0.5
+  const s = plateSides()
+  if (s > 0) return pointInPoly(u, v, vertsFor(s))
   return u >= 0 && u <= 1 && v >= 0 && v <= 1
 }
-// A fresh random point guaranteed to sit on the plate (used to clear any sand
-// that has wandered off, e.g. into a circular plate's corners).
+// A fresh random point guaranteed to sit on the plate (used to sweep grains that
+// have wandered off the shape back on).
 function randInPlate() {
   if (params.plate === 'Circle') {
     const a = rt.random(0, Math.PI * 2), r = 0.5 * Math.sqrt(rt.rng())
     return [0.5 + Math.cos(a) * r, 0.5 + Math.sin(a) * r]
   }
+  const s = plateSides()
+  if (s > 0) {
+    const verts = vertsFor(s)
+    let u = 0.5, v = 0.5
+    for (let t = 0; t < 40; t++) { u = rt.rng(); v = rt.rng(); if (pointInPoly(u, v, verts)) break }
+    return [u, v]
+  }
   return [rt.rng(), rt.rng()]
 }
-let lastPlate = 'Square'
+let lastPlate = 'Rectangle'
+
+// Trace the plate outline as a path (for the darker plate fill).
+function platePath() {
+  if (params.plate === 'Circle') { ctx.beginPath(); ctx.arc(OX + PW / 2, OY + PH / 2, PW / 2, 0, 6.28) }
+  else {
+    const s = plateSides()
+    if (s > 0) {
+      const v = vertsFor(s)
+      ctx.beginPath()
+      for (let i = 0; i < v.length; i++) { const x = OX + v[i][0] * PW, y = OY + v[i][1] * PH; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y) }
+      ctx.closePath()
+    } else { ctx.beginPath(); ctx.rect(OX, OY, PW, PH) }
+  }
+}
 
 function frame(now) {
   rt.tick(now)
   if (nG !== want()) seed()
-  // Switching plate shape can leave grains off the new plate — sweep them back on.
+  // Switching plate shape re-lays-out and sweeps any off-plate grains back on.
   if (params.plate !== lastPlate) {
     lastPlate = params.plate
+    layout()
     for (let i = 0; i < nG; i++) {
       if (!inPlate(grains[i * 2], grains[i * 2 + 1])) { const [u, v] = randInPlate(); grains[i * 2] = u; grains[i * 2 + 1] = v }
     }
@@ -98,17 +152,14 @@ function frame(now) {
   const amt = params.amplitude
   const st = params.settle
 
-  // plate background
+  // background + plate
   ctx.fillStyle = '#0a0b10'
   ctx.fillRect(0, 0, W, H)
   ctx.fillStyle = '#12141c'
-  if (params.plate === 'Circle') { ctx.beginPath(); ctx.arc(W / 2, H / 2, S / 2, 0, 6.28); ctx.fill() }
-  else ctx.fillRect(ox, oy, S, S)
+  platePath(); ctx.fill()
 
   // move + draw grains
-  const sandLo = `hsl(${params.hue}, 40%, 40%)`
-  const sandHi = `hsl(${params.hue}, 70%, 82%)`
-  ctx.fillStyle = sandHi
+  ctx.fillStyle = `hsl(${params.hue}, 70%, 82%)`
   const step = 0.02 * st
   for (let i = 0; i < nG; i++) {
     let u = grains[i * 2], v = grains[i * 2 + 1]
@@ -117,10 +168,9 @@ function frame(now) {
     const kick = A * amt * step
     u += (rt.rng() - 0.5) * kick
     v += (rt.rng() - 0.5) * kick
-    // grains are seeded on the plate, so the previous position is always valid
-    if (!inPlate(u, v)) { u = grains[i * 2]; v = grains[i * 2 + 1] }
+    if (!inPlate(u, v)) { u = grains[i * 2]; v = grains[i * 2 + 1] } // reject a step off the plate
     grains[i * 2] = u; grains[i * 2 + 1] = v
-    const px = ox + u * S, py = oy + v * S
+    const px = OX + u * PW, py = OY + v * PH
     ctx.globalAlpha = 0.5 + (1 - Math.min(1, A)) * 0.5
     ctx.fillRect(px, py, PR, PR)
   }
