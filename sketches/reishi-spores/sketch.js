@@ -60,8 +60,8 @@ const P = []
 let emitAcc = 0
 function spawn(n, burst) {
   for (let i = 0; i < n; i++) {
-    const fx = capCx + rt.random(-1, 1) * capHalf * 0.92
-    const fy = capCy + capThick * rt.random(0.3, 0.75) // from the pore underside
+    const fx = capCx + rt.random(-1, 1) * capHalf * 0.9
+    const fy = capCy + capThick * rt.random(0.15, 0.45) // dropping from the pore underside
     const p = P.length < MAX ? {} : P[(Math.random() * P.length) | 0]
     p.x = fx; p.y = fy
     p.vx = rt.random(-1, 1) * 14 * PR
@@ -76,39 +76,69 @@ function spawn(n, burst) {
 rt.onBeat(({ energy }) => spawn(60 + (energy * 120 | 0), true))
 
 // --- lacquered reishi conk ---------------------------------------------------
-function capOutline(g, sx, sy) {
+// A varnished kidney/fan shelf: a domed, gently-lobed top and a shallow pore
+// underside, scaled about the cap centre for the nested growth zones.
+const capPhase = rt.random(0, TAU)
+function capPath(g, sc) {
+  const HW = capHalf * sc, HT = capThick * sc, UD = capThick * 0.42 * sc
+  const n = 56
   g.beginPath()
-  g.ellipse(capCx, capCy, capHalf * sx, capThick * sy, 0, Math.PI, TAU) // top dome
-  g.ellipse(capCx, capCy, capHalf * sx, capThick * sy * 0.5, 0, 0, Math.PI) // gentle underside
+  for (let i = 0; i <= n; i++) { // wavy top dome, right end → left end
+    const th = (i / n) * Math.PI
+    const wob = 1 + 0.05 * Math.sin(th * 6 + capPhase) + 0.022 * Math.sin(th * 13 + capPhase * 1.7)
+    g.lineTo(capCx + Math.cos(th) * HW, capCy - Math.sin(th) * HT * wob)
+  }
+  for (let i = 1; i <= n; i++) { // shallow underside arc, left end → right end
+    const u = i / n
+    g.lineTo(capCx - HW + 2 * HW * u, capCy + Math.sin(u * Math.PI) * UD)
+  }
   g.closePath()
 }
 function drawReishi(t) {
-  // stem
   const g = ctx
-  g.fillStyle = '#3a241a'
-  g.beginPath(); g.moveTo(capCx - capHalf * 0.16, capCy)
-  g.quadraticCurveTo(capCx - capHalf * 0.24, baseY, capCx - capHalf * 0.05, baseY)
-  g.lineTo(capCx + capHalf * 0.05, baseY)
-  g.quadraticCurveTo(capCx + capHalf * 0.02, capCy, capCx + capHalf * 0.1, capCy)
+  // short lacquered stalk
+  g.fillStyle = '#2c1a12'
+  g.beginPath()
+  g.moveTo(capCx - capHalf * 0.14, capCy + capThick * 0.28)
+  g.quadraticCurveTo(capCx - capHalf * 0.26, baseY, capCx - capHalf * 0.02, baseY)
+  g.lineTo(capCx + capHalf * 0.13, baseY)
+  g.quadraticCurveTo(capCx + capHalf * 0.03, capCy + capThick * 0.28, capCx + capHalf * 0.16, capCy + capThick * 0.2)
   g.closePath(); g.fill()
-  // concentric lacquered growth zones, dark centre → bright margin
-  const K = 12
+
+  // nested growth zones: dark mahogany centre → orange → pale cream margin
+  const K = 24
   for (let k = K; k >= 1; k--) {
-    const s = k / K
-    const zt = 1 - s
-    const hue = 12 + zt * 14
-    const lig = 12 + zt * 30
-    g.fillStyle = `hsl(${hue}, ${58 - zt * 10}%, ${lig}%)`
-    capOutline(g, s, s)
-    g.fill()
+    const sc = k / K // 1 = outer edge, small = centre
+    const e2 = Math.pow(sc, 2.2) // keep most of the cap red; only the outer band pales
+    const hue = 8 + e2 * 38
+    const sat = 58 - e2 * 20
+    const lig = 12 + Math.pow(sc, 1.4) * 9 + e2 * 60
+    g.fillStyle = `hsl(${hue}, ${sat}%, ${lig}%)`
+    capPath(g, sc); g.fill()
   }
-  // creamy growing margin
-  g.strokeStyle = 'hsla(44,55%,72%,0.9)'; g.lineWidth = Math.max(1.5, PR * 2)
-  capOutline(g, 1, 1); g.stroke()
-  // lacquer gloss highlight
-  const gl = g.createRadialGradient(capCx - capHalf * 0.35, capCy - capThick * 0.5, 0, capCx - capHalf * 0.35, capCy - capThick * 0.5, capHalf * 0.7)
-  gl.addColorStop(0, 'rgba(255,235,200,0.4)'); gl.addColorStop(1, 'rgba(255,235,200,0)')
-  g.save(); capOutline(g, 1, 1); g.clip(); g.fillStyle = gl; g.fillRect(0, 0, W, H); g.restore()
+
+  g.save(); capPath(g, 0.995); g.clip()
+  // pale pore underside band along the bottom (where the spores drop)
+  g.fillStyle = 'hsla(44,42%,80%,0.5)'
+  g.fillRect(0, capCy + capThick * 0.16, W, capThick * 0.55)
+  // faint radial wrinkles over the varnish
+  g.strokeStyle = 'rgba(28,12,7,0.14)'; g.lineWidth = Math.max(1, PR)
+  for (let i = 0; i <= 13; i++) { const a = (i / 13) * Math.PI; g.beginPath(); g.moveTo(capCx, capCy); g.lineTo(capCx + Math.cos(a) * capHalf * 1.1, capCy - Math.sin(a) * capThick * 1.1); g.stroke() }
+  // lacquer gloss + a sharp specular glint, upper-left
+  const gx = capCx - capHalf * 0.4, gy = capCy - capThick * 0.55
+  const gl = g.createRadialGradient(gx, gy, 0, gx, gy, capHalf * 0.95)
+  gl.addColorStop(0, 'rgba(255,241,218,0.5)'); gl.addColorStop(0.5, 'rgba(255,230,200,0.12)'); gl.addColorStop(1, 'rgba(255,230,200,0)')
+  g.fillStyle = gl; g.fillRect(0, 0, W, H)
+  g.fillStyle = 'rgba(255,250,236,0.55)'
+  g.beginPath(); g.ellipse(gx + capHalf * 0.12, gy, capHalf * 0.15, capThick * 0.11, -0.5, 0, TAU); g.fill()
+  g.restore()
+
+  // concentric growth furrows (darker rings) that ride the cap contour
+  g.strokeStyle = 'rgba(38,16,9,0.32)'; g.lineWidth = Math.max(1, PR * 1.1)
+  for (let r = 0.32; r < 1.0; r += 0.13) { capPath(g, r); g.stroke() }
+  // pale living margin at the very edge
+  g.strokeStyle = 'hsla(46,60%,82%,0.95)'; g.lineWidth = Math.max(1.5, PR * 2.2)
+  capPath(g, 1); g.stroke()
 }
 
 let last = 0
