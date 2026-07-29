@@ -587,6 +587,15 @@ const autoEverySec = ref(12)   // dwell between moves
 const autoFpsFloor = ref(15)   // if the composite drops below this, cheapen the graph
 const autoBudget = ref(12)     // keep the graph's total render cost under this
 let autoTimer = 0
+// Transport state — parity with the Autopilot view: a per-second countdown so
+// we can draw the ring, a pause that holds the clock without dropping out of
+// autopilot, and a panel ("tab") that surfaces the transport + countdown.
+const autoPaused = ref(false)
+const autoPanelOpen = ref(false)
+const autoLeft = ref(0)        // whole seconds until the next move
+const autoTotal = ref(1)       // length of the current dwell, for the ring
+const autoProgress = computed(() => Math.min(1, Math.max(0, 1 - autoLeft.value / Math.max(1, autoTotal.value))))
+function autoResetClock() { autoTotal.value = Math.max(2, autoEverySec.value); autoLeft.value = autoTotal.value }
 // Per-sketch render cost (higher = slower), same model as the Autopilot view.
 function slugCost(slug) {
   const s = perfScores[slug]
@@ -647,16 +656,33 @@ function autoStep() {
     rerollUpstream(branchable[Math.floor(Math.random() * branchable.length)])
   }
 }
+// A 1 Hz clock drives the countdown ring; when it reaches zero we make a move
+// and re-arm. Pausing stops the decrement but keeps autopilot engaged.
 function armAuto() {
   clearInterval(autoTimer)
-  if (autoOn.value) autoTimer = setInterval(autoStep, Math.max(2, autoEverySec.value) * 1000)
+  if (!autoOn.value) return
+  autoResetClock()
+  autoTimer = setInterval(() => {
+    if (autoPaused.value) return
+    autoLeft.value--
+    if (autoLeft.value <= 0) { autoStep(); autoResetClock() }
+  }, 1000)
 }
 function toggleAuto() {
   autoOn.value = !autoOn.value
-  if (autoOn.value && !nodes.some((n) => n.type === 'effect' || n.type === 'filter')) randomPatch()
+  if (autoOn.value) {
+    autoPaused.value = false
+    if (!nodes.some((n) => n.type === 'effect' || n.type === 'filter')) randomPatch()
+    autoPanelOpen.value = true // surface the transport tab when it engages
+  }
   armAuto()
 }
-watch(autoEverySec, armAuto)
+// Transport — feature parity with the Autopilot page's controls.
+function autoPlayPause() { autoPaused.value = !autoPaused.value }
+function autoNextNow() { if (!autoOn.value) return; autoStep(); autoResetClock() } // jump the next move forward
+function autoPrev() { undo() }                                                     // step back through the changes
+function autoReroll() { randomPatch(); autoResetClock() }                          // deal a whole fresh graph
+watch(autoEverySec, () => { if (autoOn.value) armAuto() })
 
 // Jump to the full Autopilot view (its own evolving-mix mode).
 function openAutopilot() { router.push({ name: 'autopilot' }) }
@@ -2926,20 +2952,14 @@ onBeforeUnmount(() => {
         :title="autoOn ? 'Autopilot on — the graph is evolving itself; click to take over' : 'Autopilot — let it auto-evolve this graph'"
         @click="toggleAuto"
       >{{ autoOn ? 'Autopilot' : 'Manual' }}</v-btn>
-      <v-menu :close-on-content-click="false">
-        <template #activator="{ props }">
-          <v-btn v-bind="props" icon="mdi-cog-outline" variant="text" size="x-small" title="Autopilot options" />
-        </template>
-        <v-card class="pa-3" min-width="260">
-          <div class="text-caption text-medium-emphasis mb-1">Change every {{ autoEverySec }}s</div>
-          <v-slider v-model="autoEverySec" :min="3" :max="60" :step="1" hide-details density="compact" class="mb-2" />
-          <div class="text-caption text-medium-emphasis mb-1">FPS floor: {{ autoFpsFloor }} — cheapen the graph below this</div>
-          <v-slider v-model="autoFpsFloor" :min="10" :max="50" :step="1" hide-details density="compact" class="mb-2" />
-          <div class="text-caption text-medium-emphasis mb-1">Perf budget: {{ autoBudget }} (bigger = richer, heavier)</div>
-          <v-slider v-model="autoBudget" :min="4" :max="30" :step="1" hide-details density="compact" class="mb-2" />
-          <v-btn size="small" block variant="text" prepend-icon="mdi-robot-outline" @click="openAutopilot">Open the Autopilot view</v-btn>
-        </v-card>
-      </v-menu>
+      <v-btn
+        icon="mdi-cog-outline"
+        variant="text"
+        size="x-small"
+        :color="autoPanelOpen ? 'primary' : undefined"
+        title="Autopilot transport &amp; options"
+        @click="autoPanelOpen = !autoPanelOpen"
+      />
 
       <!-- Save: name + store the current graph as a routing -->
       <v-menu :close-on-content-click="false">
@@ -3284,6 +3304,50 @@ onBeforeUnmount(() => {
           <button class="cue-mini" title="Move down" @click.stop="moveCue(i, 1)">↓</button>
           <button class="cue-mini" title="Delete cue" @click.stop="deleteCue(i)">✕</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Autopilot panel: transport + countdown ring + options, surfaced as its
+         own tab when autopilot is engaged. Parity with the Autopilot view, but
+         the graph stays hand-editable — add nodes from the toolbar any time. -->
+    <div v-if="autoPanelOpen" class="auto-panel" @pointerdown.stop @wheel.stop>
+      <div class="show-head">
+        <span class="show-title">Autopilot</span>
+        <div class="show-modes">
+          <button :class="{ on: autoOn }" @click="!autoOn && toggleAuto()">Auto</button>
+          <button :class="{ on: !autoOn }" @click="autoOn && toggleAuto()">Manual</button>
+        </div>
+        <span class="show-spacer" />
+        <span class="auto-fps" :class="{ low: fps > 0 && fps < autoFpsFloor }">{{ fps }} fps</span>
+        <v-btn icon="mdi-close" size="x-small" variant="text" @click="autoPanelOpen = false" />
+      </div>
+
+      <!-- transport: previous · play/pause · next-now · countdown ring · reroll -->
+      <div class="show-transport">
+        <v-btn icon="mdi-skip-previous" size="small" variant="text" :disabled="!undoStack.length" title="Step back (undo the last change)" @click="autoPrev" />
+        <v-btn :icon="autoOn && !autoPaused ? 'mdi-pause' : 'mdi-play'" size="small" variant="text" :title="!autoOn ? 'Engage autopilot' : autoPaused ? 'Resume' : 'Pause (holds autopilot)'" @click="autoOn ? autoPlayPause() : toggleAuto()" />
+        <v-btn icon="mdi-skip-next" size="small" variant="text" :disabled="!autoOn" title="Next move now" @click="autoNextNow" />
+        <span class="countdown-ring" :title="autoOn ? (autoPaused ? 'Paused' : 'Time until the next change') : 'Autopilot is off'">
+          <svg viewBox="0 0 36 36">
+            <circle class="ring-bg" cx="18" cy="18" r="15.5" />
+            <circle class="ring-fg" cx="18" cy="18" r="15.5" :stroke-dasharray="97.4" :stroke-dashoffset="97.4 * (1 - autoProgress)" />
+          </svg>
+          <span class="ring-num">{{ autoOn ? (autoPaused ? '‖' : autoLeft) : '–' }}</span>
+        </span>
+        <v-btn icon="mdi-dice-5-outline" size="small" variant="text" title="Full reroll — deal a fresh graph" @click="autoReroll" />
+        <span class="show-spacer" />
+        <v-btn icon="mdi-robot-outline" size="small" variant="text" title="Open the full Autopilot view" @click="openAutopilot" />
+      </div>
+
+      <!-- options -->
+      <div class="auto-opts">
+        <div class="auto-row">Change every {{ autoEverySec }}s</div>
+        <v-slider v-model="autoEverySec" :min="3" :max="60" :step="1" hide-details density="compact" class="mb-1" @pointerdown.stop />
+        <div class="auto-row">Perf budget: {{ autoBudget }} — bigger is richer &amp; heavier</div>
+        <v-slider v-model="autoBudget" :min="4" :max="30" :step="1" hide-details density="compact" class="mb-1" @pointerdown.stop />
+        <div class="auto-row">FPS floor: {{ autoFpsFloor }} — cheapen the graph below this</div>
+        <v-slider v-model="autoFpsFloor" :min="10" :max="50" :step="1" hide-details density="compact" @pointerdown.stop />
+        <p class="auto-hint">Autopilot swaps effects, restyles blends and regrows branches on the clock. Locked nodes are never touched — lock anything you want to keep, and keep adding nodes from the toolbar while it runs.</p>
       </div>
     </div>
 
@@ -3814,6 +3878,25 @@ onBeforeUnmount(() => {
 .show-capture:hover { border-color: #7c8cff; }
 .show-spacer { flex: 1; }
 .show-transport { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+/* Autopilot control panel — a floating tab with transport + countdown + opts. */
+.auto-panel {
+  position: absolute; right: 12px; top: 96px; z-index: 42; width: 280px;
+  display: flex; flex-direction: column; border-radius: 10px; overflow: hidden;
+  background: rgba(12, 14, 20, 0.97); border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5); backdrop-filter: blur(6px);
+  font: 12px system-ui, sans-serif; color: #cdd3e0;
+}
+.auto-fps { font: 11px ui-monospace, monospace; color: #9aa4c0; }
+.auto-fps.low { color: #ff8a6a; }
+.auto-opts { padding: 8px 12px 10px; }
+.auto-row { font: 11px system-ui; color: #9aa4c0; margin-top: 4px; }
+.auto-hint { font: 10px system-ui; color: #8a90a0; line-height: 1.4; margin: 8px 0 0; }
+/* Countdown number wrapped in a circular progress ring (mirrors Autopilot). */
+.countdown-ring { display: inline-grid; place-items: center; width: 34px; height: 34px; }
+.countdown-ring svg { grid-area: 1 / 1; width: 34px; height: 34px; transform: rotate(-90deg); }
+.countdown-ring .ring-bg { fill: none; stroke: rgba(255,255,255,0.12); stroke-width: 3; }
+.countdown-ring .ring-fg { fill: none; stroke: #7c8cff; stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 0.9s linear; }
+.countdown-ring .ring-num { grid-area: 1 / 1; font: 600 10px/1 ui-monospace, monospace; color: #cdd3e0; }
 .go-btn { font: 700 12px system-ui; color: #0a0b0f; background: #a0e060; border: 0; border-radius: 6px; padding: 5px 18px; cursor: pointer; letter-spacing: 0.08em; }
 .go-btn:disabled { opacity: 0.4; cursor: default; }
 .show-hint { font: 11px system-ui; color: #8a90a0; margin-left: 6px; }
