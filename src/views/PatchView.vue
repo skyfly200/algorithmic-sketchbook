@@ -18,6 +18,8 @@ import { useSketchStore, CATEGORIES } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
 import { PATCH_HANDOFF_KEY } from '../lib/mixToPatch'
 import TourOverlay from '../components/TourOverlay.vue'
+import NumSlider from '../components/NumSlider.vue'
+import ColorField from '../components/ColorField.vue'
 import perfScores from '../registry/perf.json'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
@@ -369,15 +371,15 @@ function addNode(type) {
                   : type === 'media'
                     ? { mode: 'camera', mediaId: null }
                     : type === 'text'
-                      ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, rotate: 0, italic: false, glow: 0.4, bg: false }
+                      ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false }
                       : type === 'portal'
                         ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }
                         : type === 'shape'
                           ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0, invert: false }
                           : type === 'geo'
-                            ? { shape: 'Icosahedron', material: 'Solid', hue: 160, displace: 0.25, freq: 2, spin: 0.5, detail: 2 }
+                            ? { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2 }
                             : type === 'vcam'
-                              ? { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, spin: true }
+                              ? { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, lightSat: 34, lightVal: 86, spin: true }
                               : type === 'mask'
                                 ? { mode: 'multiply', strength: 1, invert: false }
                                 : {},
@@ -1459,8 +1461,18 @@ function buildGeometry(shape, detail) {
     default: return new THREE.BoxGeometry(1.5, 1.5, 1.5, 4 + d * 6, 4 + d * 6, 4 + d * 6)
   }
 }
-function makeMaterial(material, hue) {
-  const col = new THREE.Color().setHSL(((hue ?? 160) % 360) / 360, 0.7, 0.55)
+// HSV (h 0-360, s/v 0-100) → HSL fractions, for THREE.Color.setHSL and CSS.
+// Colour nodes store H/S/V; the classic single-hue look is the default S/V.
+function hsvToHsl(h, s, v) {
+  const ss = (s ?? 72) / 100, vv = (v ?? 90) / 100
+  const l = vv * (1 - ss / 2)
+  const sl = l === 0 || l === 1 ? 0 : (vv - l) / Math.min(l, 1 - l)
+  return { h: ((((h ?? 0) % 360) + 360) % 360) / 360, s: sl, l }
+}
+function hsvCss(h, s, v) { const c = hsvToHsl(h, s, v); return `hsl(${Math.round(c.h * 360)}, ${Math.round(c.s * 100)}%, ${Math.round(c.l * 100)}%)` }
+function makeMaterial(material, hue, sat, val) {
+  const c = hsvToHsl(hue ?? 160, sat, val)
+  const col = new THREE.Color().setHSL(c.h, c.s, c.l)
   if (material === 'Wireframe') return new THREE.MeshBasicMaterial({ color: col, wireframe: true })
   if (material === 'Normals') return new THREE.MeshNormalMaterial({ flatShading: true })
   if (material === 'Points') return new THREE.PointsMaterial({ color: col, size: 0.045, sizeAttenuation: true })
@@ -1471,7 +1483,7 @@ function buildObject(geo) {
   if (!g.attributes.normal) g.computeVertexNormals()
   const base = Float32Array.from(g.attributes.position.array)
   const nrm = Float32Array.from(g.attributes.normal.array)
-  const mat = makeMaterial(geo.material, geo.hue)
+  const mat = makeMaterial(geo.material, geo.hue, geo.sat, geo.val)
   const obj = geo.material === 'Points' ? new THREE.Points(g, mat) : new THREE.Mesh(g, mat)
   obj.userData = { shape: geo.shape, material: geo.material, detail: geo.detail, base, nrm, warped: false }
   return obj
@@ -1484,7 +1496,7 @@ function updateObject(obj, geo, time) {
   const spin = geo.spin ?? 0.5
   obj.rotation.y = time * spin * 0.6
   obj.rotation.x = time * spin * 0.25 + 0.3
-  if (obj.material.color) obj.material.color.setHSL(((geo.hue ?? 160) % 360) / 360, 0.7, 0.55)
+  if (obj.material.color) { const c = hsvToHsl(geo.hue ?? 160, geo.sat, geo.val); obj.material.color.setHSL(c.h, c.s, c.l) }
   // the "vertex shader": push every vertex along its normal by a travelling wave
   // of its base position, so the mesh warps in geometry space each frame
   const amp = geo.displace ?? 0
@@ -1561,7 +1573,7 @@ function geoWire(shape) {
   geoWireCache.set(shape, w)
   return w
 }
-function drawGeoGlyph(ctx, ang, hue, warp, shape) {
+function drawGeoGlyph(ctx, ang, hue, warp, shape, sat, val) {
   const cx = W / 2, cy = H * 0.44, R = Math.min(W, H) * 0.26
   const { V, E } = geoWire(shape)
   const ca = Math.cos(ang), sa = Math.sin(ang), cb = Math.cos(ang * 0.6), sb = Math.sin(ang * 0.6)
@@ -1572,7 +1584,7 @@ function drawGeoGlyph(ctx, ang, hue, warp, shape) {
     const s = 2.6 / (Z + 3.2)
     return [cx + X * R * s * wob, cy + Y * R * s * wob]
   })
-  ctx.strokeStyle = `hsl(${hue}, 70%, 62%)`
+  ctx.strokeStyle = hsvCss(hue, sat, val)
   ctx.lineWidth = Math.max(1.2, Math.min(W, H) * 0.006)
   ctx.beginPath()
   for (const [a, b] of E) { ctx.moveTo(proj[a][0], proj[a][1]); ctx.lineTo(proj[b][0], proj[b][1]) }
@@ -1580,11 +1592,11 @@ function drawGeoGlyph(ctx, ang, hue, warp, shape) {
 }
 function evalGeo(node, octx) {
   const p = node.params
-  st(node.id).geo = { shape: p.shape, material: p.material, hue: p.hue, displace: p.displace, freq: p.freq, spin: p.spin, detail: p.detail }
+  st(node.id).geo = { shape: p.shape, material: p.material, hue: p.hue, sat: p.sat, val: p.val, displace: p.displace, freq: p.freq, spin: p.spin, detail: p.detail }
   const t = performance.now() * 0.001
   octx.fillStyle = '#0a0e14'
   octx.fillRect(0, 0, W, H)
-  drawGeoGlyph(octx, t * (0.4 + (p.spin ?? 0.5) * 0.6), p.hue ?? 160, p.displace ?? 0, p.shape ?? 'Box')
+  drawGeoGlyph(octx, t * (0.4 + (p.spin ?? 0.5) * 0.6), p.hue ?? 160, p.displace ?? 0, p.shape ?? 'Box', p.sat, p.val)
   octx.fillStyle = 'rgba(230,240,255,0.85)'
   octx.font = `${Math.round(H * 0.07)}px system-ui, sans-serif`
   octx.textAlign = 'center'
@@ -1635,7 +1647,7 @@ function evalCamera(node, octx) {
   three.cam.fov = p.fov ?? 55
   three.cam.aspect = W / H
   three.cam.updateProjectionMatrix()
-  three.key.color.setHSL(((p.lightHue ?? 40) % 360) / 360, 0.5, 0.72)
+  { const c = hsvToHsl(p.lightHue ?? 40, p.lightSat ?? 34, p.lightVal ?? 86); three.key.color.setHSL(c.h, c.s, c.l) }
   const rw = Math.min(W, 1280), rh = Math.max(1, Math.round((rw * H) / W))
   renderer.setSize(rw, rh, false)
   const transparent = p.bg === 'Transparent'
@@ -1702,8 +1714,8 @@ function evalNode(node) {
     octx.font = `${p.italic ? 'italic ' : ''}${Math.round(p.weight)} ${px}px "${p.font || 'sans-serif'}"`
     octx.textAlign = 'center'
     octx.textBaseline = 'middle'
-    octx.fillStyle = `hsl(${p.hue}, 90%, 62%)`
-    if (p.glow > 0.01) { octx.shadowColor = `hsl(${p.hue}, 100%, 60%)`; octx.shadowBlur = px * 0.4 * p.glow }
+    octx.fillStyle = hsvCss(p.hue, p.sat ?? 82, p.val ?? 96)
+    if (p.glow > 0.01) { octx.shadowColor = hsvCss(p.hue, 100, 100); octx.shadowBlur = px * 0.4 * p.glow }
     // letter-spacing (tracking) drawn glyph-by-glyph; multiple lines stacked
     const track = (p.tracking ?? 0) * px
     const lines = String(p.text ?? '').split('\n')
@@ -3412,7 +3424,7 @@ onBeforeUnmount(() => {
                 <label v-else>
                   <span class="pjack" :ref="(el) => bindJack(n.id, name, el)" :data-jack-node="n.id" :data-jack-param="name" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, name)" />
                   {{ spec.label ?? name }}
-                  <input type="range" :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :value="effectControls.get(n.id).values[name]" @input="setEffectParam(n.id, name, +$event.target.value)" />
+                  <NumSlider :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :model-value="effectControls.get(n.id).values[name]" @update:model-value="setEffectParam(n.id, name, $event)" />
                 </label>
               </template>
 
@@ -3446,8 +3458,8 @@ onBeforeUnmount(() => {
                 <option v-for="src in list" :key="src" :value="src">{{ src }}</option>
               </optgroup>
             </select>
-            <label>scale <input type="range" min="-2" max="2" step="0.05" v-model.number="n.params.scale" @change="persist" @pointerdown.stop /></label>
-            <label>offset <input type="range" min="-1" max="1" step="0.02" v-model.number="n.params.offset" @change="persist" @pointerdown.stop /></label>
+            <label>scale <NumSlider :min="-2" :max="2" :step="0.05" :model-value="n.params.scale" @update:model-value="n.params.scale = $event" @commit="persist" /></label>
+            <label>offset <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.offset" @update:model-value="n.params.offset = $event" @commit="persist" /></label>
             <label>curve
               <select v-model="n.params.curve" @change="persist" @pointerdown.stop>
                 <option v-for="c in INPUT_CURVES" :key="c" :value="c">{{ c }}</option>
@@ -3456,14 +3468,14 @@ onBeforeUnmount(() => {
             <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert</label>
           </template>
           <template v-if="n.type === 'tracker'">
-            <label>threshold <input type="range" min="0.05" max="0.95" step="0.01" v-model.number="n.params.thresh" @change="persist" @pointerdown.stop /></label>
-            <label>smoothing <input type="range" min="0" max="0.95" step="0.01" v-model.number="n.params.smooth" @change="persist" @pointerdown.stop /></label>
+            <label>threshold <NumSlider :min="0.05" :max="0.95" :step="0.01" :model-value="n.params.thresh" @update:model-value="n.params.thresh = $event" @commit="persist" /></label>
+            <label>smoothing <NumSlider :min="0" :max="0.95" :step="0.01" :model-value="n.params.smooth" @update:model-value="n.params.smooth = $event" @commit="persist" /></label>
           </template>
           <template v-if="n.type === 'blend'">
             <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
               <option v-for="b in BLENDS" :key="b" :value="b">{{ b }}</option>
             </select>
-            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" :data-jack-node="n.id" data-jack-param="mix" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <input type="range" min="0" max="1" step="0.02" :value="n.params.mix ?? 1" @input="n.params.mix = +$event.target.value; persist()" @pointerdown.stop /></label>
+            <label><span class="pjack" :ref="(el) => bindJack(n.id, 'mix', el)" :data-jack-node="n.id" data-jack-param="mix" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'mix')" /> mix <NumSlider :min="0" :max="1" :step="0.02" :model-value="n.params.mix ?? 1" @update:model-value="n.params.mix = $event" @commit="persist" /></label>
           </template>
           <template v-if="n.type === 'geo'">
             <label>shape
@@ -3476,19 +3488,19 @@ onBeforeUnmount(() => {
                 <option v-for="m in GEO_MATERIALS" :key="m" :value="m">{{ m }}</option>
               </select>
             </label>
-            <label>hue <input type="range" min="0" max="360" step="1" v-model.number="n.params.hue" @input="persist" @pointerdown.stop /></label>
-            <label>displace <input type="range" min="0" max="1" step="0.01" v-model.number="n.params.displace" @input="persist" @pointerdown.stop /></label>
-            <label>frequency <input type="range" min="0.5" max="6" step="0.1" v-model.number="n.params.freq" @input="persist" @pointerdown.stop /></label>
-            <label>spin <input type="range" min="0" max="3" step="0.05" v-model.number="n.params.spin" @input="persist" @pointerdown.stop /></label>
-            <label>detail <input type="range" min="0" max="4" step="1" v-model.number="n.params.detail" @change="persist" @pointerdown.stop /></label>
+            <label>color <ColorField v-model:h="n.params.hue" v-model:s="n.params.sat" v-model:v="n.params.val" @change="persist" /></label>
+            <label>displace <NumSlider :min="0" :max="1" :step="0.01" :model-value="n.params.displace" @update:model-value="n.params.displace = $event" @commit="persist" /></label>
+            <label>frequency <NumSlider :min="0.5" :max="6" :step="0.1" :model-value="n.params.freq" @update:model-value="n.params.freq = $event" @commit="persist" /></label>
+            <label>spin <NumSlider :min="0" :max="3" :step="0.05" :model-value="n.params.spin" @update:model-value="n.params.spin = $event" @commit="persist" /></label>
+            <label>detail <NumSlider :min="0" :max="4" :step="1" :model-value="n.params.detail" @update:model-value="n.params.detail = $event" @commit="persist" /></label>
           </template>
           <template v-if="n.type === 'vcam'">
             <div class="media-hint">Wire Geometry nodes into the ports on the left.</div>
-            <label>field of view <input type="range" min="20" max="100" step="1" v-model.number="n.params.fov" @input="persist" @pointerdown.stop /></label>
-            <label>distance <input type="range" min="2" max="10" step="0.1" v-model.number="n.params.distance" @input="persist" @pointerdown.stop /></label>
-            <label>orbit speed <input type="range" min="0" max="3" step="0.05" v-model.number="n.params.orbit" @input="persist" @pointerdown.stop /></label>
-            <label>tilt <input type="range" min="-1" max="1" step="0.02" v-model.number="n.params.tilt" @input="persist" @pointerdown.stop /></label>
-            <label>light hue <input type="range" min="0" max="360" step="1" v-model.number="n.params.lightHue" @input="persist" @pointerdown.stop /></label>
+            <label>field of view <NumSlider :min="20" :max="100" :step="1" :model-value="n.params.fov" @update:model-value="n.params.fov = $event" @commit="persist" /></label>
+            <label>distance <NumSlider :min="2" :max="10" :step="0.1" :model-value="n.params.distance" @update:model-value="n.params.distance = $event" @commit="persist" /></label>
+            <label>orbit speed <NumSlider :min="0" :max="3" :step="0.05" :model-value="n.params.orbit" @update:model-value="n.params.orbit = $event" @commit="persist" /></label>
+            <label>tilt <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.tilt" @update:model-value="n.params.tilt = $event" @commit="persist" /></label>
+            <label>light color <ColorField v-model:h="n.params.lightHue" v-model:s="n.params.lightSat" v-model:v="n.params.lightVal" @change="persist" /></label>
             <label>background
               <select v-model="n.params.bg" @change="persist" @pointerdown.stop>
                 <option value="Dark">Dark</option>
@@ -3525,14 +3537,18 @@ onBeforeUnmount(() => {
               </select>
             </label>
             <button v-if="!systemFonts.length" class="load-btn" title="Use your installed system fonts (Chromium, asks permission)" @pointerdown.stop @click="loadSystemFonts">＋ System fonts</button>
-            <label v-for="pk in ['size', 'weight', 'tracking', 'x', 'y', 'hue', 'rotate']" :key="pk">
+            <label v-for="pk in ['size', 'weight', 'tracking', 'x', 'y', 'rotate']" :key="pk">
               <span class="pjack" :ref="(el) => bindJack(n.id, pk, el)" :data-jack-node="n.id" :data-jack-param="pk" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, pk)" />
               {{ pk }}
-              <input type="range" :min="PARAM_RANGES.text[pk][0]" :max="PARAM_RANGES.text[pk][1]" :step="(PARAM_RANGES.text[pk][1] - PARAM_RANGES.text[pk][0]) / 100" :value="n.params[pk]" @input="n.params[pk] = +$event.target.value; persist()" @pointerdown.stop />
+              <NumSlider :min="PARAM_RANGES.text[pk][0]" :max="PARAM_RANGES.text[pk][1]" :step="(PARAM_RANGES.text[pk][1] - PARAM_RANGES.text[pk][0]) / 100" :model-value="n.params[pk]" @update:model-value="n.params[pk] = $event" @commit="persist" />
+            </label>
+            <label>
+              <span class="pjack" :ref="(el) => bindJack(n.id, 'hue', el)" :data-jack-node="n.id" data-jack-param="hue" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, 'hue')" />
+              color <ColorField v-model:h="n.params.hue" v-model:s="n.params.sat" v-model:v="n.params.val" @change="persist" />
             </label>
             <label class="chk"><input type="checkbox" v-model="n.params.italic" @change="persist" @pointerdown.stop /> italic</label>
             <label class="chk"><input type="checkbox" v-model="n.params.bg" @change="persist" @pointerdown.stop /> black background</label>
-            <label>glow <input type="range" min="0" max="1.5" step="0.05" v-model.number="n.params.glow" @change="persist" @pointerdown.stop /></label>
+            <label>glow <NumSlider :min="0" :max="1.5" :step="0.05" :model-value="n.params.glow" @update:model-value="n.params.glow = $event" @commit="persist" /></label>
           </template>
           <template v-if="n.type === 'portal'">
             <div class="portal-grid">
@@ -3540,13 +3556,13 @@ onBeforeUnmount(() => {
               <label v-for="pk in ['srcX', 'srcY', 'srcW', 'srcH']" :key="pk" class="portal-cell">
                 <span class="pjack" :ref="(el) => bindJack(n.id, pk, el)" :data-jack-node="n.id" :data-jack-param="pk" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, pk)" />
                 {{ pk.slice(3).toLowerCase() }}
-                <input type="range" min="0" max="1" step="0.01" :value="n.params[pk]" @input="n.params[pk] = +$event.target.value; persist()" @pointerdown.stop />
+                <NumSlider :min="0" :max="1" :step="0.01" :model-value="n.params[pk]" @update:model-value="n.params[pk] = $event" @commit="persist" />
               </label>
               <span class="portal-lbl">to</span>
               <label v-for="pk in ['dstX', 'dstY', 'dstW', 'dstH']" :key="pk" class="portal-cell">
                 <span class="pjack" :ref="(el) => bindJack(n.id, pk, el)" :data-jack-node="n.id" :data-jack-param="pk" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, pk)" />
                 {{ pk.slice(3).toLowerCase() }}
-                <input type="range" min="0" max="1" step="0.01" :value="n.params[pk]" @input="n.params[pk] = +$event.target.value; persist()" @pointerdown.stop />
+                <NumSlider :min="0" :max="1" :step="0.01" :model-value="n.params[pk]" @update:model-value="n.params[pk] = $event" @commit="persist" />
               </label>
             </div>
             <label>shape
@@ -3560,14 +3576,14 @@ onBeforeUnmount(() => {
                 <option v-for="a in Object.keys(ASPECTS)" :key="a" :value="a">{{ a }}</option>
               </select>
             </label>
-            <label>recurse <input type="range" min="1" max="8" step="1" v-model.number="n.params.recurse" @change="persist" @pointerdown.stop /></label>
+            <label>recurse <NumSlider :min="1" :max="8" :step="1" :model-value="n.params.recurse" @update:model-value="n.params.recurse = $event" @commit="persist" /></label>
             <label class="chk"><input type="checkbox" v-model="n.params.border" @change="persist" @pointerdown.stop /> outline</label>
           </template>
 
           <template v-if="n.type === 'shape'">
             <label>
               <span class="pjack" :ref="(el) => bindJack(n.id, 'feather', el)" :data-jack-node="n.id" data-jack-param="feather" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'feather')" />
-              feather <input type="range" min="0" max="0.5" step="0.01" :value="n.params.feather" @input="n.params.feather = +$event.target.value; persist()" @pointerdown.stop />
+              feather <NumSlider :min="0" :max="0.5" :step="0.01" :model-value="n.params.feather" @update:model-value="n.params.feather = $event" @commit="persist" />
             </label>
             <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert (cut a hole)</label>
             <div class="shape-row">
@@ -3584,7 +3600,7 @@ onBeforeUnmount(() => {
                 <option v-for="m in MASK_MODES" :key="m" :value="m">{{ m }}</option>
               </select>
             </label>
-            <label>strength <input type="range" min="0" max="1" step="0.02" :value="n.params.strength ?? 1" @input="n.params.strength = +$event.target.value; persist()" @pointerdown.stop /></label>
+            <label>strength <NumSlider :min="0" :max="1" :step="0.02" :model-value="n.params.strength ?? 1" @update:model-value="n.params.strength = $event" @commit="persist" /></label>
             <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert matte</label>
           </template>
 
