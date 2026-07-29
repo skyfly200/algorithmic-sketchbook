@@ -45,6 +45,8 @@ function randomizeParams() {
   if (!sch) return
   for (const [name, spec] of Object.entries(sch)) {
     if (spec.type === 'bool') setParam(name, Math.random() < 0.5)
+    else if (spec.type === 'color')
+      setParam(name, '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0'))
     else if (spec.type === 'select' && Array.isArray(spec.options) && spec.options.length)
       setParam(name, spec.options[Math.floor(Math.random() * spec.options.length)])
     else if (typeof spec.min === 'number') {
@@ -373,6 +375,15 @@ onUnmounted(() => {
                     @update:model-value="(v) => setParam(name, v)"
                   />
                 </template>
+                <template v-else-if="spec.type === 'color'">
+                  <span class="param-label">{{ spec.label ?? name }}</span>
+                  <input
+                    type="color"
+                    class="param-color"
+                    :value="controls.values[name]"
+                    @input="(e) => setParam(name, e.target.value)"
+                  />
+                </template>
                 <template v-else>
                   <span class="param-label">{{ spec.label ?? name }}</span>
                   <v-slider
@@ -646,6 +657,15 @@ onUnmounted(() => {
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.6);
   margin-bottom: 2px;
+}
+.param-color {
+  width: 100%;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
 }
 /* tighten the accordion so more controls fit */
 .controls-panel :deep(.v-expansion-panel-text__wrapper) {

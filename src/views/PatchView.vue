@@ -3634,6 +3634,10 @@ onBeforeUnmount(() => {
                     <option v-for="o in spec.options" :key="o" :value="o">{{ o }}</option>
                   </select>
                 </label>
+                <label v-else-if="spec.type === 'color'" class="color-row">
+                  {{ spec.label ?? name }}
+                  <input type="color" class="eff-color" :value="effectControls.get(n.id).values[name]" @input="setEffectParam(n.id, name, $event.target.value)" @pointerdown.stop />
+                </label>
                 <label v-else>
                   <span class="pjack" :ref="(el) => bindJack(n.id, name, el)" :data-jack-node="n.id" :data-jack-param="name" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, name)" />
                   {{ spec.label ?? name }}
@@ -3937,6 +3941,8 @@ onBeforeUnmount(() => {
 .node-lock { cursor: pointer; color: rgba(0,0,0,0.55); margin-right: 2px; }
 .node-lock:hover { color: rgba(0,0,0,0.85); }
 .node-keep-on { color: #2b6cff; }
+.color-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.eff-color { width: 44px; height: 22px; padding: 0; border: 1px solid #333; border-radius: 4px; background: transparent; cursor: pointer; }
 .overwrite-warn { border: 1px solid rgba(255, 176, 32, 0.5); background: rgba(255, 176, 32, 0.08); border-radius: 6px; padding: 6px 8px; }
 .overwrite-warn .ow-msg { font: 11px system-ui; color: #ffcf87; line-height: 1.35; }
 /* A locked node resists moving/removal and its params can't be edited. */

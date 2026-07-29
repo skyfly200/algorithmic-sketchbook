@@ -19,33 +19,56 @@
 import { createRuntime } from '../_lib/runtime.js'
 
 const MODE = { stripes: 0, spots: 1, rosettes: 2, giraffe: 3, blotch: 4 }
+// Species presets are now *absolute* values that get loaded straight into the
+// controls (see applySpecies) — pick a species to seed the sliders, then tweak
+// freely, including the four coat colours which are their own params. The
+// numbers reproduce the original per-species look (old defaults × old
+// multipliers): frequency = 14×freq, forking = 0.7×fork, curve = 0.4×curve.
 const PRESETS = {
-  Zebra: { mode: 'stripes', coat: '#f3efe6', mark: '#141109', mark2: '#141109', belly: '#ece7db', freq: 0.85, warp: 1.15, fork: 0.85, curve: 1.1, width: 0.5, inner: 0 },
-  Tiger: { mode: 'stripes', coat: '#d67b2b', mark: '#180f06', mark2: '#180f06', belly: '#efe4cf', freq: 1.0, warp: 0.8, fork: 0.6, curve: 0.7, width: 0.64, inner: 0 },
-  Okapi: { mode: 'stripes', coat: '#3c2416', mark: '#e7dabc', mark2: '#e7dabc', belly: '#2e1b10', freq: 1.5, warp: 0.5, fork: 0.3, curve: 1.4, width: 0.74, inner: 0 },
-  Brindle: { mode: 'stripes', coat: '#9a6a37', mark: '#241407', mark2: '#241407', belly: '#7a5228', freq: 1.2, warp: 1.6, fork: 1.1, curve: 0.4, width: 0.6, inner: 0 },
-  Cheetah: { mode: 'spots', coat: '#d3a860', mark: '#241407', mark2: '#241407', belly: '#efe0c2', freq: 2.2, warp: 0.5, fork: 0.5, curve: 0, width: 0.5, inner: 0 },
-  Leopard: { mode: 'rosettes', coat: '#cfa25a', mark: '#241a0f', mark2: '#a9752f', belly: '#ecdcbc', freq: 2.0, warp: 0.6, fork: 0.7, curve: 0, width: 0.5, inner: 0 },
-  Jaguar: { mode: 'rosettes', coat: '#c8913f', mark: '#20140a', mark2: '#9d661f', belly: '#e6d3a2', freq: 1.4, warp: 0.5, fork: 0.6, curve: 0, width: 0.56, inner: 1 },
-  Giraffe: { mode: 'giraffe', coat: '#b0742f', mark: '#f0e6cf', mark2: '#f0e6cf', belly: '#9a6428', freq: 1.0, warp: 0.7, fork: 0.3, curve: 0, width: 0.5, inner: 0 },
-  Dartfrog: { mode: 'blotch', coat: '#1f7ae0', mark: '#0a0d12', mark2: '#0a0d12', belly: '#123a86', freq: 1.2, warp: 0.9, fork: 0.5, curve: 0, width: 0.52, inner: 0 },
+  Zebra: { pattern: 'Stripes', coat: '#f3efe6', mark: '#141109', mark2: '#141109', belly: '#ece7db', frequency: 12, warp: 1.15, forking: 0.6, curve: 0.44, width: 0.5, inner: false },
+  Tiger: { pattern: 'Stripes', coat: '#d67b2b', mark: '#180f06', mark2: '#180f06', belly: '#efe4cf', frequency: 14, warp: 0.8, forking: 0.42, curve: 0.28, width: 0.64, inner: false },
+  Okapi: { pattern: 'Stripes', coat: '#3c2416', mark: '#e7dabc', mark2: '#e7dabc', belly: '#2e1b10', frequency: 21, warp: 0.5, forking: 0.21, curve: 0.56, width: 0.74, inner: false },
+  Brindle: { pattern: 'Stripes', coat: '#9a6a37', mark: '#241407', mark2: '#241407', belly: '#7a5228', frequency: 17, warp: 1.6, forking: 0.77, curve: 0.16, width: 0.6, inner: false },
+  Cheetah: { pattern: 'Spots', coat: '#d3a860', mark: '#241407', mark2: '#241407', belly: '#efe0c2', frequency: 31, warp: 0.5, forking: 0.35, curve: 0, width: 0.5, inner: false },
+  Leopard: { pattern: 'Rosettes', coat: '#cfa25a', mark: '#241a0f', mark2: '#a9752f', belly: '#ecdcbc', frequency: 28, warp: 0.6, forking: 0.49, curve: 0, width: 0.5, inner: false },
+  Jaguar: { pattern: 'Rosettes', coat: '#c8913f', mark: '#20140a', mark2: '#9d661f', belly: '#e6d3a2', frequency: 20, warp: 0.5, forking: 0.42, curve: 0, width: 0.56, inner: true },
+  Giraffe: { pattern: 'Giraffe', coat: '#b0742f', mark: '#f0e6cf', mark2: '#f0e6cf', belly: '#9a6428', frequency: 14, warp: 0.7, forking: 0.21, curve: 0, width: 0.5, inner: false },
+  Dartfrog: { pattern: 'Blotch', coat: '#1f7ae0', mark: '#0a0d12', mark2: '#0a0d12', belly: '#123a86', frequency: 17, warp: 0.9, forking: 0.35, curve: 0, width: 0.52, inner: false },
 }
 const rt = createRuntime()
 const params = rt.params({
-  species: { value: 'Zebra', type: 'select', options: Object.keys(PRESETS), label: 'Species' },
-  pattern: { value: 'Auto', type: 'select', options: ['Auto', 'Stripes', 'Spots', 'Rosettes', 'Giraffe', 'Blotch'], label: 'Pattern' },
-  frequency: { value: 14, min: 3, max: 44, step: 0.5, label: 'Scale / density' },
-  warp: { value: 1, min: 0, max: 2.2, step: 0.05, label: 'Waver' },
-  forking: { value: 0.7, min: 0, max: 1.6, step: 0.05, label: 'Forking / break' },
-  curve: { value: 0.4, min: -1.2, max: 1.2, step: 0.05, label: 'Curve (stripes)' },
+  species: { value: 'Zebra', type: 'select', options: Object.keys(PRESETS), label: 'Species (load preset)' },
+  pattern: { value: 'Stripes', type: 'select', options: ['Stripes', 'Spots', 'Rosettes', 'Giraffe', 'Blotch'], label: 'Pattern' },
+  frequency: { value: 12, min: 3, max: 44, step: 0.5, label: 'Scale / density' },
+  warp: { value: 1.15, min: 0, max: 2.2, step: 0.05, label: 'Waver' },
+  forking: { value: 0.6, min: 0, max: 1.6, step: 0.05, label: 'Forking / break' },
+  curve: { value: 0.44, min: -1.2, max: 1.2, step: 0.05, label: 'Curve (stripes)' },
   width: { value: 0.5, min: 0.2, max: 0.85, step: 0.01, label: 'Mark width' },
   crisp: { value: 0.06, min: 0.004, max: 0.32, step: 0.004, label: 'Softness' },
   orient: { value: 0, min: 0, max: 180, step: 1, label: 'Orientation' },
   flow: { value: 0, min: 0, max: 1, step: 0.02, label: 'Flow (morph)' },
   texture: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Fur grain' },
+  inner: { value: false, type: 'bool', label: 'Inner spot (jaguar)' },
+  coat: { value: '#f3efe6', type: 'color', label: 'Coat colour' },
+  mark: { value: '#141109', type: 'color', label: 'Mark colour' },
+  mark2: { value: '#141109', type: 'color', label: 'Rosette centre' },
+  belly: { value: '#ece7db', type: 'color', label: 'Belly colour' },
 })
 rt.mapInput('audio.level', 'flow', 0.6)
 rt.mapInput('audio.pulse', 'warp', 0.3)
+
+// Selecting a species loads its preset values into all the other params (and
+// re-syncs the controls panel), so a species is a starting point you can then
+// edit — including the colours — rather than a hidden multiplier.
+// Start synced to the initial species (the param defaults already match it),
+// so only a genuine species *change* reloads the preset — this avoids
+// clobbering a scene/params restored right after load.
+let lastSpecies = params.species
+function applySpecies() {
+  const p = PRESETS[params.species]
+  if (!p) return
+  rt.setParams({ ...p })
+}
 
 const canvas = document.getElementById('canvas')
 const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
@@ -194,25 +217,26 @@ function resize() {
 
 function frame(now) {
   rt.tick(now)
-  const p = PRESETS[params.species] ?? PRESETS.Zebra
-  const mode = params.pattern === 'Auto' ? MODE[p.mode] : MODE[params.pattern.toLowerCase()]
+  // Load a species preset into the controls the first time and whenever it changes.
+  if (params.species !== lastSpecies) { lastSpecies = params.species; applySpecies() }
+  const mode = MODE[params.pattern.toLowerCase()] ?? 0
   gl.uniform2f(u.u_res, canvas.width, canvas.height)
   gl.uniform1f(u.u_time, now * 0.001)
   gl.uniform1f(u.u_mode, mode)
-  gl.uniform1f(u.u_freq, params.frequency * p.freq)
-  gl.uniform1f(u.u_warp, params.warp * p.warp)
-  gl.uniform1f(u.u_fork, params.forking * p.fork)
-  gl.uniform1f(u.u_curve, params.curve * p.curve)
-  gl.uniform1f(u.u_width, Math.max(0.12, Math.min(0.9, p.width + (params.width - 0.5))))
+  gl.uniform1f(u.u_freq, params.frequency)
+  gl.uniform1f(u.u_warp, params.warp)
+  gl.uniform1f(u.u_fork, params.forking)
+  gl.uniform1f(u.u_curve, params.curve)
+  gl.uniform1f(u.u_width, Math.max(0.12, Math.min(0.9, params.width)))
   gl.uniform1f(u.u_crisp, params.crisp)
   gl.uniform1f(u.u_orient, params.orient)
   gl.uniform1f(u.u_flow, params.flow)
   gl.uniform1f(u.u_tex, params.texture)
-  gl.uniform1f(u.u_inner, p.inner)
-  gl.uniform3fv(u.u_coat, hexRgb(p.coat))
-  gl.uniform3fv(u.u_mark, hexRgb(p.mark))
-  gl.uniform3fv(u.u_mark2, hexRgb(p.mark2))
-  gl.uniform3fv(u.u_belly, hexRgb(p.belly))
+  gl.uniform1f(u.u_inner, params.inner ? 1 : 0)
+  gl.uniform3fv(u.u_coat, hexRgb(params.coat))
+  gl.uniform3fv(u.u_mark, hexRgb(params.mark))
+  gl.uniform3fv(u.u_mark2, hexRgb(params.mark2))
+  gl.uniform3fv(u.u_belly, hexRgb(params.belly))
   gl.drawArrays(gl.TRIANGLES, 0, 3)
   requestAnimationFrame(frame)
 }

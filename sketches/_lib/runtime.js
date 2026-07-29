@@ -576,6 +576,17 @@ export function createRuntime() {
       return view
     },
 
+    // Let a sketch update its own param values (e.g. a "species" preset select
+    // that loads defaults into the rest of the controls) and re-sync the host
+    // controls panel so the sliders/pickers reflect the new values.
+    setParams(obj) {
+      for (const [k, v] of Object.entries(obj)) {
+        if (k in base) { base[k] = v; effective[k] = v }
+      }
+      applyModulation(performance.now())
+      if (announced) window.parent?.postMessage(readyMsg(), '*')
+    },
+
     // Register a handler for a `type:'action'` param — the controls panel shows
     // it as a button that fires this callback (e.g. "Load model…").
     onAction(name, cb) { actions[name] = cb },
