@@ -138,8 +138,8 @@ void main() {
       // giraffe: brown cells with pale cracks
       float bw = 0.02 + u_width * 0.1;
       float border = smoothstep(bw + e, bw - e, ed);
-      vec3 patch = u_coat * (0.78 + 0.3 * cr);
-      col = mix(patch, u_mark, border);
+      vec3 cellCol = u_coat * (0.78 + 0.3 * cr);
+      col = mix(cellCol, u_mark, border);
     } else {
       // blotch (dart frog): bold irregular dark patches from thresholded noise
       float n = fbm(cq * 1.5) * 0.65 + fbm(cq * 3.1 + 4.0) * 0.35;
