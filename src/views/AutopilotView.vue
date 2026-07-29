@@ -90,6 +90,10 @@ const useAudioMap = ref(savedSet.useAudioMap ?? true)
 // each be switched off so the show only uses the node types you want.
 const useFilters = ref(savedSet.useFilters ?? true)
 const useText = ref(savedSet.useText ?? false)
+const useGeo = ref(savedSet.useGeo ?? false) // 3D geometry overlay
+const usePolygon = ref(savedSet.usePolygon ?? false) // a coloured polygon shape node
+const useMask = ref(savedSet.useMask ?? false) // clip the whole mix to a polygon
+const usePortal = ref(savedSet.usePortal ?? false) // picture-in-picture / kaleidoscope
 // Smooth changes: route every committed change through a final blend step — a
 // frozen snapshot of the outgoing composite laid over the top and cross-faded
 // out — so even hard swaps (feed switch, restyle, a whole new branch) dissolve
@@ -123,6 +127,7 @@ function persistSettings() {
     evolveOptions: evolveOptions.value, sections: { ...sections },
     useCamera: useCamera.value, useMedia: useMedia.value, useAudioMap: useAudioMap.value,
     useFilters: useFilters.value, useText: useText.value,
+    useGeo: useGeo.value, usePolygon: usePolygon.value, useMask: useMask.value, usePortal: usePortal.value,
     smoothChanges: smoothChanges.value,
   }))
 }
@@ -484,6 +489,143 @@ function opText() {
   say(`caption: ${textLayer.text}`)
   return true
 }
+
+// --- geometry / polygon / mask / portal overlay nodes ------------------------
+// Decoupled overlay nodes that composite over (or clip) the iframe mix without
+// touching the feed/occlusion/capture paths. Canvas nodes redraw in loop().
+const geoEl = ref(null), portalEl = ref(null)
+const geoLayer = reactive({ show: false, shape: 'Icosahedron', hue: 200, blend: 'plus-lighter', opacity: 0.85, x: 0.5, y: 0.5, scale: 1, spin: 1 })
+const polyLayer = reactive({ show: false, clip: 'none', hue: 320, blend: 'overlay', opacity: 0.6 })
+const maskLayer = reactive({ show: false, clip: 'none' })
+const portalLayer = reactive({ show: false, mode: 'pip', x: 0.5, y: 0.5, scale: 0.34 })
+const portalBuf = document.createElement('canvas')
+
+// generate a clip-path polygon (viewport %) for a named shape at a random turn
+function polyClip(n, rad, rot, inner) {
+  const pts = [], count = inner ? n * 2 : n
+  for (let i = 0; i < count; i++) {
+    const a = rot + (i / count) * Math.PI * 2
+    const r = inner && i % 2 ? inner : rad
+    pts.push([50 + Math.cos(a) * r, 50 + Math.sin(a) * r * 1.3]) // *1.3 ~ correct for wide viewports
+  }
+  return 'polygon(' + pts.map((p) => `${p[0].toFixed(1)}% ${p[1].toFixed(1)}%`).join(', ') + ')'
+}
+function genClip() {
+  const rot = Math.random() * Math.PI
+  return pick([
+    () => polyClip(3, 52, rot), () => polyClip(4, 52, rot), () => polyClip(5, 52, rot),
+    () => polyClip(6, 52, rot), () => polyClip(5, 54, rot, 24), () => polyClip(8, 52, rot),
+  ])()
+}
+
+// 3D wireframe skeletons for the geometry node (cached per shape)
+const _geoCache = new Map()
+function geoWire(shape) {
+  if (_geoCache.has(shape)) return _geoCache.get(shape)
+  const V = [], E = []
+  const byDist = (t2) => { for (let i = 0; i < V.length; i++) for (let j = i + 1; j < V.length; j++) { const dx = V[i][0] - V[j][0], dy = V[i][1] - V[j][1], dz = V[i][2] - V[j][2]; if (dx * dx + dy * dy + dz * dz < t2) E.push([i, j]) } }
+  if (shape === 'Icosahedron') { const t = 1.618; for (const v of [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]]) { const L = Math.hypot(v[0], v[1], v[2]); V.push([v[0] / L, v[1] / L, v[2] / L]) } byDist(1.2) }
+  else if (shape === 'Octahedron') { V.push([1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]); byDist(2.2) }
+  else if (shape === 'Tetra') { for (const v of [[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]]) V.push([v[0] * 0.72, v[1] * 0.72, v[2] * 0.72]); for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) E.push([i, j]) }
+  else if (shape === 'Torus') { const nu = 14, nv = 7, Rr = 0.72, tr = 0.3, g = []; for (let i = 0; i < nu; i++) { const u = (i / nu) * 6.2832, row = []; for (let j = 0; j < nv; j++) { const v = (j / nv) * 6.2832, cr = Rr + tr * Math.cos(v); row.push(V.length); V.push([cr * Math.cos(u), tr * Math.sin(v), cr * Math.sin(u)]) } g.push(row) } for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) { E.push([g[i][j], g[(i + 1) % nu][j]]); E.push([g[i][j], g[i][(j + 1) % nv]]) } }
+  else if (shape === 'Knot') { const n = 64, idx = []; for (let i = 0; i < n; i++) { const a = (i / n) * 6.2832, r = 0.6 + 0.26 * Math.cos(3 * a); idx.push(V.length); V.push([r * Math.cos(2 * a), 0.3 * Math.sin(3 * a), r * Math.sin(2 * a)]) } for (let i = 0; i < n; i++) E.push([idx[i], idx[(i + 1) % n]]) }
+  else { V.push([-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]); E.push([0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]) }
+  const w = { V, E }; _geoCache.set(shape, w); return w
+}
+function fitCanvas(el) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1)
+  const w = Math.floor(window.innerWidth * dpr), h = Math.floor(window.innerHeight * dpr)
+  if (el.width !== w) el.width = w
+  if (el.height !== h) el.height = h
+  return [w, h]
+}
+function drawGeoOverlay(now) {
+  const el = geoEl.value; if (!el) return
+  if (!(useGeo.value && geoLayer.show)) { if (el._dirty) { el.getContext('2d').clearRect(0, 0, el.width, el.height); el._dirty = false } return }
+  const [W, H] = fitCanvas(el); el._dirty = true
+  const g = el.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H)
+  const { V, E } = geoWire(geoLayer.shape)
+  const a = now * 0.0004 * geoLayer.spin, b = a * 0.6
+  const cx = W * geoLayer.x, cy = H * geoLayer.y, R = Math.min(W, H) * 0.24 * geoLayer.scale
+  const proj = V.map(([x, y, z]) => { let X = x * Math.cos(a) - z * Math.sin(a), Z = x * Math.sin(a) + z * Math.cos(a); let Y = y * Math.cos(b) - Z * Math.sin(b); Z = y * Math.sin(b) + Z * Math.cos(b); const s = 2.8 / (Z + 3.6); return [cx + X * R * s, cy + Y * R * s] })
+  g.globalCompositeOperation = 'lighter'
+  g.strokeStyle = `hsla(${geoLayer.hue},85%,66%,0.9)`; g.lineWidth = Math.max(1.5, Math.min(W, H) * 0.0032); g.lineJoin = 'round'
+  g.beginPath(); for (const [i, j] of E) { g.moveTo(proj[i][0], proj[i][1]); g.lineTo(proj[j][0], proj[j][1]) } g.stroke()
+  g.fillStyle = `hsla(${(geoLayer.hue + 40) % 360},90%,74%,0.85)`
+  for (const p of proj) { g.beginPath(); g.arc(p[0], p[1], Math.max(1.5, Math.min(W, H) * 0.004), 0, 6.2832); g.fill() }
+}
+function drawPortalOverlay() {
+  const el = portalEl.value; if (!el) return
+  if (!(usePortal.value && portalLayer.show)) { if (el._dirty) { el.getContext('2d').clearRect(0, 0, el.width, el.height); el._dirty = false } return }
+  const [W, H] = fitCanvas(el); el._dirty = true
+  const bw = Math.min(640, W), bh = Math.max(1, Math.round((bw * H) / W))
+  if (portalBuf.width !== bw) portalBuf.width = bw
+  if (portalBuf.height !== bh) portalBuf.height = bh
+  const drew = paintComposite(portalBuf.getContext('2d'), bw, bh)
+  const g = el.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H)
+  if (!drew) return
+  if (portalLayer.mode === 'pip') {
+    const w = W * portalLayer.scale, h = H * portalLayer.scale, x = W * portalLayer.x - w / 2, y = H * portalLayer.y - h / 2
+    g.drawImage(portalBuf, x, y, w, h)
+    g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = Math.max(2, Math.min(W, H) * 0.004); g.strokeRect(x, y, w, h)
+  } else if (portalLayer.mode === 'mirror') {
+    g.drawImage(portalBuf, 0, 0, bw / 2, bh, 0, 0, W / 2, H)
+    g.save(); g.translate(W, 0); g.scale(-1, 1); g.drawImage(portalBuf, 0, 0, bw / 2, bh, 0, 0, W / 2, H); g.restore()
+  } else { // tunnel: nested scaled copies
+    for (let i = 0; i < 5; i++) { const s = 1 - i * 0.18; const w = W * s, h = H * s; g.drawImage(portalBuf, (W - w) / 2, (H - h) / 2, w, h) }
+  }
+}
+
+function opGeo() {
+  if (!useGeo.value) return false
+  if (geoLayer.show && Math.random() < 0.3) { geoLayer.show = false; say('geometry off'); return true }
+  geoLayer.shape = pick(['Cube', 'Icosahedron', 'Octahedron', 'Tetra', 'Torus', 'Knot'])
+  geoLayer.hue = Math.floor(Math.random() * 360)
+  geoLayer.blend = pick(['plus-lighter', 'screen', 'normal', 'overlay'])
+  geoLayer.opacity = +(0.55 + Math.random() * 0.45).toFixed(2)
+  geoLayer.x = 0.3 + Math.random() * 0.4; geoLayer.y = 0.3 + Math.random() * 0.4
+  geoLayer.scale = 0.6 + Math.random() * 0.9; geoLayer.spin = (Math.random() * 2 - 1) * 2.2
+  geoLayer.show = true
+  say(`geometry: ${geoLayer.shape}`)
+  return true
+}
+function opPolygon() {
+  if (!usePolygon.value) return false
+  if (polyLayer.show && Math.random() < 0.3) { polyLayer.show = false; say('polygon off'); return true }
+  polyLayer.clip = genClip()
+  polyLayer.hue = Math.floor(Math.random() * 360)
+  polyLayer.blend = pick(['overlay', 'screen', 'plus-lighter', 'difference', 'soft-light'])
+  polyLayer.opacity = +(0.35 + Math.random() * 0.4).toFixed(2)
+  polyLayer.show = true
+  say('polygon shape')
+  return true
+}
+function opMask() {
+  if (!useMask.value) return false
+  if (maskLayer.show && Math.random() < 0.3) { maskLayer.show = false; maskLayer.clip = 'none'; say('mask off'); return true }
+  maskLayer.clip = genClip()
+  maskLayer.show = true
+  say('mask on')
+  return true
+}
+function opPortal() {
+  if (!usePortal.value) return false
+  if (portalLayer.show && Math.random() < 0.3) { portalLayer.show = false; say('portal off'); return true }
+  portalLayer.mode = pick(['pip', 'mirror', 'tunnel'])
+  portalLayer.x = 0.5 + (Math.random() * 2 - 1) * 0.25; portalLayer.y = 0.5 + (Math.random() * 2 - 1) * 0.25
+  portalLayer.scale = 0.26 + Math.random() * 0.22
+  portalLayer.show = true
+  say(`portal: ${portalLayer.mode}`)
+  return true
+}
+// clip-path style for the polygon shape node (a coloured shape) and the whole-mix mask
+const polyStyle = computed(() => ({
+  clipPath: polyLayer.clip,
+  background: `radial-gradient(circle at 40% 35%, hsl(${polyLayer.hue},90%,66%), hsl(${(polyLayer.hue + 40) % 360},85%,42%))`,
+  mixBlendMode: polyLayer.blend === 'add' ? 'plus-lighter' : polyLayer.blend,
+  opacity: polyLayer.opacity,
+}))
+const sceneClip = computed(() => (useMask.value && maskLayer.show ? maskLayer.clip : 'none'))
 // Switch a filter's source: cycle its feed among the live sources (camera /
 // media) and the composite-below, so the show flips between a filtered scene
 // and a filtered camera/clip on its own.
@@ -567,6 +709,10 @@ function mutate() {
       moves.push([opAddFilter, 2])
     }
     if (useText.value) moves.push([opText, 1.2])
+    if (useGeo.value) moves.push([opGeo, 1.1])
+    if (usePolygon.value) moves.push([opPolygon, 1])
+    if (useMask.value) moves.push([opMask, 0.9])
+    if (usePortal.value) moves.push([opPortal, 1])
     if (unlocked(eff.slice(1)).length) moves.push([opRestyle, 1.6])
     // occasionally swap the whole unlocked branch at once (bigger scene change)
     if (liveLayers().filter((l) => !l.locked).length >= 2) moves.push([opSwapBranch, evolveMode.value === 'Chaos' ? 1.8 : 0.9])
@@ -1270,6 +1416,8 @@ function loop(now) {
   settleWarming(performance.now())
   feedFilters()
   updateOcclusion()
+  drawGeoOverlay(now)
+  drawPortalOverlay()
   if (popupOpen.value) blitPopup()
 
   frameCount++
@@ -1380,7 +1528,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="autopilot">
     <!-- one persistent stack; layers crossfade individually as it evolves -->
-    <div class="scene">
+    <div class="scene" :style="{ clipPath: sceneClip }">
       <iframe
         v-for="l in stack"
         :key="l.id"
@@ -1394,6 +1542,11 @@ onBeforeUnmount(() => {
         :src="srcFor(l)"
         allow="microphone; camera; midi; accelerometer; gyroscope"
       />
+      <!-- geometry (3D wireframe) + portal (PiP / kaleidoscope) canvas nodes -->
+      <canvas ref="geoEl" class="overlay-canvas geo-z" v-show="useGeo && geoLayer.show" :style="{ mixBlendMode: geoLayer.blend === 'add' ? 'plus-lighter' : geoLayer.blend, opacity: geoLayer.opacity }" />
+      <canvas ref="portalEl" class="overlay-canvas portal-z" v-show="usePortal && portalLayer.show" />
+      <!-- polygon shape node: a coloured polygon over the mix -->
+      <div v-if="usePolygon && polyLayer.show" class="poly-overlay" :style="polyStyle" />
       <!-- text caption node: a decoupled overlay above the layer stack -->
       <div
         v-if="useText && textLayer.show"
@@ -1536,6 +1689,10 @@ onBeforeUnmount(() => {
             <p class="set-sub mb-1">Effects are always the base. Pick which other node types the mix may reach for.</p>
             <v-checkbox v-model="useFilters" density="compact" hide-details label="Filters (post-process the mix)" @change="persistSettings" />
             <v-checkbox v-model="useText" density="compact" hide-details label="Text captions" @change="persistSettings" />
+            <v-checkbox v-model="useGeo" density="compact" hide-details label="Geometry (3D shapes)" @change="persistSettings" />
+            <v-checkbox v-model="usePolygon" density="compact" hide-details label="Polygon shapes" @change="persistSettings" />
+            <v-checkbox v-model="useMask" density="compact" hide-details label="Mask the mix to a polygon" @change="persistSettings" />
+            <v-checkbox v-model="usePortal" density="compact" hide-details label="Portal (picture-in-picture / kaleidoscope)" @change="persistSettings" />
             <v-checkbox v-model="useCamera" density="compact" hide-details label="Camera (as a filter source)" @change="persistSettings" />
             <v-checkbox v-model="useMedia" density="compact" hide-details label="Media clips (as a filter source)" @change="persistSettings" />
             <v-checkbox v-model="useAudioMap" density="compact" hide-details label="Audio-map effects when the mic is on" @change="onAudioMapToggle" />
@@ -1626,9 +1783,14 @@ onBeforeUnmount(() => {
   position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
   transition: opacity 1.5s ease;
 }
+/* Geometry / portal canvas nodes + polygon shape node — overlays above the stack. */
+.overlay-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.geo-z { z-index: 2; }
+.portal-z { z-index: 3; }
+.poly-overlay { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 /* Text-caption node: a decoupled overlay above the layer stack. */
 .text-overlay {
-  position: absolute; z-index: 3; pointer-events: none; white-space: nowrap;
+  position: absolute; z-index: 4; pointer-events: none; white-space: nowrap;
   font-family: 'Poppins', system-ui, sans-serif; letter-spacing: 0.04em; line-height: 1;
   text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
   animation: cap-in 0.8s ease;
@@ -1638,7 +1800,7 @@ onBeforeUnmount(() => {
    cross-faded out so every change dissolves instead of cutting. */
 .dissolve {
   position: absolute; inset: 0; width: 100%; height: 100%;
-  z-index: 4; pointer-events: none;
+  z-index: 7; pointer-events: none;
   opacity: 0; transition: opacity 0.9s ease;
 }
 .dissolve.show { opacity: 1; transition: none; }
