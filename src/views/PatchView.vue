@@ -365,7 +365,7 @@ function addNode(type) {
             : type === 'input'
               ? { source: 'audio.volume', scale: 1, offset: 0, invert: false, curve: 'linear' }
               : type === 'xy'
-                ? { x: 0.5, y: 0.5, recenter: false }
+                ? { x: 0.5, y: 0.5, recenter: false, xMin: 0, xMax: 1, yMin: 0, yMax: 1, curve: 'linear', padW: NODE_W, padH: THUMB_H }
                 : type === 'tracker'
                   ? { thresh: 0.5, smooth: 0.7 }
                   : type === 'media'
@@ -720,16 +720,20 @@ function clearAll() {
 
 // --- ports & wiring ---
 const board = ref(null)
+// XY Pad nodes can be resized by dragging their corner; everything else keeps
+// the fixed node dimensions. Port/wire geometry reads these so endpoints track.
+function nodeW(n) { return n.type === 'xy' ? Math.max(120, Math.round(n.params.padW || NODE_W)) : NODE_W }
+function thumbH(n) { return n.type === 'xy' ? Math.max(80, Math.round(n.params.padH || THUMB_H)) : THUMB_H }
 function outPortAt(n, i = 0) {
   const cnt = outCount(n) || 1
-  return { x: n.x + NODE_W, y: n.y + HEAD_H + (THUMB_H * (i + 1)) / (cnt + 1) }
+  return { x: n.x + nodeW(n), y: n.y + HEAD_H + (thumbH(n) * (i + 1)) / (cnt + 1) }
 }
 function outPort(n) {
   return outPortAt(n, 0)
 }
 function inPort(n, i) {
   const cnt = TYPES[n.type].ins
-  return { x: n.x, y: n.y + HEAD_H + (THUMB_H * (i + 1)) / (cnt + 1) }
+  return { x: n.x, y: n.y + HEAD_H + (thumbH(n) * (i + 1)) / (cnt + 1) }
 }
 function wirePath(a, b) {
   const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5)
@@ -815,7 +819,14 @@ const INPUT_CURVES = ['linear', 'exp', 'log', 's-curve', 'step']
 // Control value emitted by any control node's given output port.
 function controlValue(node, port, now) {
   if (node.type === 'input') return inputValue(node, now)
-  if (node.type === 'xy') return port === 1 ? node.params.y : node.params.x
+  if (node.type === 'xy') {
+    const p = node.params
+    let a = clamp(port === 1 ? p.y : p.x, 0, 1)
+    a = applyCurve(a, p.curve ?? 'linear')
+    const lo = port === 1 ? (p.yMin ?? 0) : (p.xMin ?? 0)
+    const hi = port === 1 ? (p.yMax ?? 1) : (p.xMax ?? 1)
+    return lo + a * (hi - lo)
+  }
   if (node.type === 'tracker') {
     const tr = rtState.get(node.id)?.track
     return tr ? (port === 0 ? tr.x : port === 1 ? tr.y : tr.z) : 0
@@ -863,7 +874,7 @@ function dotPos(n, param) {
   const d = dots.find((x) => x.param === param)
   if (!d) return null
   const di = dots.indexOf(d)
-  return { x: n.x, y: n.y + HEAD_H + THUMB_H + 12 + di * 15 }
+  return { x: n.x, y: n.y + HEAD_H + thumbH(n) + 12 + di * 15 }
 }
 function jackPos(nodeId, param) {
   const n = nodes.find((x) => x.id === nodeId)
@@ -985,7 +996,7 @@ function fitToView() {
     const el = board.value.querySelector(`[data-node-id="${n.id}"]`)
     const hgt = el ? el.offsetHeight : 200
     minX = Math.min(minX, n.x); minY = Math.min(minY, n.y)
-    maxX = Math.max(maxX, n.x + NODE_W); maxY = Math.max(maxY, n.y + hgt)
+    maxX = Math.max(maxX, n.x + nodeW(n)); maxY = Math.max(maxY, n.y + hgt)
   }
   const pad = 60
   const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY)
@@ -1046,6 +1057,27 @@ function xyMove(n, e) {
 }
 function xyUp(n) {
   if (n.params.recenter) { n.params.x = 0.5; n.params.y = 0.5 } // spring back to centre
+  persist()
+}
+// Resize the XY pad by dragging its corner grip. Deltas are divided by the
+// board zoom so the pad tracks the cursor at any zoom level.
+const padResize = reactive({ node: null, startX: 0, startY: 0, w0: 0, h0: 0 })
+function padResizeDown(n, e) {
+  e.stopPropagation()
+  e.currentTarget.setPointerCapture(e.pointerId)
+  padResize.node = n; padResize.startX = e.clientX; padResize.startY = e.clientY
+  padResize.w0 = nodeW(n); padResize.h0 = thumbH(n)
+}
+function padResizeMove(e) {
+  if (!padResize.node) return
+  e.stopPropagation()
+  const z = view.zoom || 1
+  padResize.node.params.padW = Math.max(120, Math.min(560, padResize.w0 + (e.clientX - padResize.startX) / z))
+  padResize.node.params.padH = Math.max(80, Math.min(460, padResize.h0 + (e.clientY - padResize.startY) / z))
+}
+function padResizeUp() {
+  if (!padResize.node) return
+  padResize.node = null
   persist()
 }
 function startWire(n, e, port = 0) {
@@ -3307,7 +3339,7 @@ onBeforeUnmount(() => {
         :data-node-id="n.id"
         class="node"
         :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked, 'node--slow': nodeSlow(n) }"
-        :style="{ left: n.x + 'px', top: n.y + 'px', width: NODE_W + 'px', zIndex: n.id === frontNodeId ? 6 : (selectedSet.has(n.id) || selected === n.id ? 4 : undefined) }"
+        :style="{ left: n.x + 'px', top: n.y + 'px', width: nodeW(n) + 'px', zIndex: n.id === frontNodeId ? 6 : (selectedSet.has(n.id) || selected === n.id ? 4 : undefined) }"
         @pointerdown.capture="frontNodeId = n.id"
       >
         <div
@@ -3336,10 +3368,21 @@ onBeforeUnmount(() => {
         <div
           class="node-thumb"
           :ref="(el) => bindThumb(n.id, el)"
-          :style="{ height: THUMB_H + 'px', cursor: n.type === 'xy' ? 'crosshair' : undefined, touchAction: n.type === 'xy' ? 'none' : undefined }"
+          :style="{ height: thumbH(n) + 'px', cursor: n.type === 'xy' ? 'crosshair' : undefined, touchAction: n.type === 'xy' ? 'none' : undefined }"
           @pointerdown="n.type === 'xy' && xyDown(n, $event)"
           @pointermove="n.type === 'xy' && xyMove(n, $event)"
           @pointerup="n.type === 'xy' && xyUp(n)"
+        />
+        <!-- XY pad resize grip: drag the bottom-right corner of the pad to resize.
+             Kept a sibling of the thumb because bindThumb rewrites the thumb's DOM. -->
+        <div
+          v-if="n.type === 'xy'"
+          class="pad-grip"
+          :style="{ left: nodeW(n) - 15 + 'px', top: HEAD_H + thumbH(n) - 15 + 'px' }"
+          title="drag to resize the pad"
+          @pointerdown="padResizeDown(n, $event)"
+          @pointermove="padResizeMove($event)"
+          @pointerup="padResizeUp"
         />
 
         <!-- input ports (centered on the wire endpoint; diamond = matte/mask) -->
@@ -3376,7 +3419,7 @@ onBeforeUnmount(() => {
           :key="'out' + oi"
           class="port"
           :class="outKind(n) === 'matte' ? 'port--matte' : outKind(n) === 'control' ? 'port--control' : outKind(n) === 'geometry' ? 'port--geometry' : 'port--image'"
-          :style="{ left: NODE_W - 7 + 'px', top: HEAD_H + (THUMB_H * oi) / (outCount(n) + 1) - 7 + 'px' }"
+          :style="{ left: nodeW(n) - 7 + 'px', top: HEAD_H + (thumbH(n) * oi) / (outCount(n) + 1) - 7 + 'px' }"
           :title="OUT_LABELS[n.type]?.[oi - 1] ?? (outKind(n) === 'control' ? 'control out — drag to a param ▣' : 'output')"
           @pointerdown="startWire(n, $event, oi - 1)"
         />
@@ -3385,7 +3428,7 @@ onBeforeUnmount(() => {
             v-for="oi in outCount(n)"
             :key="'ol' + oi"
             class="port-label"
-            :style="{ left: NODE_W + 9 + 'px', top: HEAD_H + (THUMB_H * oi) / (outCount(n) + 1) - 7 + 'px' }"
+            :style="{ left: nodeW(n) + 9 + 'px', top: HEAD_H + (thumbH(n) * oi) / (outCount(n) + 1) - 7 + 'px' }"
           >{{ OUT_LABELS[n.type][oi - 1] }}</span>
         </template>
 
@@ -3605,10 +3648,24 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-if="n.type === 'xy'">
-            <div class="media-hint">Drag on the pad above to set X / Y — its output jacks drive linked params.</div>
+            <div class="media-hint">Drag on the pad above to set X / Y — its output jacks drive linked params. Drag the pad's bottom-right corner to resize it.</div>
+            <div class="xy-range">
+              <span class="portal-lbl">X output range</span>
+              <label>min <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.xMin ?? 0" @update:model-value="n.params.xMin = $event" @commit="persist" /></label>
+              <label>max <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.xMax ?? 1" @update:model-value="n.params.xMax = $event" @commit="persist" /></label>
+              <span class="portal-lbl">Y output range</span>
+              <label>min <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.yMin ?? 0" @update:model-value="n.params.yMin = $event" @commit="persist" /></label>
+              <label>max <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.yMax ?? 1" @update:model-value="n.params.yMax = $event" @commit="persist" /></label>
+            </div>
+            <label>response curve
+              <select v-model="n.params.curve" @change="persist" @pointerdown.stop>
+                <option v-for="c in INPUT_CURVES" :key="c" :value="c">{{ c }}</option>
+              </select>
+            </label>
             <label class="chk"><input type="checkbox" v-model="n.params.recenter" @change="persist" @pointerdown.stop /> spring back to centre on release</label>
             <div class="shape-row">
               <button class="shape-btn" @pointerdown.stop @click="n.params.x = 0.5; n.params.y = 0.5; persist()">reset to centre</button>
+              <button class="shape-btn" @pointerdown.stop @click="n.params.padW = NODE_W; n.params.padH = THUMB_H; persist()">reset size</button>
             </div>
           </template>
 
@@ -3779,6 +3836,12 @@ onBeforeUnmount(() => {
 .cue-mini:hover { border-color: #7c8cff; }
 .portal-cell { font-size: 10px; }
 .node-thumb { width: 100%; background: #000; }
+.pad-grip {
+  position: absolute; width: 15px; height: 15px; z-index: 5; cursor: nwse-resize; touch-action: none;
+  background: linear-gradient(135deg, transparent 46%, rgba(224,160,96,0.85) 46% 60%, transparent 60% 72%, rgba(224,160,96,0.85) 72% 86%, transparent 86%);
+}
+.xy-range { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px; align-items: center; margin-bottom: 4px; }
+.xy-range .portal-lbl { grid-column: 1 / -1; }
 .node-thumb :deep(canvas) { width: 100%; height: 100%; display: block; }
 .node-body { padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; }
 .node-body select, .node-body label { font: 11px system-ui, sans-serif; color: #cdd3e0; }
