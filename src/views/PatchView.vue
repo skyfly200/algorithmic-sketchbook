@@ -166,7 +166,25 @@ const PARAM_RANGES = {
   // vertices are edited by dragging on the output.
   shape: { feather: [0, 0.5] },
 }
-const TEXT_FONTS = ['sans-serif', 'serif', 'monospace', 'system-ui', 'cursive']
+// Fallback font list (generic families + common web-safe faces) used until the
+// user loads their real installed fonts via the Local Font Access API.
+const TEXT_FONTS = [
+  'system-ui', 'sans-serif', 'serif', 'monospace', 'cursive', 'fantasy',
+  'Georgia', 'Times New Roman', 'Courier New', 'Arial', 'Arial Black', 'Impact',
+  'Trebuchet MS', 'Verdana', 'Tahoma', 'Palatino Linotype', 'Garamond', 'Comic Sans MS', 'Brush Script MT',
+]
+const systemFonts = ref([])
+const fontList = computed(() => (systemFonts.value.length ? systemFonts.value : TEXT_FONTS))
+// Query the machine's installed fonts (Chromium's Local Font Access API — needs
+// a user gesture + permission). Falls back silently to TEXT_FONTS if blocked.
+async function loadSystemFonts() {
+  try {
+    if (!window.queryLocalFonts) { showToast('System fonts need a Chromium browser'); return }
+    const fonts = await window.queryLocalFonts()
+    const fams = [...new Set(fonts.map((f) => f.family))].sort((a, b) => a.localeCompare(b))
+    if (fams.length) { systemFonts.value = fams; showToast(`Loaded ${fams.length} system fonts`) }
+  } catch { showToast('Font access was blocked') }
+}
 // Portal destination shapes + aspect-ratio presets (for lock-proportions).
 const PORTAL_SHAPES = ['rectangle', 'ellipse', 'triangle', 'diamond', 'hexagon', 'star', 'heart']
 const MASK_MODES = ['multiply', 'screen', 'lighten', 'darken', 'overlay', 'add']
@@ -1681,23 +1699,28 @@ function evalNode(node) {
     octx.save()
     octx.translate(p.x * W, p.y * H)
     octx.rotate(((p.rotate ?? 0) * Math.PI) / 180)
-    octx.font = `${p.italic ? 'italic ' : ''}${Math.round(p.weight)} ${px}px ${p.font || 'sans-serif'}`
+    octx.font = `${p.italic ? 'italic ' : ''}${Math.round(p.weight)} ${px}px "${p.font || 'sans-serif'}"`
     octx.textAlign = 'center'
     octx.textBaseline = 'middle'
     octx.fillStyle = `hsl(${p.hue}, 90%, 62%)`
-    // letter-spacing (tracking) — draw glyph by glyph
-    const track = (p.tracking ?? 0) * px
-    const str = String(p.text ?? '')
-    let total = 0
-    for (const ch of str) total += octx.measureText(ch).width + track
-    total -= track
-    let cx = -total / 2
     if (p.glow > 0.01) { octx.shadowColor = `hsl(${p.hue}, 100%, 60%)`; octx.shadowBlur = px * 0.4 * p.glow }
-    for (const ch of str) {
-      const w = octx.measureText(ch).width
-      octx.fillText(ch, cx + w / 2, 0)
-      cx += w + track
-    }
+    // letter-spacing (tracking) drawn glyph-by-glyph; multiple lines stacked
+    const track = (p.tracking ?? 0) * px
+    const lines = String(p.text ?? '').split('\n')
+    const lineH = px * 1.18
+    const top = -(lineH * (lines.length - 1)) / 2
+    lines.forEach((line, li) => {
+      const y = top + li * lineH
+      let total = 0
+      for (const ch of line) total += octx.measureText(ch).width + track
+      total -= track
+      let cx = -total / 2
+      for (const ch of line) {
+        const w = octx.measureText(ch).width
+        octx.fillText(ch, cx + w / 2, y)
+        cx += w + track
+      }
+    })
     octx.restore()
     octx.shadowBlur = 0
   } else if (node.type === 'portal') {
@@ -3495,12 +3518,13 @@ onBeforeUnmount(() => {
             <button v-if="n.params.mode === 'camera' && cameraOn" class="load-btn" title="Flip between the front and back camera" @pointerdown.stop @click="flipCamera">🔄 Flip camera</button>
           </template>
           <template v-if="n.type === 'text'">
-            <input class="text-in" type="text" :value="n.params.text" placeholder="type…" @input="n.params.text = $event.target.value; persist()" @pointerdown.stop />
+            <textarea class="text-in" rows="2" :value="n.params.text" placeholder="type…&#10;(enter for a new line)" @input="n.params.text = $event.target.value; persist()" @pointerdown.stop @keydown.stop></textarea>
             <label>font
               <select v-model="n.params.font" @change="persist" @pointerdown.stop>
-                <option v-for="f in TEXT_FONTS" :key="f" :value="f">{{ f }}</option>
+                <option v-for="f in fontList" :key="f" :value="f">{{ f }}</option>
               </select>
             </label>
+            <button v-if="!systemFonts.length" class="load-btn" title="Use your installed system fonts (Chromium, asks permission)" @pointerdown.stop @click="loadSystemFonts">＋ System fonts</button>
             <label v-for="pk in ['size', 'weight', 'tracking', 'x', 'y', 'hue', 'rotate']" :key="pk">
               <span class="pjack" :ref="(el) => bindJack(n.id, pk, el)" :data-jack-node="n.id" :data-jack-param="pk" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, pk)" />
               {{ pk }}
@@ -3686,6 +3710,7 @@ onBeforeUnmount(() => {
 .text-in {
   width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #333;
   border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif;
+  resize: vertical; min-height: 30px;
 }
 .routing-rename { width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #3a4056; border-radius: 4px; font: 13px system-ui, sans-serif; padding: 2px 6px; }
 .routing-preview { width: 46px; height: 30px; margin-right: 10px; border-radius: 4px; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.12); flex: none; }
