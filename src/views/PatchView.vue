@@ -24,7 +24,7 @@ import perfScores from '../registry/perf.json'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
-import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, flipSharedCamera } from '../stores/media.js'
+import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, sharedCameraStream, flipSharedCamera } from '../stores/media.js'
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
 // feed, so in the graph they live behind a dedicated Filter node type that
 // pipes its video input straight into them.
@@ -1877,26 +1877,38 @@ function evalNode(node) {
       octx.stroke()
     }
   } else if (node.type === 'mask') {
+    // A luma matte, NOT a blend: the matte input's brightness becomes an alpha
+    // channel that reveals/hides the content. (Mixing two pictures is Blend's
+    // job — this cuts one picture to a shape/gradient.) The matte is keyed at a
+    // capped resolution for cheap per-frame luma→alpha conversion.
     const content = inputCanvas(node, 0)
     const mask = inputCanvas(node, 1)
     if (content) octx.drawImage(content, 0, 0, W, H)
-    if (mask) {
-      let m = mask
-      if (node.params.invert) {
-        // build an inverted matte (white − mask) in the node's temp canvas
-        const t = s.matte || (s.matte = document.createElement('canvas'))
-        if (t.width !== W || t.height !== H) { t.width = W; t.height = H }
-        const tx = t.getContext('2d')
-        tx.globalCompositeOperation = 'source-over'; tx.fillStyle = '#fff'; tx.fillRect(0, 0, W, H)
-        tx.globalCompositeOperation = 'difference'; tx.drawImage(mask, 0, 0, W, H)
-        tx.globalCompositeOperation = 'source-over'
-        m = t
-      }
-      octx.globalAlpha = node.params.strength ?? 1
-      octx.globalCompositeOperation = node.params.mode === 'add' ? 'lighter' : (node.params.mode || 'multiply')
-      octx.drawImage(m, 0, 0, W, H)
-      octx.globalAlpha = 1
-      octx.globalCompositeOperation = 'source-over'
+    if (content && mask) {
+      const mw = Math.min(360, W), mh = Math.max(1, Math.round((mw * H) / W))
+      const t = s.matte || (s.matte = document.createElement('canvas'))
+      if (t.width !== mw || t.height !== mh) { t.width = mw; t.height = mh }
+      const tx = s.matteCtx || (s.matteCtx = t.getContext('2d', { willReadFrequently: true }))
+      tx.clearRect(0, 0, mw, mh)
+      tx.drawImage(mask, 0, 0, mw, mh)
+      try {
+        const img = tx.getImageData(0, 0, mw, mh)
+        const d = img.data
+        const inv = !!node.params.invert
+        const strength = node.params.strength ?? 1
+        for (let i = 0; i < d.length; i += 4) {
+          let l = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255
+          if (inv) l = 1 - l
+          // strength dials how hard the matte cuts (0 = passes everything through)
+          const a = strength * l + (1 - strength)
+          d[i] = d[i + 1] = d[i + 2] = 255
+          d[i + 3] = Math.round(a * 255)
+        }
+        tx.putImageData(img, 0, 0)
+        octx.globalCompositeOperation = 'destination-in'
+        octx.drawImage(t, 0, 0, W, H)
+        octx.globalCompositeOperation = 'source-over'
+      } catch { /* tainted matte */ }
     }
   } else if (node.type === 'shape') {
     // Clip the input to an editable polygon — the projection-mapping mask.
@@ -1977,7 +1989,21 @@ function evalNode(node) {
   } else if (node.type === 'tracker') {
     // Camera/video tracking: find the brightest region of the input, emit its
     // smoothed x / y and apparent size (a stand-in for depth — nearer = bigger).
-    const input = inputCanvas(node, 0)
+    // With nothing wired in, fall back to the live shared camera so a bare
+    // Tracker node just works once the webcam is on.
+    let input = inputCanvas(node, 0)
+    if (!input) {
+      const stream = sharedCameraStream()
+      if (stream) {
+        if (!s.camVid || s.camVid.srcObject !== stream) {
+          const v = document.createElement('video')
+          v.muted = true; v.playsInline = true; v.autoplay = true; v.srcObject = stream
+          v.play().catch(() => {})
+          s.camVid = v
+        }
+        if (s.camVid.videoWidth) input = s.camVid
+      }
+    }
     if (input) {
       octx.drawImage(input, 0, 0, W, H)
       if (!s.tinyT) {
@@ -1990,7 +2016,7 @@ function evalNode(node) {
       s.tinyTx.drawImage(input, 0, 0, 48, 27)
       try {
         const d = s.tinyTx.getImageData(0, 0, 48, 27).data
-        const th = node.params.thresh * 255
+        const th = (node.params.thresh ?? 0.5) * 255
         let sx = 0, sy = 0, sw = 0
         for (let yy = 0; yy < 27; yy++) {
           for (let xx = 0; xx < 48; xx++) {
@@ -2004,7 +2030,7 @@ function evalNode(node) {
             }
           }
         }
-        const sm = node.params.smooth
+        const sm = node.params.smooth ?? 0.7
         if (sw > 0) {
           const nx = sx / sw / 48
           const ny = 1 - sy / sw / 27
@@ -3655,8 +3681,9 @@ onBeforeUnmount(() => {
             <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert</label>
           </template>
           <template v-if="n.type === 'tracker'">
-            <label>threshold <NumSlider :min="0.05" :max="0.95" :step="0.01" :model-value="n.params.thresh" @update:model-value="n.params.thresh = $event" @commit="persist" /></label>
-            <label>smoothing <NumSlider :min="0" :max="0.95" :step="0.01" :model-value="n.params.smooth" @update:model-value="n.params.smooth = $event" @commit="persist" /></label>
+            <div class="media-hint">Tracks the brightest blob. Wire a video source into the port on the left, or turn the webcam on and it tracks that. Outputs x / y / size — drag them to any param jack.</div>
+            <label>threshold <NumSlider :min="0.05" :max="0.95" :step="0.01" :model-value="n.params.thresh ?? 0.5" @update:model-value="n.params.thresh = $event" @commit="persist" /></label>
+            <label>smoothing <NumSlider :min="0" :max="0.95" :step="0.01" :model-value="n.params.smooth ?? 0.7" @update:model-value="n.params.smooth = $event" @commit="persist" /></label>
           </template>
           <template v-if="n.type === 'blend'">
             <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
@@ -3782,12 +3809,7 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-if="n.type === 'mask'">
-            <div class="media-hint">Wire the picture into <b>content</b> and a matte into <b>mask</b>.</div>
-            <label>combine
-              <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
-                <option v-for="m in MASK_MODES" :key="m" :value="m">{{ m }}</option>
-              </select>
-            </label>
+            <div class="media-hint">Cuts a picture to a shape. Wire the picture into <b>content</b> and a matte into <b>mask</b> — the matte’s brightness sets what shows through (bright = keep). To <em>mix</em> two pictures instead, use a Blend node.</div>
             <label>strength <NumSlider :min="0" :max="1" :step="0.02" :model-value="n.params.strength ?? 1" @update:model-value="n.params.strength = $event" @commit="persist" /></label>
             <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert matte</label>
           </template>
