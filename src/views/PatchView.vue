@@ -3339,7 +3339,7 @@ onBeforeUnmount(() => {
         :data-node-id="n.id"
         class="node"
         :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked, 'node--slow': nodeSlow(n) }"
-        :style="{ left: n.x + 'px', top: n.y + 'px', width: nodeW(n) + 'px', zIndex: n.id === frontNodeId ? 6 : (selectedSet.has(n.id) || selected === n.id ? 4 : undefined) }"
+        :style="{ left: n.x + 'px', top: n.y + 'px', width: nodeW(n) + 'px', zIndex: selected === n.id || n.id === frontNodeId ? 6 : (selectedSet.has(n.id) ? 5 : undefined) }"
         @pointerdown.capture="frontNodeId = n.id"
       >
         <div
