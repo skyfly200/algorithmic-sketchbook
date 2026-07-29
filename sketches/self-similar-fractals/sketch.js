@@ -25,7 +25,8 @@ const PALS = {
 }
 const params = rt.params({
   fractal: { value: 'Sierpinski triangle', type: 'select', options: ['Sierpinski triangle', 'Koch snowflake', 'Barnsley fern'], label: 'Figure' },
-  depth: { value: 6, min: 1, max: 8, step: 1, label: 'Recursion depth' },
+  depth: { value: 6, min: 1, max: 11, step: 1, label: 'Recursion depth' },
+  zoom: { value: 1, min: 1, max: 50, step: 0.5, label: 'Zoom' },
   palette: { value: 'Emerald', type: 'select', options: [...Object.keys(PALS), 'Random'], label: 'Palette' },
   spin: { value: 6, min: -60, max: 60, step: 1, label: 'Spin (°/s)' },
   angle: { value: 0, min: 0, max: 360, step: 1, label: 'Rotation' },
@@ -84,8 +85,8 @@ function kochEdge(ax, ay, bx2, by2, d, out) {
   kochEdge(px, py, x2, y2, d - 1, out)
   kochEdge(x2, y2, bx2, by2, d - 1, out)
 }
-function koch(g, d) {
-  const cx = D / 2, cy = D / 2, R = D * 0.4
+function koch(g, d, R = D * 0.4) {
+  const cx = D / 2, cy = D / 2
   const v = []
   for (let k = 0; k < 3; k++) { const a = -Math.PI / 2 + k * TAU / 3; v.push([cx + Math.cos(a) * R, cy + Math.sin(a) * R]) }
   const out = [v[0]]
@@ -101,11 +102,14 @@ function koch(g, d) {
 
 // --- Barnsley fern: the chaos game, accumulated over frames -----------------
 let fx = 0, fy = 0, fcount = 0
-const FERN_TARGET = 240000
+// point target grows with zoom so the fern keeps its density when magnified
+function fernTarget() { return Math.min(900000, Math.round(240000 * Math.sqrt(params.zoom))) }
 function fernReset() { fx = 0; fy = 0; fcount = 0 }
 function fernStep(g, iter) {
   g.globalCompositeOperation = 'lighter'
-  const sX = D * 0.088, sY = D * 0.092, ox = D / 2, oy = D * 0.985
+  const z = params.zoom
+  const sX = D * 0.088 * z, sY = D * 0.092 * z, ox = D / 2, oy = D / 2 + 5.27 * sY // zoom toward the fern body
+  const ps = Math.max(PR, PR * Math.min(3, Math.sqrt(z) * 0.7)) // fatten points when zoomed to hide gaps
   for (let i = 0; i < iter; i++) {
     const r = rt.rng()
     let nx, ny
@@ -115,30 +119,35 @@ function fernStep(g, iter) {
     else { nx = -0.15 * fx + 0.28 * fy; ny = 0.26 * fx + 0.24 * fy + 0.44 }
     fx = nx; fy = ny
     const px = ox + fx * sX, py = oy - fy * sY
+    if (px < -8 || px > D + 8 || py < -8 || py > D + 8) continue // cull off-buffer when zoomed
     const tt = fy / 10
     g.fillStyle = pcol(0.3 + tt * 0.55, 40 + tt * 22, 0.5)
-    g.fillRect(px, py, PR, PR)
+    g.fillRect(px, py, ps, ps)
   }
   g.globalCompositeOperation = 'source-over'
   fcount += iter
 }
 
+// deeper recursion as you zoom in, so magnifying reveals crisp new structure
+// rather than pixels; capped per figure to keep the one-time render tractable.
+function effDepth(cap) { return Math.min(cap, Math.round(params.depth) + Math.floor(Math.log2(Math.max(1, params.zoom)))) }
+
 function renderStatic() {
   bx.setTransform(1, 0, 0, 1, 0, 0)
   bx.clearRect(0, 0, D, D)
   if (params.fractal === 'Sierpinski triangle') {
-    const cx = D / 2, cy = D / 2, R = D * 0.46
+    const cx = D / 2, cy = D / 2, R = D * 0.46 * params.zoom
     const v = []
     for (let k = 0; k < 3; k++) { const a = -Math.PI / 2 + k * TAU / 3; v.push([cx + Math.cos(a) * R, cy + Math.sin(a) * R]) }
-    sierp(bx, v[0], v[1], v[2], Math.round(params.depth))
+    sierp(bx, v[0], v[1], v[2], effDepth(12))
   } else if (params.fractal === 'Koch snowflake') {
-    koch(bx, Math.min(6, Math.round(params.depth)))
+    koch(bx, effDepth(7), D * 0.4 * params.zoom)
   } else {
     fernReset() // fern fills in progressively in frame()
   }
 }
 
-function key() { return [params.fractal, params.depth, params.palette, W, H, PR].join('|') }
+function key() { return [params.fractal, params.depth, params.zoom, params.palette, W, H, PR].join('|') }
 let lastKey = '', rot = 0, prevPalette = '', last = 0
 function frame(now) {
   rt.tick(now)
@@ -148,7 +157,7 @@ function frame(now) {
   prevPalette = params.palette
   const k = key()
   if (k !== lastKey) { renderStatic(); lastKey = k }
-  if (params.fractal === 'Barnsley fern' && fcount < FERN_TARGET) fernStep(bx, 4500)
+  if (params.fractal === 'Barnsley fern' && fcount < fernTarget()) fernStep(bx, 4500)
 
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.fillStyle = '#04060a'; ctx.fillRect(0, 0, W, H)
