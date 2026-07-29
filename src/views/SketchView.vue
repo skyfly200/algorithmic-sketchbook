@@ -31,8 +31,28 @@ const frameSrc = computed(() => {
   if (seed.value != null) s += (s.includes('?') ? '&' : '?') + 'seed=' + seed.value
   return s
 })
+// Randomize = a fresh generative variation. Reseeding alone only changes
+// sketches that derive structure from rt.rng, so most (param-driven) effects
+// looked unchanged. Now it also shuffles the sketch's own params: bump the
+// seed (reloads the frame) and apply randomized param values once it re-readies.
+let pendingRandom = false
 function randomize() {
   seed.value = Math.floor(Math.random() * 1e9).toString(36)
+  pendingRandom = true
+}
+function randomizeParams() {
+  const sch = controls.value?.schema
+  if (!sch) return
+  for (const [name, spec] of Object.entries(sch)) {
+    if (spec.type === 'bool') setParam(name, Math.random() < 0.5)
+    else if (spec.type === 'select' && Array.isArray(spec.options) && spec.options.length)
+      setParam(name, spec.options[Math.floor(Math.random() * spec.options.length)])
+    else if (typeof spec.min === 'number') {
+      const step = spec.step || (spec.max - spec.min) / 100 || 0.01
+      const v = spec.min + Math.round((Math.random() * (spec.max - spec.min)) / step) * step
+      setParam(name, +v.toFixed(6))
+    }
+  }
 }
 
 const frame = ref(null)
@@ -73,6 +93,9 @@ function onMessage(e) {
     const scene = pendingScene
     pendingScene = null
     applyScene(scene)
+  } else if (pendingRandom) {
+    pendingRandom = false
+    randomizeParams()
   }
 }
 
