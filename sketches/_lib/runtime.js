@@ -536,6 +536,10 @@ export function createRuntime() {
       setMappings(msg.mappings)
       if (msg.audio) applyAudio(msg.audio)
       applyModulation(performance.now())
+    } else if (msg.type === 'sketch:beat') {
+      // A host (Patch) wired an Input node to this effect's beat trigger — fire
+      // a manual beat so beat-driven sketches pulse from any input source.
+      beat.trigger(typeof msg.energy === 'number' ? msg.energy : 1)
     } else if (msg.type === 'input:beat' && msg.state) {
       // A parent compositor (Mixer/Patch) runs its own mic and feeds beat
       // state into embedded layers, which run in preview mode without their

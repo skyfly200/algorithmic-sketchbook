@@ -967,6 +967,7 @@ function removeLink(idx) {
 // operating point and the input signal modulates up from it, and you can still
 // turn the knob while it's patched.
 const liveParams = new Map() // nodeId -> { param: liveValue }
+const beatEdge = new Map() // nodeId -> last beat-jack signal, for rising-edge detection
 function pval(n, key) {
   const lv = liveParams.get(n.id)
   return lv && key in lv ? lv[key] : n.params[key]
@@ -979,6 +980,16 @@ function applyLinks(now) {
     if (!from || !tgt || outKind(from) !== 'control') continue
     const v = controlValue(from, l.srcPort ?? 0, now) // 0..1 control signal
     const depth = l.depth ?? 1
+    // A wire onto an effect's synthetic "beat" jack fires a manual beat on the
+    // rising edge of the signal, so any input can trigger beat-driven sketches.
+    if (l.param === '__beat') {
+      if (tgt.type === 'effect' || tgt.type === 'filter') {
+        const prev = beatEdge.get(tgt.id) ?? 0
+        if (v >= 0.6 && prev < 0.6) postToEffect(tgt.id, { type: 'sketch:beat', energy: v })
+        beatEdge.set(tgt.id, v)
+      }
+      continue
+    }
     if (tgt.type === 'effect' || tgt.type === 'filter') {
       const spec = effectControls.get(tgt.id)?.schema?.[l.param]
       if (spec && typeof spec.min === 'number') {
@@ -3623,6 +3634,12 @@ onBeforeUnmount(() => {
                 @click="toggleParams(n.id)"
               >⚙</button>
             </div>
+            <!-- beat trigger: drop an Input wire here to fire beats on this
+                 effect from any source (rising edge of the signal) -->
+            <label class="beat-jack">
+              <span class="pjack pjack--beat" :ref="(el) => bindJack(n.id, '__beat', el)" :data-jack-node="n.id" data-jack-param="__beat" title="beat trigger — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, '__beat')" />
+              beat trigger
+            </label>
 
             <!-- effect params + mappings (same protocol as the viewer/Mixer) -->
             <div v-if="showParams.get(n.id) && effectControls.get(n.id)" class="params" @pointerdown.stop>
@@ -3944,6 +3961,8 @@ onBeforeUnmount(() => {
 .node-lock { cursor: pointer; color: rgba(0,0,0,0.55); margin-right: 2px; }
 .node-lock:hover { color: rgba(0,0,0,0.85); }
 .node-keep-on { color: #2b6cff; }
+.beat-jack { display: flex; align-items: center; gap: 6px; font: 11px system-ui; color: #cdd3e0; margin-top: 2px; }
+.pjack--beat { background: #ff5a7a; }
 .color-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .eff-color { width: 44px; height: 22px; padding: 0; border: 1px solid #333; border-radius: 4px; background: transparent; cursor: pointer; }
 .overwrite-warn { border: 1px solid rgba(255, 176, 32, 0.5); background: rgba(255, 176, 32, 0.08); border-radius: 6px; padding: 6px 8px; }
