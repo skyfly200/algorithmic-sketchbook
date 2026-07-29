@@ -2918,8 +2918,11 @@ onMounted(async () => {
       }
     } catch { /* fall through to normal load */ }
   }
-  // Deep link from the Library: ?load=<id> opens a saved routing.
-  const loadId = new URLSearchParams(location.hash.split('?')[1] || '').get('load')
+  // Deep link from the Library / Display mode: ?load=<id> opens a saved
+  // routing, &output=1 starts chrome-free (for projection).
+  const qs = new URLSearchParams(location.hash.split('?')[1] || '')
+  const loadId = qs.get('load')
+  if (qs.get('output') === '1') outputOnly.value = true
   if (loadId) {
     const r = savedRoutings.value.find((x) => x.id === loadId)
     if (r) {

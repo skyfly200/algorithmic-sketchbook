@@ -20,8 +20,23 @@ const router = useRouter()
 const store = useSketchStore()
 const viewer = useViewerStore()
 
-// Only effects we can actually embed can be projected.
-const playlist = computed(() => store.sketches.filter((s) => s.embed && s.url))
+// Display mode can project two kinds of source: the built-in effects, or the
+// Patch routings the user has saved. A selector switches between the two pools.
+const source = ref('effects') // 'effects' | 'patches'
+function loadSavedPatches() {
+  try { return JSON.parse(localStorage.getItem('sketchbook-patch-saved')) || [] } catch { return [] }
+}
+const savedPatches = ref(loadSavedPatches())
+
+const playlist = computed(() => {
+  if (source.value === 'patches') {
+    return savedPatches.value.map((p) => ({ kind: 'patch', id: p.id, title: p.name || 'Patch' }))
+  }
+  // Only effects we can actually embed can be projected.
+  return store.sketches
+    .filter((s) => s.embed && s.url)
+    .map((s) => ({ kind: 'effect', slug: s.slug, title: s.title, url: s.url, standalone: s.standalone }))
+})
 
 const index = ref(0)
 const stage = ref(null)
@@ -32,17 +47,26 @@ let hideTimer = null
 const current = computed(() => playlist.value[index.value] ?? null)
 
 const frameSrc = computed(() => {
-  const s = current.value
-  if (!s) return ''
-  return s.standalone ? s.url : s.url + viewer.sketchParams
+  const c = current.value
+  if (!c) return ''
+  if (c.kind === 'patch') return `${import.meta.env.BASE_URL}#/patch?load=${encodeURIComponent(c.id)}&output=1`
+  return c.standalone ? c.url : c.url + viewer.sketchParams
 })
+
+// Switching source pool restarts the playlist and re-reads saved patches.
+function setSource(s) {
+  if (s === source.value) return
+  if (s === 'patches') savedPatches.value = loadSavedPatches()
+  source.value = s
+  index.value = 0
+}
 
 // --- switching ----------------------------------------------------------
 function goTo(i) {
   const n = playlist.value.length
   if (!n) return
   index.value = ((i % n) + n) % n
-  const slug = current.value?.slug
+  const slug = current.value?.kind === 'effect' ? current.value?.slug : null
   if (slug && route.params.slug !== slug) {
     router.replace({ name: 'present-slug', params: { slug } })
   }
@@ -119,7 +143,7 @@ onUnmounted(() => {
     <transition name="fade" mode="default">
       <iframe
         v-if="current"
-        :key="current.slug + frameSrc"
+        :key="frameSrc"
         :src="frameSrc"
         class="present-frame"
         allow="fullscreen; microphone; camera; accelerometer; gyroscope; xr-spatial-tracking"
@@ -131,7 +155,7 @@ onUnmounted(() => {
       class="present-empty"
       icon="mdi-monitor-off"
       title="Nothing to project"
-      text="No embeddable effects are available yet."
+      :text="source === 'patches' ? 'No saved patches yet — build and save one in the Patch editor.' : 'No embeddable effects are available yet.'"
     />
 
     <!-- Edge tap zones for click-to-switch (touchscreens / kiosks) -->
@@ -141,6 +165,19 @@ onUnmounted(() => {
     <transition name="bar">
       <div v-show="controlsVisible && current" class="control-bar">
         <v-btn icon="mdi-close" variant="text" size="small" title="Exit display mode" @click="leave" />
+
+        <v-btn-toggle
+          :model-value="source"
+          density="compact"
+          variant="outlined"
+          divided
+          mandatory
+          class="source-toggle"
+          @update:model-value="setSource"
+        >
+          <v-btn value="effects" size="small" prepend-icon="mdi-shape">Effects</v-btn>
+          <v-btn value="patches" size="small" prepend-icon="mdi-vector-polyline">Patches</v-btn>
+        </v-btn-toggle>
 
         <v-btn icon="mdi-skip-previous" variant="text" @click="prev" />
         <v-btn
@@ -268,6 +305,12 @@ onUnmounted(() => {
 }
 .interval-select {
   max-width: 96px;
+}
+.source-toggle {
+  height: 32px;
+}
+.source-toggle :deep(.v-btn) {
+  height: 32px;
 }
 
 .fade-enter-active,
