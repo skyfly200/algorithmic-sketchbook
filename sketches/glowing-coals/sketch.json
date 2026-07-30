@@ -1,6 +1,6 @@
 {
   "title": "Glowing Coals",
-  "description": "A bed of embers breathing in the dark — crusted charcoal chunks packed together, molten-orange heat glowing up through the cracks between them, brightening and dimming as unseen draughts fan across the bed. Blow on it (move the pointer) to fan a patch hotter; beats gust the whole bed alive and lift the odd spark. Heat, airflow, crust, cracks and palette are live and mappable.",
+  "description": "A bed of embers breathing in the dark — rounded charcoal lumps and angular charred-wood chunks packed together, each shaded with a directional highlight and shadow so it reads as a 3D lump rather than a flat disc, with molten-orange heat glowing up through the cracks. Incoming airflow sweeps a bright ripple of pooled oxygen across the bed in the direction you set, flaring embers hotter as it passes; a bank of pale grey-white ash rises along the bottom where the coals sit, catching a little ember glow at its crest. Blow on it (move the pointer) to fan a patch hotter; beats gust the whole bed alive and lift the odd spark. Heat, airflow amount and direction, crust, cracks, wood-chunk and ash amount, coal size and palette are live and mappable.",
   "tags": ["fire", "coals", "embers", "generative", "audio-reactive"],
   "tech": ["canvas2d"],
   "created": "2026-07-22"

@@ -12,10 +12,13 @@ const ctx = canvas.getContext('2d')
 
 const params = rt.params({
   heat: { value: 1, min: 0.3, max: 2, step: 0.05, label: 'Heat' },
-  airflow: { value: 0.6, min: 0, max: 1.5, step: 0.05, label: 'Airflow' },
+  airflow: { value: 0.6, min: 0, max: 1.5, step: 0.05, label: 'Airflow amount' },
+  airDir: { value: 20, min: 0, max: 360, step: 1, label: 'Airflow direction' },
   crust: { value: 0.7, min: 0.2, max: 1, step: 0.02, label: 'Crust darkness' },
   cracks: { value: 0.4, min: 0.05, max: 0.8, step: 0.02, label: 'Crack width' },
   coalSize: { value: 1, min: 0.5, max: 2, step: 0.05, label: 'Coal size' },
+  wood: { value: 0.35, min: 0, max: 1, step: 0.02, label: 'Wood chunks' },
+  ash: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Ash below' },
   hue: { value: 22, min: 0, max: 45, step: 1, label: 'Ember hue' },
   sparks: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Sparks' },
 })
@@ -25,6 +28,8 @@ rt.mapInput('audio.pulse', 'heat', 0.25)
 let W = 0, H = 0, PR = 1
 let coals = []
 let hotspots = []
+let ashClumps = []
+let ashEdge = [] // wavy top-edge heights of the ash bank
 
 // Trace a closed, rounded blob through the coal's vertices: draw quadratic
 // curves through the midpoints of each edge, using the vertices as control
@@ -37,6 +42,14 @@ function traceBlob(c, verts, scale) {
   for (let i = 0; i < n; i++) c.quadraticCurveTo(verts[i][0] * scale, verts[i][1] * scale, mx(i), my(i))
   c.closePath()
 }
+// Angular trace for charred wood chunks — straight edges through the vertices
+// so they read as split, splintered sticks rather than smooth pebbles.
+function traceChunk(c, verts, scale) {
+  const n = verts.length
+  c.moveTo(verts[0][0] * scale, verts[0][1] * scale)
+  for (let i = 1; i < n; i++) c.lineTo(verts[i][0] * scale, verts[i][1] * scale)
+  c.closePath()
+}
 
 function buildCoals() {
   coals = []
@@ -47,23 +60,47 @@ function buildCoals() {
     for (let x = -step; x < W + step; x += step) {
       const cx = x + rt.random(-jit, jit)
       const cy = y + rt.random(-jit, jit)
-      const nv = 9 + Math.floor(rt.random(0, 4))
+      // a fraction are angular, elongated charred-wood chunks; the rest pebbles
+      const wood = rt.rng() < params.wood
+      const nv = wood ? 6 + Math.floor(rt.random(0, 3)) : 9 + Math.floor(rt.random(0, 4))
       const rBase = step * 0.62 * rt.random(0.85, 1.14)
+      const aspect = wood ? rt.random(1.8, 3.0) : 1 // stretch wood into sticks
+      const rot = rt.random(0, Math.PI)
+      const cr = Math.cos(rot), sr = Math.sin(rot)
       const verts = []
       for (let k = 0; k < nv; k++) {
-        const a = (k / nv) * Math.PI * 2 + rt.random(-0.12, 0.12)
-        const rr = rBase * rt.random(0.68, 1.08)
-        verts.push([Math.cos(a) * rr, Math.sin(a) * rr])
+        const a = (k / nv) * Math.PI * 2 + rt.random(-0.12, wood ? 0.28 : 0.12)
+        const rr = rBase * rt.random(wood ? 0.55 : 0.68, wood ? 1.15 : 1.08)
+        // stretch along local x, then rotate to a random heading
+        let vx = Math.cos(a) * rr * aspect, vy = Math.sin(a) * rr / Math.sqrt(aspect)
+        verts.push([vx * cr - vy * sr, vx * sr + vy * cr])
       }
       // baked ash flecks, in local coords, for a crusty ashen surface texture
       const flecks = []
       for (let k = 0; k < 6; k++) flecks.push([rt.random(-rBase * 0.6, rBase * 0.6), rt.random(-rBase * 0.6, rBase * 0.6), rt.random(1.2, 3) * PR])
       coals.push({
-        x: cx, y: cy, verts, flecks, r: rBase,
+        x: cx, y: cy, verts, flecks, r: rBase, wood,
         ox: rt.random(-0.28, 0.28) * rBase, oy: rt.random(-0.28, 0.28) * rBase,
         base: rt.random(0.35, 1), phase: rt.random(0, 6.28), rate: rt.random(0.3, 1.1),
       })
     }
+  }
+}
+
+function buildAsh() {
+  // pale ash clumps dusted over the bed, weighted toward the bottom, plus a
+  // wavy top edge for the ash bank the coals sit in
+  ashClumps = []
+  const n = 90 + Math.floor(W * H / (14000 * PR * PR))
+  for (let i = 0; i < n; i++) {
+    const yb = Math.pow(rt.rng(), 0.5) // bias downward
+    ashClumps.push({ x: rt.random(0, W), y: H * (1 - yb * 0.55), r: rt.random(6, 26) * PR, g: rt.random(0.5, 1), white: rt.rng() < 0.3 })
+  }
+  ashEdge = []
+  const N = 48
+  for (let i = 0; i <= N; i++) {
+    const x = i / N
+    ashEdge.push(0.02 * Math.sin(x * Math.PI * 2 * 3 + 1.3) + 0.014 * Math.sin(x * Math.PI * 2 * 7 + 4) + rt.random(-0.01, 0.01))
   }
 }
 
@@ -84,6 +121,44 @@ function resize() {
   H = canvas.height = Math.floor(window.innerHeight * PR)
   buildCoals()
   buildHotspots()
+  buildAsh()
+}
+
+// A bank of pale grey-white ash the coals sit in, rising along the bottom edge,
+// mottled and catching a little ember glow at its crest.
+function drawAsh(hue) {
+  const amt = params.ash
+  if (amt <= 0.01) return
+  ctx.globalCompositeOperation = 'source-over'
+  const baseTop = H * (1 - 0.05 - amt * 0.16)
+  const topAt = (x) => baseTop + (ashEdge.length ? ashEdge[Math.round(x / W * (ashEdge.length - 1))] : 0) * H
+  ctx.beginPath()
+  ctx.moveTo(0, H)
+  ctx.lineTo(0, topAt(0))
+  for (let i = 0; i < ashEdge.length; i++) ctx.lineTo(i / (ashEdge.length - 1) * W, topAt(i / (ashEdge.length - 1) * W))
+  ctx.lineTo(W, H); ctx.closePath()
+  ctx.save(); ctx.clip()
+  const g = ctx.createLinearGradient(0, baseTop - H * 0.05, 0, H)
+  g.addColorStop(0, 'rgba(205,200,193,0)')
+  g.addColorStop(0.18, `rgba(198,193,186,${0.9 * amt})`)
+  g.addColorStop(1, `rgba(150,146,140,${0.96 * amt})`)
+  ctx.fillStyle = g; ctx.fillRect(0, baseTop - H * 0.1, W, H)
+  // mottle the ash with grey/white clumps
+  for (const a of ashClumps) {
+    if (a.y < baseTop - H * 0.02) continue
+    const lg = a.white ? 235 : 150 + a.g * 60
+    ctx.fillStyle = `rgba(${lg},${lg - 6},${lg - 12},${0.1 + a.g * 0.14})`
+    ctx.beginPath(); ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2); ctx.fill()
+  }
+  ctx.restore()
+  // warm ember glow licking the ash crest
+  ctx.globalCompositeOperation = 'lighter'
+  ctx.strokeStyle = `hsla(${hue + 8}, 100%, 55%, ${0.25 * amt})`
+  ctx.lineWidth = 4 * PR
+  ctx.beginPath()
+  for (let i = 0; i < ashEdge.length; i++) { const x = i / (ashEdge.length - 1) * W; i ? ctx.lineTo(x, topAt(x)) : ctx.moveTo(x, topAt(x)) }
+  ctx.stroke()
+  ctx.globalCompositeOperation = 'source-over'
 }
 
 const ptr = { x: -1e9, y: -1e9, t: -1e9 }
@@ -94,6 +169,7 @@ let gust = 0
 rt.onBeat(({ energy }) => { gust = 0.5 + energy * 0.6 })
 
 let lastSize = 1
+let lastWood = 0.35
 let last = 0
 function frame(now) {
   rt.tick(now)
@@ -101,7 +177,10 @@ function frame(now) {
   const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016)
   last = now
   gust = Math.max(0, gust - dt * 1.2)
-  if (params.coalSize !== lastSize) { lastSize = params.coalSize; buildCoals() }
+  if (params.coalSize !== lastSize || params.wood !== lastWood) { lastSize = params.coalSize; lastWood = params.wood; buildCoals() }
+  // airflow blows in this direction; the glow ripples across the bed along it
+  const adRad = params.airDir * Math.PI / 180
+  const adx = Math.cos(adRad), ady = Math.sin(adRad)
 
   // drift the hot spots slowly, bouncing off the frame's inner margins
   for (const s of hotspots) {
@@ -134,6 +213,11 @@ function frame(now) {
     const breath = 0.72 + 0.28 * Math.sin(t * 0.8 * (0.5 + params.airflow) - c.x * 0.004 - c.y * 0.0025)
     let h = c.base * (0.55 + 0.45 * Math.sin(t * c.rate + c.phase)) * breath
     h *= 1 + params.airflow * 0.35 * Math.sin(t * 0.7 + c.x * 0.003)
+    // incoming airflow: a bright ripple of pooled oxygen sweeps across the bed
+    // along the airflow direction, flaring embers hotter as it passes over them
+    const proj = (c.x * adx + c.y * ady) * 0.011
+    const ripple = Math.sin(proj - t * (1.2 + params.airflow * 2.2))
+    h += params.airflow * 0.5 * Math.max(0, ripple) * (0.6 + 0.4 * ripple)
     h += gust * 0.4
     for (const s of hotspots) {
       const d = Math.hypot(c.x - s.x, c.y - s.y)
@@ -168,7 +252,7 @@ function frame(now) {
     const hot = Math.max(0, h - 0.9) // white-hot excess
     ctx.save()
     ctx.translate(c.x, c.y)
-    ctx.beginPath(); traceBlob(ctx, c.verts, crackScale)
+    ctx.beginPath(); (c.wood ? traceChunk : traceBlob)(ctx, c.verts, crackScale)
     const r = c.r * crackScale * 1.05
     const g = ctx.createRadialGradient(c.ox * 0.4, c.oy * 0.4, 0, 0, 0, r)
     const coreSat = Math.round(92 - cool * 74)
@@ -179,13 +263,25 @@ function frame(now) {
     g.addColorStop(1, `hsl(${hue - 8 + cool * 10}, ${Math.round(40 - cool * 26)}%, ${rimLight}%)`)
     ctx.fillStyle = g
     ctx.fill()
-    // crust mottle: dark ash flecks, stronger and greyer on the cooler coals
+    // crust mottle + directional 3D relief, both clipped to the coal
     ctx.save(); ctx.clip()
     for (const [fx, fy, fr] of c.flecks) {
       const a = (0.22 + cool * 0.5)
       ctx.fillStyle = `hsla(24, ${Math.round(10 + cool * 12)}%, ${Math.round(Math.max(6, 30 - h * 18))}%, ${a})`
       ctx.beginPath(); ctx.arc(fx * crackScale, fy * crackScale, fr, 0, 6.28); ctx.fill()
     }
+    // lit top-left highlight → the coal reads as a rounded 3D lump, not a disc
+    const lit = ctx.createRadialGradient(-r * 0.45, -r * 0.5, 0, -r * 0.45, -r * 0.5, r * 1.35)
+    lit.addColorStop(0, `rgba(255,236,205,${0.16 + h * 0.12})`)
+    lit.addColorStop(0.6, 'rgba(255,230,200,0)')
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = lit
+    ctx.fillRect(-r * 2, -r * 2, r * 4, r * 4)
+    // shadowed bottom-right for form
+    const shd = ctx.createRadialGradient(r * 0.5, r * 0.55, 0, r * 0.5, r * 0.55, r * 1.25)
+    shd.addColorStop(0, `rgba(0,0,0,${0.2 + cool * 0.16})`)
+    shd.addColorStop(0.7, 'rgba(0,0,0,0)')
+    ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = shd
+    ctx.fillRect(-r * 2, -r * 2, r * 4, r * 4)
     ctx.restore()
     // faint hot rim where a hot coal meets the cooler cracks around it
     if (h > 0.15) {
@@ -213,6 +309,9 @@ function frame(now) {
     }
     ctx.globalCompositeOperation = 'source-over'
   }
+
+  // 5) the pale ash bank the coals sit in
+  drawAsh(hue)
 
   requestAnimationFrame(frame)
 }
