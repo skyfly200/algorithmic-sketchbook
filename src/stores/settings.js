@@ -36,6 +36,9 @@ export const useSettingsStore = defineStore('settings', {
       legacyIn, // legacy inclusion list awaiting migration (null once migrated)
       favorites: s.favorites ?? [], // starred effect slugs — surfaced first in Featured
       persistEditors: s.persistEditors ?? true, // remember editor working state across refreshes
+      audioDeviceId: s.audioDeviceId ?? '', // preferred mic ('' = system default)
+      midiEnabled: s.midiEnabled ?? false, // has the user set MIDI up? (hides it in input lists until then)
+      midiChannel: s.midiChannel ?? 0, // 0 = all channels, 1..16 = a specific channel
     }
   },
   getters: {
@@ -45,7 +48,10 @@ export const useSettingsStore = defineStore('settings', {
   },
   actions: {
     persist() {
-      const data = { tutorials: this.tutorials, seen: this.seen, favorites: this.favorites, persistEditors: this.persistEditors }
+      const data = {
+        tutorials: this.tutorials, seen: this.seen, favorites: this.favorites, persistEditors: this.persistEditors,
+        audioDeviceId: this.audioDeviceId, midiEnabled: this.midiEnabled, midiChannel: this.midiChannel,
+      }
       if (this.effectOff !== null) data.effectOff = this.effectOff
       else if (this.legacyIn) data.effectPool = this.legacyIn // keep legacy until migrated
       localStorage.setItem(KEY, JSON.stringify(data))
@@ -59,6 +65,11 @@ export const useSettingsStore = defineStore('settings', {
       this.persist()
     },
     setPersistEditors(on) { this.persistEditors = !!on; this.persist() },
+    // Audio + MIDI input setup (shared across the viewer and the compositors,
+    // threaded into sketches via URL params).
+    setAudioDevice(id) { this.audioDeviceId = id || ''; this.persist() },
+    setMidiEnabled(on) { this.midiEnabled = !!on; this.persist() },
+    setMidiChannel(ch) { this.midiChannel = Math.max(0, Math.min(16, ch | 0)); this.persist() },
     // Wipe the editors' working state (but not the saved library). The editors
     // read their state at mount, so a reload gives them a clean slate.
     clearSession() {

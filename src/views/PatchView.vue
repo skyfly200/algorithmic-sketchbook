@@ -17,6 +17,7 @@ import { useRouter } from 'vue-router'
 import { useSketchStore, CATEGORIES } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
 import { PATCH_HANDOFF_KEY } from '../lib/mixToPatch'
+import { inputParams } from '../lib/inputParams'
 import TourOverlay from '../components/TourOverlay.vue'
 import NumSlider from '../components/NumSlider.vue'
 import ColorField from '../components/ColorField.vue'
@@ -239,10 +240,14 @@ const BLENDS = [
 const INPUT_GROUPS = computed(() => {
   const groups = { audio: [], midi: [], mouse: [], touch: [], tilt: [], time: [], leap: [], artnet: [] }
   for (const s of INPUT_SOURCES) {
+    if (s.startsWith('midi.')) continue // MIDI handled below (hidden until set up)
     const head = s.split('.')[0]
     const g = head === 'shake' ? 'tilt' : head
     ;(groups[g] ?? (groups[g] = [])).push(s)
   }
+  // MIDI stays hidden until it's set up in Settings; once set up it's a single
+  // entry (the channel is chosen globally there, not per-mapping).
+  if (settings.midiEnabled) groups.midi = ['midi.cc1', 'midi.note', 'midi.velocity']
   return Object.entries(groups).filter(([, list]) => list.length)
 })
 
@@ -1318,7 +1323,7 @@ function effectSrc(n) {
   // A per-node seed drives the sketch's generative variation; changing it
   // reloads the frame with a fresh look (the node's random seed input).
   const seed = n.params.seed ? `&seed=${encodeURIComponent(n.params.seed)}` : ''
-  return s ? `${s.url}?capture=1&preview=1&quality=high&nomap=1${seed}` : ''
+  return s ? `${s.url}?capture=1&preview=1&quality=high&nomap=1${seed}${inputParams(settings)}` : ''
 }
 function randSeed() { return Math.floor(Math.random() * 1e9).toString(36) }
 function reseedNode(n) { n.params.seed = randSeed(); persist() } // new generative look

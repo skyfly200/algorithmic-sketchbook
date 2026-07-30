@@ -14,11 +14,14 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSketchStore } from '../stores/sketches'
 import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
+import { useSettingsStore } from '../stores/settings'
+import { inputParams } from '../lib/inputParams'
 
 const route = useRoute()
 const router = useRouter()
 const store = useSketchStore()
 const viewer = useViewerStore()
+const settings = useSettingsStore()
 
 // Display mode can project two kinds of source: the built-in effects, or the
 // Patch routings the user has saved. A selector switches between the two pools.
@@ -50,7 +53,7 @@ const frameSrc = computed(() => {
   const c = current.value
   if (!c) return ''
   if (c.kind === 'patch') return `${import.meta.env.BASE_URL}#/patch?load=${encodeURIComponent(c.id)}&output=1`
-  return c.standalone ? c.url : c.url + viewer.sketchParams
+  return c.standalone ? c.url : c.url + viewer.sketchParams + inputParams(settings)
 })
 
 // Switching source pool restarts the playlist and re-reads saved patches.

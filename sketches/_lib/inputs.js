@@ -35,9 +35,14 @@ export function createMidiInput() {
       })
       .catch(() => {})
   }
+  // Optional channel filter from the settings MIDI setup (?midich=1..16 on the
+  // URL; 0/absent = listen on all channels).
+  let midiCh = 0
+  try { midiCh = parseInt(new URLSearchParams(location.search).get('midich') || '0', 10) || 0 } catch { /* ignore */ }
   function onMsg(e) {
     const [status, d1, d2] = e.data
     const type = status & 0xf0
+    if (midiCh && (status & 0x0f) !== midiCh - 1) return // wrong channel — ignore
     if (type === 0xb0) {
       state.cc[d1] = d2 / 127 // control change
     } else if (type === 0x90 && d2 > 0) {

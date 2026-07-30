@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSketchStore } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
@@ -26,6 +26,44 @@ function clearSessionMemory() {
   settings.clearSession()
   window.location.reload()
 }
+
+// --- audio input device ------------------------------------------------------
+const audioDevices = ref([]) // { deviceId, label }
+const audioMsg = ref('')
+async function loadAudioDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) { audioMsg.value = 'Audio device selection needs a secure context (https or localhost).'; return }
+  try {
+    const list = await navigator.mediaDevices.enumerateDevices()
+    audioDevices.value = list.filter((d) => d.kind === 'audioinput').map((d, i) => ({ deviceId: d.deviceId, label: d.label || `Microphone ${i + 1}` }))
+    // Labels are blank until the user has granted mic permission at least once.
+    if (audioDevices.value.some((d) => !d.label || /^Microphone \d+$/.test(d.label))) audioMsg.value = 'Allow the mic once to see device names.'
+    else audioMsg.value = ''
+  } catch { audioMsg.value = 'Could not list audio devices.' }
+}
+async function grantMicThenList() {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true })
+    s.getTracks().forEach((t) => t.stop()) // just needed the permission
+  } catch { /* denied */ }
+  loadAudioDevices()
+}
+const audioItems = computed(() => [{ deviceId: '', label: 'System default' }, ...audioDevices.value])
+
+// --- MIDI setup --------------------------------------------------------------
+const midiMsg = ref('')
+const midiChannels = [{ v: 0, t: 'All channels' }, ...Array.from({ length: 16 }, (_, i) => ({ v: i + 1, t: `Channel ${i + 1}` }))]
+async function enableMidi() {
+  if (!navigator.requestMIDIAccess) { midiMsg.value = 'This browser has no Web MIDI support (try Chrome).'; return }
+  try {
+    const access = await navigator.requestMIDIAccess()
+    const names = [...access.inputs.values()].map((i) => i.name).filter(Boolean)
+    settings.setMidiEnabled(true)
+    midiMsg.value = names.length ? `MIDI ready — ${names.join(', ')}` : 'MIDI ready — no devices detected yet (plug one in).'
+  } catch { midiMsg.value = 'MIDI access was blocked.' }
+}
+function disableMidi() { settings.setMidiEnabled(false); midiMsg.value = '' }
+
+onMounted(loadAudioDevices)
 
 // --- backup & restore: whole library + settings to/from a JSON file ---------
 const backupMsg = ref('')
@@ -164,6 +202,61 @@ async function onPickFile(e) {
         <p v-if="backupMsg" class="text-caption mt-3 mb-0" :class="backupErr ? 'text-error' : 'text-medium-emphasis'">
           {{ backupMsg }}
         </p>
+      </v-card-text>
+    </v-card>
+
+    <!-- Inputs: audio device + MIDI setup -->
+    <v-card class="mb-6" variant="tonal">
+      <v-card-title class="text-subtitle-1">
+        <v-icon icon="mdi-tune-vertical" size="small" class="mr-2" />Inputs
+      </v-card-title>
+      <v-card-text>
+        <!-- Audio input device -->
+        <div class="text-subtitle-2 mb-1">Audio input</div>
+        <p class="text-caption text-medium-emphasis mb-2">Which microphone / input the audio-reactive effects listen to.</p>
+        <div class="d-flex ga-2 align-center flex-wrap">
+          <v-select
+            :model-value="settings.audioDeviceId"
+            :items="audioItems"
+            item-title="label"
+            item-value="deviceId"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="max-width: 340px"
+            @update:model-value="settings.setAudioDevice($event)"
+          />
+          <v-btn size="small" variant="tonal" prepend-icon="mdi-microphone" @click="grantMicThenList">Detect devices</v-btn>
+        </div>
+        <p v-if="audioMsg" class="text-caption text-medium-emphasis mt-2 mb-0">{{ audioMsg }}</p>
+
+        <v-divider class="my-4" />
+
+        <!-- MIDI setup -->
+        <div class="text-subtitle-2 mb-1">MIDI</div>
+        <p class="text-caption text-medium-emphasis mb-2">
+          Set MIDI up to control effects from a controller. Until it's set up, MIDI is hidden from the input lists.
+        </p>
+        <div v-if="!settings.midiEnabled" class="d-flex ga-2 align-center">
+          <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-midi-port" @click="enableMidi">Set up MIDI</v-btn>
+        </div>
+        <div v-else class="d-flex ga-2 align-center flex-wrap">
+          <v-select
+            :model-value="settings.midiChannel"
+            :items="midiChannels"
+            item-title="t"
+            item-value="v"
+            label="Channel"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="max-width: 200px"
+            @update:model-value="settings.setMidiChannel($event)"
+          />
+          <v-btn size="small" variant="text" prepend-icon="mdi-midi-port" @click="enableMidi">Re-scan</v-btn>
+          <v-btn size="small" variant="text" color="error" @click="disableMidi">Turn off MIDI</v-btn>
+        </div>
+        <p v-if="midiMsg" class="text-caption text-medium-emphasis mt-2 mb-0">{{ midiMsg }}</p>
       </v-card-text>
     </v-card>
 

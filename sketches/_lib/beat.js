@@ -60,7 +60,16 @@ export function createBeatDetector(opts = {}) {
       err.name = 'InsecureContextError'
       throw err
     }
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    // Preferred input device from the settings selector, passed in on the URL
+    // (?aud=<deviceId>). Falls back to the system default when unset/unavailable.
+    let audDev = ''
+    try { audDev = new URLSearchParams(location.search).get('aud') || '' } catch { /* ignore */ }
+    const audioReq = audDev ? { deviceId: { ideal: audDev } } : true
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: audioReq })
+    } catch {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true }) // device gone → default
+    }
     audioCtx = new (window.AudioContext || window.webkitAudioContext)()
     // Autoplay policies can leave the context suspended until a user gesture;
     // start() is called from a click, so resume() here is allowed.

@@ -4,6 +4,8 @@ import { useRoute } from 'vue-router'
 import { useSketchStore } from '../stores/sketches'
 import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
 import { useSceneStore } from '../stores/scenes'
+import { useSettingsStore } from '../stores/settings'
+import { inputParams } from '../lib/inputParams'
 
 // Single source of truth for mapping sources (audio/mouse/tilt/midi/leap/artnet).
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
@@ -19,6 +21,7 @@ const route = useRoute()
 const store = useSketchStore()
 const viewer = useViewerStore()
 const scenes = useSceneStore()
+const settings = useSettingsStore()
 const sketch = computed(() => store.bySlug(props.slug))
 
 // Runtime sketches understand the viewer's display params; a standalone imported
@@ -27,7 +30,7 @@ const sketch = computed(() => store.bySlug(props.slug))
 const seed = ref(null)
 const frameSrc = computed(() => {
   if (sketch.value?.standalone) return sketch.value?.url
-  let s = sketch.value.url + viewer.sketchParams
+  let s = sketch.value.url + viewer.sketchParams + inputParams(settings)
   if (seed.value != null) s += (s.includes('?') ? '&' : '?') + 'seed=' + seed.value
   return s
 })
@@ -138,6 +141,12 @@ function removeMapping(i) {
   syncMappings()
 }
 
+// Input sources offered in the mapping editor: MIDI stays hidden until it's
+// set up in Settings, then appears as a single entry (channel chosen globally).
+const sourceOptions = computed(() => {
+  const base = INPUT_SOURCES.filter((s) => !s.startsWith('midi.'))
+  return settings.midiEnabled ? [...base, 'midi.cc1', 'midi.note', 'midi.velocity'] : base
+})
 const numericParams = computed(() =>
   Object.keys(controls.value?.schema ?? {}).filter(
     (k) => typeof controls.value.schema[k].min === 'number',
@@ -438,7 +447,7 @@ onUnmounted(() => {
                 <div class="d-flex ga-2 align-center">
                   <v-select
                     v-model="m.source"
-                    :items="INPUT_SOURCES"
+                    :items="sourceOptions"
                     density="compact"
                     hide-details
                     @update:model-value="syncMappings"

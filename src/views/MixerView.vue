@@ -17,6 +17,7 @@ import TourOverlay from '../components/TourOverlay.vue'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 // Single source of truth for mapping sources (audio/mouse/tilt/midi/leap/artnet).
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
+import { inputParams } from '../lib/inputParams'
 import { mixToPatch, handOffToPatch } from '../lib/mixToPatch'
 
 const router = useRouter()
@@ -79,8 +80,13 @@ function srcFor(slug) {
   const q = viewer.quality !== 'native' ? `&quality=${viewer.quality}` : ''
   // preview=1 hides each layer's overlay chrome; capture=1 makes WebGL layers'
   // buffers readable so a Motion Extraction layer can ingest the stack below it.
-  return `${s.url}?preview=1&capture=1${q}`
+  return `${s.url}?preview=1&capture=1${q}${inputParams(settings)}`
 }
+// Mapping sources: MIDI hidden until set up in Settings, then one entry.
+const sourceOptions = computed(() => {
+  const base = INPUT_SOURCES.filter((src) => !src.startsWith('midi.'))
+  return settings.midiEnabled ? [...base, 'midi.cc1', 'midi.note', 'midi.velocity'] : base
+})
 function title(slug) {
   return store.bySlug(slug)?.title ?? slug
 }
@@ -550,7 +556,7 @@ onBeforeUnmount(() => {
             <div class="d-flex ga-1 align-center">
               <v-select
                 v-model="m.source"
-                :items="INPUT_SOURCES"
+                :items="sourceOptions"
                 density="compact"
                 hide-details
                 @update:model-value="syncLayerMappings(layer)"
