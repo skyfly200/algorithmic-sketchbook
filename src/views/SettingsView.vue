@@ -144,6 +144,28 @@ async function onPickFile(e) {
       </v-card-text>
     </v-card>
 
+    <!-- Graphics -->
+    <v-card class="mb-6" variant="tonal">
+      <v-card-title class="text-subtitle-1">
+        <v-icon icon="mdi-expansion-card-variant" size="small" class="mr-2" />Graphics
+      </v-card-title>
+      <v-card-text>
+        <v-switch
+          :model-value="settings.highPerformance"
+          color="primary"
+          density="comfortable"
+          hide-details
+          label="High performance GPU"
+          @update:model-value="settings.setHighPerformance($event)"
+        />
+        <p class="text-caption text-medium-emphasis mt-1 mb-0">
+          Asks the browser to render WebGL sketches on the dedicated graphics card rather than the
+          integrated one — smoother, at the cost of more power. On laptops this can spin up the discrete
+          GPU and drain the battery faster. Takes effect the next time a sketch loads.
+        </p>
+      </v-card-text>
+    </v-card>
+
     <!-- Session & memory -->
     <v-card class="mb-6" variant="tonal">
       <v-card-title class="text-subtitle-1">

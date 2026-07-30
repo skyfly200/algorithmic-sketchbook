@@ -39,6 +39,7 @@ export const useSettingsStore = defineStore('settings', {
       audioDeviceId: s.audioDeviceId ?? '', // preferred mic ('' = system default)
       midiEnabled: s.midiEnabled ?? false, // has the user set MIDI up? (hides it in input lists until then)
       midiChannel: s.midiChannel ?? 0, // 0 = all channels, 1..16 = a specific channel
+      highPerformance: s.highPerformance ?? false, // hint WebGL toward the dedicated GPU
     }
   },
   getters: {
@@ -51,6 +52,7 @@ export const useSettingsStore = defineStore('settings', {
       const data = {
         tutorials: this.tutorials, seen: this.seen, favorites: this.favorites, persistEditors: this.persistEditors,
         audioDeviceId: this.audioDeviceId, midiEnabled: this.midiEnabled, midiChannel: this.midiChannel,
+        highPerformance: this.highPerformance,
       }
       if (this.effectOff !== null) data.effectOff = this.effectOff
       else if (this.legacyIn) data.effectPool = this.legacyIn // keep legacy until migrated
@@ -70,6 +72,9 @@ export const useSettingsStore = defineStore('settings', {
     setAudioDevice(id) { this.audioDeviceId = id || ''; this.persist() },
     setMidiEnabled(on) { this.midiEnabled = !!on; this.persist() },
     setMidiChannel(ch) { this.midiChannel = Math.max(0, Math.min(16, ch | 0)); this.persist() },
+    // Ask the browser to run WebGL sketches on the dedicated GPU rather than the
+    // integrated one. Threaded into sketches as ?gpu=high; takes effect on reload.
+    setHighPerformance(on) { this.highPerformance = !!on; this.persist() },
     // Wipe the editors' working state (but not the saved library). The editors
     // read their state at mount, so a reload gives them a clean slate.
     clearSession() {

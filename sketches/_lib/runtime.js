@@ -36,6 +36,30 @@
 import { createBeatDetector } from './beat.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from './inputs.js'
 
+// GPU power hint. When the app asks for it (?gpu=high, driven by the global
+// "High performance GPU" setting), inject powerPreference:'high-performance'
+// into every WebGL context this page creates so the browser prefers the
+// dedicated graphics card over the integrated one. Patching getContext once
+// here — at module load, before any sketch draws — covers raw WebGL sketches
+// AND three.js (which calls getContext internally) without editing each sketch.
+// The preference is only honoured at context-creation time, so it takes effect
+// when the sketch (re)loads.
+;(function applyGpuPreference() {
+  try {
+    const pref = new URLSearchParams(location.search).get('gpu')
+    if (pref !== 'high' && pref !== 'low') return
+    const power = pref === 'high' ? 'high-performance' : 'low-power'
+    const proto = HTMLCanvasElement.prototype
+    const orig = proto.getContext
+    proto.getContext = function (type, attrs) {
+      if (typeof type === 'string' && type.indexOf('webgl') !== -1) {
+        attrs = Object.assign({}, attrs, { powerPreference: power })
+      }
+      return orig.call(this, type, attrs)
+    }
+  } catch { /* non-browser / locked-down env: leave getContext untouched */ }
+})()
+
 export const INPUT_SOURCES = [
   'audio.pulse', // 1 on each detected beat, decays to 0
   'audio.level', // bass energy (alias of audio.low)
