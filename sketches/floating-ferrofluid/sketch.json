@@ -1,7 +1,7 @@
 {
   "title": "Ferrofluid Speaker",
-  "description": "The desktop ferrofluid-speaker gadget: a clear vial of black ferrofluid over an electromagnet, seen from the side, with the music driving the field. The flat pool goes unstable and throws up a crown of sharp Rosensweig spikes that climb, lean and dance with the bass, then sink back between beats — shaded like oily black chrome with a wet specular streak, standing in a lit glass cylinder over a glowing coil. Turn on the mic to drive it live; with no mic it runs on a synthetic kick so it always dances. Audio drive, spike height/count, sharpness, sway, viscosity, fluid amount, vessel and sheen hue are live.",
-  "tags": ["ferrofluid", "speaker", "audio-reactive", "physics", "generative"],
+  "description": "The desktop ferrofluid-speaker gadget: a grey enclosure with a bright, backlit circular window, black ferrofluid sitting on the lit glass while an electromagnet behind the centre pulls it into a clustered, glossy central mass ringed by satellite droplets. The music drives the field — on the bass the drops rush inward and the mass throws out reaching arms and spikes, then relaxes and scatters into beads between hits. The fluid is a metaball field so nearby drops merge with smooth necks, shaded like oily black chrome with a wet white specular, a cool rim where the lumps catch the lit window, and a soft contact shadow seating it on the glass. Turn on the mic to drive it live; with no mic it runs on a synthetic kick so it always dances. Audio drive, magnet pull, droplet count, fluid amount, spread, reach/spikes, viscosity and sheen hue are live.",
+  "tags": ["ferrofluid", "speaker", "audio-reactive", "physics", "metaball", "generative"],
   "tech": ["canvas2d"],
   "created": "2026-07-25"
 }
