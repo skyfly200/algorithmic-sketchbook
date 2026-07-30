@@ -4,6 +4,7 @@
 // (0-100) separately so a hue can still be modulated by an input wire while the
 // user tunes saturation and brightness. Used across the Patch node controls.
 import { computed } from 'vue'
+import { usePaletteStore } from '../stores/palette'
 
 const props = defineProps({
   h: { type: Number, default: 0 },
@@ -11,6 +12,17 @@ const props = defineProps({
   v: { type: Number, default: 90 },
 })
 const emit = defineEmits(['update:h', 'update:s', 'update:v', 'change'])
+// The active palette's swatches, so you can reuse favourite colours here.
+const palettes = usePaletteStore()
+const swatches = computed(() => palettes.swatches)
+function applyHex(hex) {
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
+  const [nh, ns, nv] = rgbToHsv(r, g, b)
+  if (ns > 0.5) emit('update:h', Math.round(nh))
+  emit('update:s', Math.round(ns))
+  emit('update:v', Math.round(nv))
+  emit('change')
+}
 
 const hh = computed(() => props.h ?? 0)
 const ss = computed(() => props.s ?? 72)
@@ -79,6 +91,9 @@ const valGrad = computed(() => {
         @input="emit('update:s', +$event.target.value)" @change="emit('change')" />
       <input class="cf-rng" type="range" min="0" max="100" step="1" :value="vv" :style="{ backgroundImage: valGrad }" title="brightness"
         @input="emit('update:v', +$event.target.value)" @change="emit('change')" />
+      <span v-if="swatches.length" class="cf-pal" title="Palette (Settings → Colour palettes)">
+        <button v-for="(c, i) in swatches" :key="i" class="cf-sw" :style="{ background: c }" :title="c" @click="applyHex(c)" />
+      </span>
     </span>
   </span>
 </template>
@@ -102,4 +117,7 @@ const valGrad = computed(() => {
 .cf-rng::-moz-range-thumb {
   width: 11px; height: 11px; border-radius: 50%; background: #fff; border: 1px solid #333;
 }
+.cf-pal { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 1px; }
+.cf-sw { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(0, 0, 0, 0.4); padding: 0; cursor: pointer; }
+.cf-sw:hover { outline: 1px solid #fff; }
 </style>

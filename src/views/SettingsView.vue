@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSketchStore } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
+import { usePaletteStore } from '../stores/palette'
+import { HARMONIES, gradientCss } from '../lib/colorTheory'
 // The "filter" sketches are effects that process another image, not standalone
 // generators — they don't belong in the random/Autopilot source pool.
 import { FILTER_SLUG_SET } from '../registry/filters'
@@ -11,6 +13,15 @@ import { exportBackup, readBackupFile, applyBackup } from '../lib/backup'
 const router = useRouter()
 const store = useSketchStore()
 const settings = useSettingsStore()
+const palettes = usePaletteStore()
+
+// --- colour palettes ---------------------------------------------------------
+const paletteBase = ref('#ff6b35')
+const paletteHarmony = ref('Triadic')
+function generatePalette() {
+  palettes.generate(paletteBase.value, paletteHarmony.value, `${paletteHarmony.value} palette`)
+}
+const gradCss = (stops) => gradientCss(stops, 90)
 
 const effects = computed(() =>
   store.sketches.filter((s) => s.embed && !s.standalone && !FILTER_SLUG_SET.has(s.slug) && s.slug !== 'bright-waves-logo'),
@@ -163,6 +174,55 @@ async function onPickFile(e) {
           integrated one — smoother, at the cost of more power. On laptops this can spin up the discrete
           GPU and drain the battery faster. Takes effect the next time a sketch loads.
         </p>
+      </v-card-text>
+    </v-card>
+
+    <!-- Colour palettes -->
+    <v-card class="mb-6" variant="tonal">
+      <v-card-title class="text-subtitle-1">
+        <v-icon icon="mdi-palette-swatch" size="small" class="mr-2" />Colour palettes
+      </v-card-title>
+      <v-card-text>
+        <p class="text-caption text-medium-emphasis mt-0 mb-3">
+          A shared library of favourite colours you can reuse anywhere a colour picker appears (the active
+          palette's swatches show under each picker). Generate balanced palettes from a base colour using
+          colour-theory harmonies.
+        </p>
+
+        <!-- generator -->
+        <div class="d-flex ga-2 align-center flex-wrap mb-4">
+          <input type="color" v-model="paletteBase" class="pal-swatch-in" title="Base colour" />
+          <select class="pal-select" v-model="paletteHarmony">
+            <option v-for="h in HARMONIES" :key="h" :value="h">{{ h }}</option>
+          </select>
+          <v-btn size="small" variant="tonal" prepend-icon="mdi-auto-fix" @click="generatePalette">Generate</v-btn>
+          <v-spacer />
+          <v-btn size="small" variant="text" prepend-icon="mdi-restore" @click="palettes.resetDefaults()">Reset defaults</v-btn>
+        </div>
+
+        <!-- palette list -->
+        <div v-for="p in palettes.palettes" :key="p.id" class="pal-row" :class="{ active: p.id === palettes.activeId }">
+          <button class="pal-pick" :title="p.id === palettes.activeId ? 'Active palette' : 'Make active'" @click="palettes.setActive(p.id)">
+            <v-icon :icon="p.id === palettes.activeId ? 'mdi-check-circle' : 'mdi-circle-outline'" size="small" />
+          </button>
+          <span class="pal-name">{{ p.name }}</span>
+          <span class="pal-chips">
+            <span v-for="(c, i) in p.colors" :key="i" class="pal-chip" :style="{ background: c }" :title="c" />
+          </span>
+          <button class="pal-del" title="Delete palette" @click="palettes.removePalette(p.id)"><v-icon icon="mdi-close" size="x-small" /></button>
+        </div>
+
+        <div class="d-flex ga-2 mt-3">
+          <v-btn size="small" variant="tonal" prepend-icon="mdi-gradient-horizontal" @click="palettes.gradientFromActive()">Save active as gradient</v-btn>
+        </div>
+
+        <!-- gradients -->
+        <div class="panel-sub mt-4 mb-1 text-caption text-medium-emphasis">Gradients</div>
+        <div v-for="g in palettes.gradients" :key="g.id" class="pal-row">
+          <span class="pal-name">{{ g.name }}</span>
+          <span class="pal-grad" :style="{ background: gradCss(g.stops) }" />
+          <button class="pal-del" title="Delete gradient" @click="palettes.removeGradient(g.id)"><v-icon icon="mdi-close" size="x-small" /></button>
+        </div>
       </v-card-text>
     </v-card>
 
@@ -330,4 +390,18 @@ async function onPickFile(e) {
   cursor: pointer;
 }
 .eff-item input { cursor: pointer; }
+
+/* colour palettes */
+.pal-swatch-in { width: 40px; height: 32px; border: 1px solid rgba(255,255,255,0.25); border-radius: 6px; background: none; cursor: pointer; padding: 0; }
+.pal-select { background: rgba(255,255,255,0.06); color: inherit; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 5px 8px; font: inherit; }
+.pal-select option { color: #000; }
+.pal-row { display: flex; align-items: center; gap: 10px; padding: 5px 4px; border-radius: 6px; }
+.pal-row.active { background: rgba(255,255,255,0.06); }
+.pal-pick { background: none; border: none; color: inherit; cursor: pointer; opacity: 0.85; display: flex; }
+.pal-name { flex: 0 0 8.5rem; font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-chips { flex: 1 1 auto; display: flex; gap: 3px; flex-wrap: wrap; }
+.pal-chip { width: 20px; height: 20px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.35); }
+.pal-grad { flex: 1 1 auto; height: 18px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.35); }
+.pal-del { background: none; border: none; color: rgba(255,255,255,0.6); cursor: pointer; display: flex; }
+.pal-del:hover { color: #fff; }
 </style>
