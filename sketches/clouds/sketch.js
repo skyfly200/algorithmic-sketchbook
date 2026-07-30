@@ -15,7 +15,7 @@ const ctx = canvas.getContext('2d')
 const params = rt.params({
   type: { value: 'Cumulus', type: 'select', options: ['Cumulus', 'Stratus', 'Cirrus', 'Storm', 'Lenticular', 'Mammatus', 'Mackerel', 'Noctilucent'], label: 'Cloud type' },
   evolve: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Evolve / cycle type' },
-  cover: { value: 0.5, min: 0.1, max: 0.9, step: 0.02, label: 'Cloud cover' },
+  cover: { value: 0.5, min: 0.1, max: 1, step: 0.02, label: 'Cloud cover' },
   wind: { value: 0.5, min: 0, max: 3, step: 0.05, label: 'Wind' },
   sun: { value: 40, min: 0, max: 90, step: 1, label: 'Sun angle°' },
   sky: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Sky (day↔dusk)' },
@@ -73,8 +73,11 @@ const gauss = (x, c, w) => Math.exp(-((x - c) / w) * ((x - c) / w))
 // and lighting/colour flags. The last four are the rarer cloud types.
 const TYPE_DEF = {
   Cumulus: { stretch: 1, curve: (d) => Math.pow(d, 1.8) * 1.4 },
-  Stratus: { stretch: 1, curve: (d) => Math.min(1, d * 0.7 + 0.25) },
-  Cirrus: { stretch: 3.2, curve: (d) => Math.pow(d, 2.6) * 1.2 },
+  // flat, featureless grey overcast sheet — low contrast, a dull veil everywhere
+  Stratus: { stretch: 1.6, dull: true, curve: (d) => Math.min(1, 0.35 + d * 0.55) },
+  // high fibrous mare's-tails — strongly wind-stretched and carved into streaks
+  Cirrus: { stretch: 4.5, fiber: true, curve: (d) => Math.pow(d, 1.8) * 1.1,
+    band: (y) => smooth01(0.75, 0.35, y) },
   Storm: { stretch: 1, storm: true, curve: (d) => Math.pow(d, 1.3) * 1.6 },
   // smooth stacked lens discs (a "UFO" cloud over a mountain), strongly stretched
   Lenticular: { stretch: 5, curve: (d) => Math.pow(smooth01(0.35, 1, d), 1.1),
@@ -82,8 +85,8 @@ const TYPE_DEF = {
   // dark lumpy pouches hanging under a storm, lit from beneath
   Mammatus: { stretch: 1.1, storm: true, litBelow: true, ripple: 5.5, curve: (d) => Math.pow(d, 1.2) * 1.5,
     band: (y) => smooth01(0.22, 0.5, y) },
-  // mackerel sky — rows of small dappled altocumulus puffs
-  Mackerel: { stretch: 1.25, ripple: 3.6, curve: (d) => Math.pow(d, 1.05) * 1.35 },
+  // mackerel sky — regular rows of small dappled altocumulus puffs
+  Mackerel: { stretch: 1.25, rows: 8, ripple: 3.6, curve: (d) => Math.pow(d, 1.05) * 1.35 },
   // noctilucent — thin electric-blue wisps glowing high in a twilight sky
   Noctilucent: { stretch: 4.5, glow: true, curve: (d) => Math.pow(d, 2.4) * 1.15,
     band: (y) => gauss(y, 0.26, 0.13) },
@@ -121,19 +124,27 @@ function frame(now) {
     const n1 = sampleField(u, v)
     const n2 = sampleField(u + 0.13, v + t * 0.004)
     const n = n1 * 0.6 + n2 * 0.4
-    const th = 1 - cover
-    let d = Math.max(0, (n - th * 0.7) / (1 - th * 0.7))
-    d = def.curve(d)
+    // cover lowers the density floor: at cover→1 almost the whole sky clouds
+    // over into a dense overcast; at low cover only the fbm peaks poke through.
+    const lo = 0.62 - cover * 0.62
+    let d = def.curve(smooth01(lo, lo + 0.3, n))
     if (def.band) d *= def.band(y / GH)
+    // rows of puffs (mackerel / altocumulus): a regular horizontal banding
+    if (def.rows) d *= 0.35 + 0.65 * Math.pow(Math.abs(Math.sin((y / GH) * Math.PI * def.rows)), 0.6)
+    // fibrous carve (cirrus mare's-tails): fine wind-stretched streaks
+    if (def.fiber) { const fb = sampleField(u * 0.6 + 5, v * 7 + 2); d *= 0.25 + 0.75 * smooth01(0.4, 0.66, fb) }
     if (def.ripple) { const rip = sampleField(u * def.ripple + 11, v * def.ripple + 3); d *= 0.22 + 0.78 * smooth01(0.4, 0.62, rip) }
+    // overcast fill: at very high cover, lift the thin gaps so it reads solid
+    if (cover > 0.8) d = d + (cover - 0.8) * 3.5 * (1 - d) * smooth01(lo - 0.05, lo + 0.15, n)
     d = Math.min(1, d)
     // lighting: brighter where the field rises toward the light (below for mammatus)
     const s = def.litBelow ? -1 : 1
     const nA = sampleField(u + lx * 0.02, v + ly * 0.02 * s)
-    const shade = Math.max(0.2, Math.min(1, 0.55 + (n - nA) * 2.0 * s))
+    const shade = Math.max(def.storm ? 0.28 : 0.42, Math.min(1, 0.6 + (n - nA) * 2.0 * s))
     let r, gc, b
     if (def.storm) { const val = 90 * (0.4 + shade * 0.6); r = val; gc = val; b = val * 1.05 }
     else if (def.glow) { const val = 235 * shade; r = val * 0.55; gc = val * 0.82; b = val * 1.15 }
+    else if (def.dull) { const val = 200 * (0.6 + shade * 0.4); r = val; gc = val; b = val * 1.03 } // flat grey overcast
     else { const val = 235 * shade; r = val; gc = val * 0.99; b = val * 0.98 }
     return { d, r, g: gc, b }
   }
