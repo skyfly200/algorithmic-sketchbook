@@ -182,7 +182,7 @@ function frame(now) {
       const crack = 1 - smooth01(cw * 0.5, cw + 1, e) // 1 deep in crack → 0 on the plate
 
       // plate colour: wet = dark rich brown, dry = pale dusty tan
-      const lig = (18 + ldry * 26) * (0.85 + tone[i] * 0.3)
+      const lig = (13 + ldry * 22) * (0.85 + tone[i] * 0.3) // darker, richer brown base
       const sat = (45 - ldry * 22) * params.sat
       // edge curl / bevel: shade from the gradient of the edge field so plate
       // rims catch light on one side and fall into shadow toward the crack
