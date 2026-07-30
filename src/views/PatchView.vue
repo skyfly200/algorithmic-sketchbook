@@ -891,13 +891,26 @@ function applyCurve(v, curve) {
     default: return v
   }
 }
+// Per-Input-node smoothing memory (EMA), for the `smooth` inertia control.
+const inputSmooth = new Map()
 function inputValue(node, now) {
   const p = node.params
   ensureInput(p.source)
   let v = sourceValue(p.source, now)
   if (p.invert) v = 1 - v
   v = clamp(v * (p.scale ?? 1) + (p.offset ?? 0), 0, 1)
-  return applyCurve(v, p.curve ?? 'linear')
+  // gate: ignore input below the floor, then rescale [gate..1] → [0..1]
+  const g = p.gate ?? 0
+  if (g > 0) v = v <= g ? 0 : (v - g) / (1 - g)
+  v = applyCurve(v, p.curve ?? 'linear')
+  // smooth: inertia so the value glides instead of snapping (0 = none)
+  const sm = p.smooth ?? 0
+  if (sm > 0) {
+    const prev = inputSmooth.get(node.id)
+    v = prev == null ? v : prev + (v - prev) * (1 - sm)
+    inputSmooth.set(node.id, v)
+  }
+  return v
 }
 const INPUT_CURVES = ['linear', 'exp', 'log', 's-curve', 'step']
 // Control value emitted by any control node's given output port.
@@ -3803,8 +3816,12 @@ onBeforeUnmount(() => {
                 <option v-for="src in list" :key="src" :value="src">{{ src }}</option>
               </optgroup>
             </select>
-            <label>scale <NumSlider :min="-2" :max="2" :step="0.05" :model-value="n.params.scale" @update:model-value="n.params.scale = $event" @commit="persist" /></label>
+            <!-- Same shaping as the per-mapping controls on the effect pages:
+                 amount, smoothing, response curve and a gate/floor. -->
+            <label>amount <NumSlider :min="-2" :max="2" :step="0.05" :model-value="n.params.scale" @update:model-value="n.params.scale = $event" @commit="persist" /></label>
             <label>offset <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.offset" @update:model-value="n.params.offset = $event" @commit="persist" /></label>
+            <label>smooth <NumSlider :min="0" :max="0.98" :step="0.02" :model-value="n.params.smooth ?? 0" @update:model-value="n.params.smooth = $event" @commit="persist" /></label>
+            <label>gate <NumSlider :min="0" :max="0.95" :step="0.01" :model-value="n.params.gate ?? 0" @update:model-value="n.params.gate = $event" @commit="persist" /></label>
             <label>curve
               <select v-model="n.params.curve" @change="persist" @pointerdown.stop>
                 <option v-for="c in INPUT_CURVES" :key="c" :value="c">{{ c }}</option>
