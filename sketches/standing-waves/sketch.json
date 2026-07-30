@@ -1,0 +1,7 @@
+{
+  "title": "Standing Waves",
+  "description": "A vibrating shape whose rim is a standing wave. The boundary radius is R(θ,t) = R0 + Σ Aₖ·sin(ωₖt)·cos(mₖθ): each angular mode mₖ lays that many lobes around the edge and the sin(ωt) term makes them breathe in and out like a plucked membrane caught in its normal modes. Two superposed modes give richer flower-like shapes. In Membrane mode the interior is filled with the drumhead's nodal field — angular and radial standing waves in two tones with dark nodal lines between the antinodes — rather than a flat fill. Number of waves, amplitudes, radial nodes, vibration speed, spin, outline thickness, hue and rim glow are live, and the mic can drive the amplitude so the shape pulses to sound. A generalisation of the classic 0.5 + 0.35·sin(2t)·sin(13θ) rim blob.",
+  "tags": ["standing wave", "membrane", "polar", "geometric", "generative", "audio"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-07-30"
+}
