@@ -132,21 +132,28 @@ function drawReishi(t) {
   // pale pore underside band along the bottom (where the spores drop)
   g.fillStyle = 'hsla(44,42%,80%,0.5)'
   g.fillRect(0, capCy + capThick * 0.16, W, capThick * 0.55)
-  // faint radial wrinkles over the varnish
-  g.strokeStyle = 'rgba(28,12,7,0.14)'; g.lineWidth = Math.max(1, PR)
-  for (let i = 0; i <= 13; i++) { const a = (i / 13) * Math.PI; g.beginPath(); g.moveTo(capCx, capCy); g.lineTo(capCx + Math.cos(a) * capHalf * 1.1, capCy - Math.sin(a) * capThick * 1.1); g.stroke() }
-  // lacquer gloss + a sharp specular glint, upper-left
-  const gx = capCx - capHalf * 0.4, gy = capCy - capThick * 0.55
-  const gl = g.createRadialGradient(gx, gy, 0, gx, gy, capHalf * 0.95)
-  gl.addColorStop(0, 'rgba(255,241,218,0.5)'); gl.addColorStop(0.5, 'rgba(255,230,200,0.12)'); gl.addColorStop(1, 'rgba(255,230,200,0)')
-  g.fillStyle = gl; g.fillRect(0, 0, W, H)
-  g.fillStyle = 'rgba(255,250,236,0.55)'
-  g.beginPath(); g.ellipse(gx + capHalf * 0.12, gy, capHalf * 0.15, capThick * 0.11, -0.5, 0, TAU); g.fill()
-  g.restore()
+  // domed relief: a light side (upper-left) and a shadowed side (lower-right)
+  // shade the whole cap so it reads as a rounded 3D shelf, not a flat disc
+  const lgx = capCx - capHalf * 0.42, lgy = capCy - capThick * 0.6
+  const dome = g.createRadialGradient(lgx, lgy, 0, lgx, lgy, capHalf * 1.5)
+  dome.addColorStop(0, 'rgba(255,238,214,0.45)'); dome.addColorStop(0.45, 'rgba(255,225,195,0.08)'); dome.addColorStop(1, 'rgba(255,225,195,0)')
+  g.fillStyle = dome; g.fillRect(0, 0, W, H)
+  const shx = capCx + capHalf * 0.5, shy = capCy + capThick * 0.6
+  const shade = g.createRadialGradient(shx, shy, 0, shx, shy, capHalf * 1.4)
+  shade.addColorStop(0, 'rgba(18,7,3,0.5)'); shade.addColorStop(0.6, 'rgba(18,7,3,0.12)'); shade.addColorStop(1, 'rgba(18,7,3,0)')
+  g.fillStyle = shade; g.fillRect(0, 0, W, H)
+  // sharp specular glint on the varnish, upper-left
+  g.fillStyle = 'rgba(255,250,236,0.6)'
+  g.beginPath(); g.ellipse(lgx + capHalf * 0.16, lgy + capThick * 0.05, capHalf * 0.16, capThick * 0.12, -0.5, 0, TAU); g.fill()
 
-  // concentric growth furrows (darker rings) that ride the cap contour
-  g.strokeStyle = 'rgba(38,16,9,0.32)'; g.lineWidth = Math.max(1, PR * 1.1)
-  for (let r = 0.32; r < 1.0; r += 0.13) { capPath(g, r); g.stroke() }
+  // embossed concentric growth ridges: a shadow stroke offset down and a
+  // highlight stroke offset up on each contour, so the cap looks corrugated
+  // in 3D relief rather than ruled with flat dark lines
+  for (let r = 0.26; r < 0.99; r += 0.085) {
+    g.save(); g.translate(0, PR * 1.3); g.strokeStyle = 'rgba(26,10,5,0.3)'; g.lineWidth = Math.max(1, PR * 1.4); capPath(g, r); g.stroke(); g.restore()
+    g.save(); g.translate(0, -PR * 1.0); g.strokeStyle = 'rgba(255,224,186,0.16)'; g.lineWidth = Math.max(1, PR); capPath(g, r); g.stroke(); g.restore()
+  }
+  g.restore()
   // bright white growing margin at the very edge (the reishi's fresh rim)
   g.strokeStyle = 'hsla(40,35%,95%,0.98)'; g.lineWidth = Math.max(2.5, PR * 4)
   capPath(g, 1); g.stroke()
