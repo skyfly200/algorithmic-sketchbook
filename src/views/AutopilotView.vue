@@ -136,10 +136,23 @@ function toggleEffect(slug) {
   // If you just unchecked an effect that's currently on screen, don't yank it —
   // queue it to be swapped out on the next move and never routed back in.
   if (!settings.isEffectEnabled(slug)) {
+    delete paramCache[slug] // removed from rotation → forget its cached options
     if (liveLayers().some((l) => l.slug === slug)) { swapOutQueue.add(slug); say(`${titleOf(slug)} will swap out next`) }
   } else {
     swapOutQueue.delete(slug) // re-checked → allow it back
   }
+}
+
+// Forget per-slug state (cached options, learned interest, stale disabled-set
+// entries) for effects that no longer exist — a sketch that was removed or
+// renamed shouldn't leave its options persisting in Autopilot / Settings.
+function pruneStaleOptions() {
+  const valid = new Set(store.sketches.map((s) => s.slug))
+  for (const slug of Object.keys(paramCache)) if (!valid.has(slug)) delete paramCache[slug]
+  let changed = false
+  for (const slug of Object.keys(interest)) if (!valid.has(slug)) { delete interest[slug]; changed = true }
+  if (changed && settings.persistEditors) localStorage.setItem(INTEREST_KEY, JSON.stringify(interest))
+  settings.pruneEffectOff(valid)
 }
 
 // --- perf-aware routing ------------------------------------------------------
@@ -1492,6 +1505,7 @@ function startTour() { panelOpen.value = true; setTimeout(() => (tourActive.valu
 function finishTour(payload) { settings.markSeen('autopilot'); if (payload?.disableAll) settings.setTutorials(false) }
 
 onMounted(() => {
+  pruneStaleOptions() // clear options/interest left over from removed effects
   // opening mix: a base layer, usually a partner, maybe a filter — each
   // fades in as it becomes ready
   const base = pickSketch(effectPool.value, perfBudget.value)

@@ -118,6 +118,15 @@ export const useSettingsStore = defineStore('settings', {
       this.persist()
     },
     enableAllEffects() { this.effectOff = []; this.legacyIn = null; this.persist() },
+    // Drop disabled-set entries for effects that no longer exist (renamed or
+    // removed sketches) so their options don't linger. `validSlugs` is the set
+    // of slugs that currently exist.
+    pruneEffectOff(validSlugs) {
+      if (!this.effectOff || !this.effectOff.length) return
+      const valid = validSlugs instanceof Set ? validSlugs : new Set(validSlugs)
+      const kept = this.effectOff.filter((s) => valid.has(s))
+      if (kept.length !== this.effectOff.length) { this.effectOff = kept; this.persist() }
+    },
     // Filter a list of {slug} to the enabled pool. Disabled slugs are dropped;
     // everything else (including brand-new effects) is kept. Never strand the
     // feature with an empty list.
