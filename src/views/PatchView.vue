@@ -466,10 +466,10 @@ function randomPatch() {
   const pooledEffects = settings.filterToPool(effectOptions.value) // app-wide effect selection
   for (let i = 0; i < nChains; i++) {
     const y = 90 + i * 230
-    let prev = mk('effect', { slug: pick(pooledEffects)?.slug ?? '' }, 0, y)
+    let prev = mk('effect', { slug: pick(pooledEffects)?.slug ?? '', seed: randSeed() }, 0, y)
     const nFilters = chance(0.75) ? 1 + (chance(0.3) ? 1 : 0) : 0
     for (let f = 0; f < nFilters; f++) {
-      const filt = mk('filter', { slug: pick(filterOptions.value)?.slug ?? '' }, 1 + f, y + 20 * (f + 1))
+      const filt = mk('filter', { slug: pick(filterOptions.value)?.slug ?? '', seed: randSeed() }, 1 + f, y + 20 * (f + 1))
       edges.push({ from: prev.id, to: filt.id, port: 0 })
       prev = filt
       maxCol = Math.max(maxCol, 1 + f)
@@ -524,6 +524,41 @@ function randomPatch() {
   selected.value = null
   persist()
   nextTick(() => layoutTick.value++)
+}
+
+// Randomize the *look* of the current patch without changing its structure —
+// works on any patch (hand-built or generated). Reseeds every generative
+// effect/filter and shuffles all node params within their ranges; locked and
+// pinned nodes are left alone.
+function randomizeLook() {
+  const stepQuant = (lo, hi) => { const step = (hi - lo) / 100 || 0.01; return +(lo + Math.round((Math.random() * (hi - lo)) / step) * step).toFixed(6) }
+  const randHex = () => '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0')
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
+  for (const n of nodes) {
+    if (n.locked || n.keep) continue
+    if (n.type === 'effect' || n.type === 'filter') {
+      n.params.seed = randSeed() // fresh generative content
+      const c = effectControls.get(n.id)
+      if (c?.schema) {
+        for (const [name, spec] of Object.entries(c.schema)) {
+          if (spec.type === 'action') continue
+          if (spec.type === 'bool') setEffectParam(n.id, name, Math.random() < 0.5)
+          else if (spec.type === 'color') setEffectParam(n.id, name, randHex())
+          else if (spec.type === 'select' && spec.options?.length) setEffectParam(n.id, name, pick(spec.options))
+          else if (typeof spec.min === 'number') setEffectParam(n.id, name, stepQuant(spec.min, spec.max))
+        }
+      }
+    } else {
+      const rng = PARAM_RANGES[n.type]
+      if (rng) for (const [name, r] of Object.entries(rng)) n.params[name] = stepQuant(r[0], r[1])
+      if (n.type === 'blend') { n.params.mode = pick(BLENDS); n.params.mix = +(0.3 + Math.random() * 0.6).toFixed(2) }
+      if (n.type === 'geo') { n.params.shape = pick(GEO_SHAPES); n.params.material = pick(GEO_MATERIALS); n.params.hue = Math.floor(Math.random() * 360) }
+      if (n.type === 'vcam') n.params.lightHue = Math.floor(Math.random() * 360)
+      if (n.type === 'text') n.params.hue = Math.floor(Math.random() * 360)
+    }
+  }
+  persist()
+  showToast('Randomized the patch')
 }
 
 // All nodes that feed (directly or transitively) into `id` via video edges.
@@ -1280,8 +1315,13 @@ function effectSrc(n) {
   // nomap=1: sketches start with their default audio/input mappings OFF in
   // Patch, so nodes react only to the wires you draw. The ⚡ button on the
   // node applies the sketch's own defaults on demand.
-  return s ? `${s.url}?capture=1&preview=1&quality=high&nomap=1` : ''
+  // A per-node seed drives the sketch's generative variation; changing it
+  // reloads the frame with a fresh look (the node's random seed input).
+  const seed = n.params.seed ? `&seed=${encodeURIComponent(n.params.seed)}` : ''
+  return s ? `${s.url}?capture=1&preview=1&quality=high&nomap=1${seed}` : ''
 }
+function randSeed() { return Math.floor(Math.random() * 1e9).toString(36) }
+function reseedNode(n) { n.params.seed = randSeed(); persist() } // new generative look
 function autoMap(n) {
   rtState.get(n.id)?.iframe?.contentWindow?.postMessage({ type: 'sketch:auto-map' }, '*')
 }
@@ -3076,7 +3116,8 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-format-text" variant="tonal" size="small" title="Add Text (mappable font)" :style="{ color: TYPES.text.color }" @click="addNode('text')" />
         <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
         <v-spacer />
-        <v-btn data-tour="patch-random" icon="mdi-dice-multiple" variant="text" size="small" title="Randomize — deal out a whole new patch (undoable)" @click="randomPatch" />
+        <v-btn data-tour="patch-random" icon="mdi-dice-multiple" variant="text" size="small" title="New random patch — deal out a whole new graph (undoable)" @click="randomPatch" />
+        <v-btn icon="mdi-shuffle-variant" variant="text" size="small" title="Randomize the look — reseed & shuffle every node's params, keep the wiring (undoable)" @click="randomizeLook" />
         <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
         <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
         <v-btn icon="mdi-redo" variant="text" size="small" title="Redo (Ctrl/Cmd+Shift+Z)" :disabled="!redoStack.length" @click="redo" />
@@ -3681,6 +3722,12 @@ onBeforeUnmount(() => {
                   <option v-for="o in g.items" :key="o.slug" :value="o.slug">{{ o.title }}</option>
                 </optgroup>
               </select>
+              <button
+                class="knob-btn"
+                title="Reseed — a fresh generative variation of this effect"
+                @pointerdown.stop
+                @click="reseedNode(n)"
+              >🎲</button>
               <button
                 v-if="effectControls.has(n.id)"
                 class="knob-btn"
