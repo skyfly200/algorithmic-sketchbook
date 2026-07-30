@@ -515,7 +515,7 @@ onUnmounted(() => {
                   density="compact"
                   hide-details
                   color="primary"
-                  title="Off suppresses the sketch's own audio mappings and beat response, so you can wire your own input routings"
+                  title="Off silences the sketch's built-in audio response entirely — its default mappings, its onBeat, and any direct beat/level reads — so you can wire your own input routings"
                   @update:model-value="(v) => { audio.reactive = v; syncAudio() }"
                 />
                 <v-slider

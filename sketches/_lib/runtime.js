@@ -564,10 +564,26 @@ export function createRuntime() {
     }
   })
 
+  // When built-in audio reactivity is switched off, the sketch-facing beat view
+  // reports neutral values, so effects that read rt.beat.state.* directly in
+  // their loop go calm too — not just their default mappings and onBeat. The
+  // raw beat.state is untouched, so any input mapping the user wires (read via
+  // sourceValue) keeps receiving live audio.
+  const neutralBeat = { active: false, level: 0, pulse: 0, low: 0, mid: 0, high: 0, volume: 0, centroid: 0.5, flux: 0 }
+  const beatView = new Proxy(beat, {
+    get(target, key) {
+      if (key === 'state') return audioReactive ? target.state : neutralBeat
+      if (key === 'onBeat') return (cb) => target.onBeat((e) => { if (audioReactive) cb(e) })
+      if (key === 'getSpectrum') return () => (audioReactive ? target.getSpectrum() : null)
+      const v = target[key]
+      return typeof v === 'function' ? v.bind(target) : v
+    },
+  })
+
   return {
     pixelRatio: quality.pixelRatio,
     detail: quality.detail,
-    beat,
+    beat: beatView,
 
     // Seeded randomness for generative variation (see note above).
     seed,
