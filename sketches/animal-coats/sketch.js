@@ -33,7 +33,9 @@ const PRESETS = {
   Leopard: { pattern: 'Rosettes', coat: '#cfa25a', mark: '#241a0f', mark2: '#a9752f', belly: '#ecdcbc', frequency: 28, warp: 0.6, forking: 0.49, curve: 0, width: 0.5, inner: false },
   Jaguar: { pattern: 'Rosettes', coat: '#c8913f', mark: '#20140a', mark2: '#9d661f', belly: '#e6d3a2', frequency: 20, warp: 0.5, forking: 0.42, curve: 0, width: 0.56, inner: true },
   Giraffe: { pattern: 'Giraffe', coat: '#b0742f', mark: '#f0e6cf', mark2: '#f0e6cf', belly: '#9a6428', frequency: 14, warp: 0.7, forking: 0.21, curve: 0, width: 0.5, inner: false },
-  Dartfrog: { pattern: 'Blotch', coat: '#1f7ae0', mark: '#0a0d12', mark2: '#0a0d12', belly: '#123a86', frequency: 17, warp: 0.9, forking: 0.35, curve: 0, width: 0.52, inner: false },
+  Dartfrog: { pattern: 'Spots', coat: '#1a63e0', mark: '#06080f', mark2: '#06080f', belly: '#0b2f9c', frequency: 22, warp: 1.0, forking: 0.5, curve: 0, width: 0.62, inner: false },
+  'Dartfrog Yellow': { pattern: 'Blotch', coat: '#f2c20e', mark: '#0a0d12', mark2: '#0a0d12', belly: '#c99400', frequency: 12, warp: 1.1, forking: 0.5, curve: 0, width: 0.5, inner: false },
+  'Dartfrog Green': { pattern: 'Spots', coat: '#6fcf5a', mark: '#0a140a', mark2: '#0a140a', belly: '#3f8f3a', frequency: 20, warp: 1.0, forking: 0.5, curve: 0, width: 0.6, inner: false },
 }
 const rt = createRuntime()
 const params = rt.params({
@@ -142,9 +144,10 @@ void main() {
     col = base;
 
     if (u_mode < 1.5) {
-      // spots (cheetah): irregular filled dots
-      float rad = u_width * 0.55 * (0.6 + 0.7 * cr);
-      float wob = (fbm(mr * 7.0 + cr * 20.0) - 0.5) * 0.14 * (0.5 + u_warp);
+      // spots (cheetah / blue dart frog): filled dots with strong size variation
+      // per cell and a wobbly edge, so they read as irregular natural spotting
+      float rad = u_width * 0.5 * (0.28 + 1.25 * cr);
+      float wob = (fbm(mr * 7.0 + cr * 20.0) - 0.5) * 0.2 * (0.5 + u_warp);
       float spot = smoothstep(rad + e, rad - e, d + wob);
       col = mix(base, u_mark, spot);
     } else if (u_mode < 2.5) {
