@@ -75,6 +75,28 @@ export const useSketchStore = defineStore('sketches', {
         }
         return true
       })
+      // With an active search, rank by how well each result matches the query
+      // — title hits first (exact → prefix → word-prefix → substring), then
+      // tags/tech, then description — so typing an effect's name floats it to
+      // the top instead of leaving it wherever the sort order puts it.
+      if (q) {
+        const score = (s) => {
+          const title = (s.title || '').toLowerCase()
+          if (title === q) return 100
+          if (title.startsWith(q)) return 90
+          if (title.split(/\s+/).some((w) => w.startsWith(q))) return 80
+          if (title.includes(q)) return 70
+          if (s.tags?.some((t) => t.toLowerCase() === q)) return 60
+          if (s.tags?.some((t) => t.toLowerCase().includes(q))) return 50
+          if (s.tech?.some((t) => t.toLowerCase().includes(q))) return 40
+          if ((s.description || '').toLowerCase().includes(q)) return 20
+          return 10
+        }
+        return list
+          .map((s, i) => [s, i])
+          .sort((a, b) => score(b[0]) - score(a[0]) || a[1] - b[1])
+          .map((x) => x[0])
+      }
       // Sort — 'featured' keeps the registry's default (newest-first) order.
       const by = state.sortBy
       if (by === 'name') list.sort((a, b) => a.title.localeCompare(b.title))
