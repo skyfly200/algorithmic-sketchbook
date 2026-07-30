@@ -253,91 +253,10 @@ function hsl(h, s, l) {
 }
 
 // --- the enclosure -----------------------------------------------------------
-function drawEnclosure() {
-  // dark surround behind the box
-  ctx.fillStyle = '#141518'
+function drawBackground() {
+  // solid white backdrop — the ferrofluid sits on a clean white field
+  ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, W, H)
-  const topH = H * 0.1
-  const sideW = W * 0.09
-  const faceR = W - sideW
-  // top face (lighter, receding to the right)
-  ctx.fillStyle = '#c7cace'
-  ctx.beginPath()
-  ctx.moveTo(0, topH)
-  ctx.lineTo(faceR, topH)
-  ctx.lineTo(W, 0)
-  ctx.lineTo(sideW * 0.9, 0)
-  ctx.closePath()
-  ctx.fill()
-  // fine grille lines on the top face
-  ctx.save()
-  ctx.beginPath()
-  ctx.moveTo(0, topH); ctx.lineTo(faceR, topH); ctx.lineTo(W, 0); ctx.lineTo(sideW * 0.9, 0); ctx.closePath()
-  ctx.clip()
-  ctx.strokeStyle = 'rgba(120,125,132,0.45)'
-  for (let i = 1; i < 10; i++) {
-    const yy = (i / 10) * topH
-    ctx.beginPath(); ctx.moveTo(-20, yy + 6); ctx.lineTo(W, yy - topH * 0.9 + 6); ctx.stroke()
-  }
-  ctx.restore()
-  // right side face (darker)
-  ctx.fillStyle = '#8b8e93'
-  ctx.beginPath()
-  ctx.moveTo(faceR, topH)
-  ctx.lineTo(W, 0)
-  ctx.lineTo(W, H)
-  ctx.lineTo(faceR, H)
-  ctx.closePath()
-  ctx.fill()
-  // front face (cool neutral grey, softly lit from the top)
-  const fg = ctx.createLinearGradient(0, topH, 0, H)
-  fg.addColorStop(0, '#bcbfc4')
-  fg.addColorStop(0.55, '#adb0b5')
-  fg.addColorStop(1, '#9fa2a7')
-  ctx.fillStyle = fg
-  ctx.fillRect(0, topH, faceR, H - topH)
-  // subtle vignette on the front face
-  const vg = ctx.createRadialGradient(winX, winY, rx * 0.6, winX, winY, Math.max(W, H) * 0.75)
-  vg.addColorStop(0, 'rgba(0,0,0,0)')
-  vg.addColorStop(1, 'rgba(0,0,0,0.16)')
-  ctx.fillStyle = vg
-  ctx.fillRect(0, topH, faceR, H - topH)
-  // two little knobs lower-left
-  for (let i = 0; i < 2; i++) {
-    const kx = sideW * 0.55, ky = H * 0.74 + i * H * 0.1
-    const kr = W * 0.02
-    const kg = ctx.createRadialGradient(kx - kr * 0.3, ky - kr * 0.3, kr * 0.1, kx, ky, kr)
-    kg.addColorStop(0, '#eef0f2')
-    kg.addColorStop(1, '#c2c5c9')
-    ctx.fillStyle = kg
-    ctx.beginPath(); ctx.ellipse(kx, ky, kr, kr * 1.1, 0, 0, 6.28); ctx.fill()
-  }
-}
-
-function drawWindow() {
-  // recessed shadow ring around the window
-  ctx.save()
-  ctx.beginPath(); ctx.ellipse(winX, winY, rx * 1.06, ry * 1.06, 0, 0, 6.28)
-  ctx.fillStyle = 'rgba(20,22,26,0.55)'
-  ctx.fill()
-  ctx.restore()
-  // the bright backlit dish
-  ctx.save()
-  ctx.beginPath(); ctx.ellipse(winX, winY, rx, ry, 0, 0, 6.28); ctx.clip()
-  const dg = ctx.createRadialGradient(winX - rx * 0.12, winY - ry * 0.12, 0, winX, winY, rx * 1.05)
-  dg.addColorStop(0, '#ffffff')
-  dg.addColorStop(0.68, '#f2f5f8')
-  dg.addColorStop(0.9, '#dfe6ec')
-  dg.addColorStop(1, '#cdd6de')
-  ctx.fillStyle = dg
-  ctx.fillRect(winX - rx, winY - ry, rx * 2, ry * 2)
-  // inner shadow at the rim for a lensed, recessed feel
-  const ig = ctx.createRadialGradient(winX, winY, rx * 0.82, winX, winY, rx)
-  ig.addColorStop(0, 'rgba(0,0,0,0)')
-  ig.addColorStop(1, 'rgba(120,140,160,0.35)')
-  ctx.fillStyle = ig
-  ctx.fillRect(winX - rx, winY - ry, rx * 2, ry * 2)
-  ctx.restore()
 }
 
 function drawFluid() {
@@ -350,16 +269,6 @@ function drawFluid() {
   ctx.drawImage(buf, bx0, by0, bw, bh)
   ctx.filter = 'none'
   ctx.restore()
-}
-
-function drawRim() {
-  // bright glass rim highlight over everything
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)'
-  ctx.lineWidth = 2.4 * PR
-  ctx.beginPath(); ctx.ellipse(winX, winY, rx, ry, 0, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke()
-  ctx.strokeStyle = 'rgba(60,70,82,0.5)'
-  ctx.lineWidth = 1.6 * PR
-  ctx.beginPath(); ctx.ellipse(winX, winY, rx, ry, 0, Math.PI * 0.1, Math.PI * 0.9); ctx.stroke()
 }
 
 let lastNow = 0
@@ -376,10 +285,8 @@ function frame(now) {
   updateDrops(t, dt, field)
   renderFluid()
 
-  drawEnclosure()
-  drawWindow()
+  drawBackground()
   drawFluid()
-  drawRim()
 
   requestAnimationFrame(frame)
 }
