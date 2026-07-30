@@ -14,8 +14,10 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
 const params = rt.params({
-  autoCycle: { value: true, type: 'bool', label: 'auto cycle suits' },
-  shape: { value: 0, min: 0, max: 4, step: 1, label: 'suit (manual)' },
+  autoCycle: { value: true, type: 'bool', label: 'auto cycle' },
+  shape: { value: 0, min: 0, max: 11, step: 1, label: 'shape (manual)' },
+  order: { value: 'In order', type: 'select', options: ['In order', 'Random'], label: 'cycle order' },
+  transition: { value: 'Morph', type: 'select', options: ['Morph', 'Cut'], label: 'transition' },
   cycle: { value: 0.18, min: 0.02, max: 0.8, step: 0.01, label: 'cycle speed' },
   size: { value: 1.0, min: 0.5, max: 1.8, step: 0.01, label: 'stencil size' },
   spray: { value: 0.34, min: 0.05, max: 1.0, step: 0.01, label: 'halo width' },
@@ -34,10 +36,15 @@ const params = rt.params({
 })
 rt.mapInput('beat.pulse', 'pulse', 0.0) // opt-in; user can raise it
 
-// ---------------------------------------------------------------- suit shapes
+// ------------------------------------------------------------------- shapes
 // Each draws a filled white silhouette centred in a GRID×GRID context, sized by
-// `s` (half-extent in px). Unions of primitives keep the paths simple.
-const SUITS = ['heart', 'spade', 'club', 'diamond', 'star']
+// `s` (half-extent in px). Unions of primitives keep the paths simple. The set
+// is generic — card suits plus stars, a crescent, a flower, a bolt and a few
+// polygons — and the sketch morphs/cuts between any of them.
+const SHAPES = [
+  'heart', 'spade', 'club', 'diamond', 'sparkle',
+  'star', 'crescent', 'flower', 'bolt', 'hexagon', 'triangle', 'drop',
+]
 
 function drawHeart(c, cx, cy, s, flip = 1) {
   // two lobes + a triangle down to the point
@@ -64,7 +71,29 @@ function drawStem(c, cx, cy, s) {
   c.closePath()
   c.fill()
 }
-function drawSuit(c, name, cx, cy, s) {
+// n-pointed star / sparkle: `pts` points alternating outer/inner radius.
+function drawStar(c, cx, cy, s, pts, outR, inR) {
+  c.beginPath()
+  for (let i = 0; i < pts * 2; i++) {
+    const a = (i / (pts * 2)) * Math.PI * 2 - Math.PI / 2
+    const rr = i % 2 === 0 ? s * outR : s * inR
+    const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr
+    i === 0 ? c.moveTo(x, y) : c.lineTo(x, y)
+  }
+  c.closePath()
+  c.fill()
+}
+function drawPoly(c, cx, cy, s, sides, rot = -Math.PI / 2) {
+  c.beginPath()
+  for (let i = 0; i < sides; i++) {
+    const a = rot + (i / sides) * Math.PI * 2
+    const x = cx + Math.cos(a) * s, y = cy + Math.sin(a) * s
+    i === 0 ? c.moveTo(x, y) : c.lineTo(x, y)
+  }
+  c.closePath()
+  c.fill()
+}
+function drawShape(c, name, cx, cy, s) {
   c.fillStyle = '#fff'
   if (name === 'heart') {
     drawHeart(c, cx, cy, s, 1)
@@ -87,18 +116,44 @@ function drawSuit(c, name, cx, cy, s) {
     c.lineTo(cx - s * 0.72, cy)
     c.closePath()
     c.fill()
-  } else {
-    // four-point sparkle: outer points on the axes, deep inner notches
-    const out = s * 1.05
-    const inr = s * 0.28
+  } else if (name === 'sparkle') {
+    drawStar(c, cx, cy, s, 4, 1.05, 0.28) // four-point sparkle, deep notches
+  } else if (name === 'star') {
+    drawStar(c, cx, cy, s, 5, 1.05, 0.46) // classic five-point star
+  } else if (name === 'crescent') {
+    // outer disc minus an offset disc → a crescent (even-odd fill)
     c.beginPath()
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2 - Math.PI / 2
-      const rr = i % 2 === 0 ? out : inr
-      const x = cx + Math.cos(a) * rr
-      const y = cy + Math.sin(a) * rr
-      i === 0 ? c.moveTo(x, y) : c.lineTo(x, y)
+    c.arc(cx, cy, s * 0.95, 0, Math.PI * 2)
+    c.arc(cx + s * 0.42, cy - s * 0.04, s * 0.82, 0, Math.PI * 2)
+    c.fill('evenodd')
+  } else if (name === 'flower') {
+    // a ring of petals around a centre — union of overlapping discs
+    const petals = 6, pr = s * 0.46
+    c.beginPath()
+    for (let k = 0; k < petals; k++) {
+      const a = (k / petals) * Math.PI * 2
+      c.moveTo(cx + Math.cos(a) * s * 0.52 + pr, cy + Math.sin(a) * s * 0.52)
+      c.arc(cx + Math.cos(a) * s * 0.52, cy + Math.sin(a) * s * 0.52, pr, 0, Math.PI * 2)
     }
+    c.moveTo(cx + s * 0.5, cy); c.arc(cx, cy, s * 0.5, 0, Math.PI * 2)
+    c.fill()
+  } else if (name === 'bolt') {
+    // a lightning bolt zig-zag
+    const p = [[-0.1, -1.02], [0.4, -1.02], [-0.02, -0.12], [0.34, -0.12], [-0.4, 1.02], [-0.04, 0.1], [-0.46, 0.1]]
+    c.beginPath()
+    p.forEach(([x, y], i) => (i ? c.lineTo(cx + x * s, cy + y * s) : c.moveTo(cx + x * s, cy + y * s)))
+    c.closePath()
+    c.fill()
+  } else if (name === 'hexagon') {
+    drawPoly(c, cx, cy, s * 1.02, 6, 0)
+  } else if (name === 'triangle') {
+    drawPoly(c, cx, cy, s * 1.05, 3)
+  } else if (name === 'drop') {
+    // a teardrop: pointed at the top, round at the bottom
+    c.beginPath()
+    c.moveTo(cx, cy - s * 1.0)
+    c.bezierCurveTo(cx + s * 0.92, cy - s * 0.12, cx + s * 0.72, cy + s * 0.98, cx, cy + s * 0.98)
+    c.bezierCurveTo(cx - s * 0.72, cy + s * 0.98, cx - s * 0.92, cy - s * 0.12, cx, cy - s * 1.0)
     c.closePath()
     c.fill()
   }
@@ -152,7 +207,7 @@ function buildSDF(name, G) {
   off.width = off.height = G
   const c = off.getContext('2d')
   c.clearRect(0, 0, G, G)
-  drawSuit(c, name, G / 2, G / 2, G * 0.32)
+  drawShape(c, name, G / 2, G / 2, G * 0.32)
   const px = c.getImageData(0, 0, G, G).data
   const inside = new Uint8Array(G * G)
   for (let i = 0; i < G * G; i++) inside[i] = px[i * 4 + 3] > 127 ? 1 : 0
@@ -185,7 +240,7 @@ function rebuild() {
   const want = Math.max(90, Math.min(190, Math.round(150 * rt.detail)))
   if (want === G) return
   G = want
-  sdfs = SUITS.map((s) => buildSDF(s, G))
+  sdfs = SHAPES.map((s) => buildSDF(s, G))
   grain = new Float32Array(G * G)
   for (let i = 0; i < grain.length; i++) grain[i] = Math.random()
   field = document.createElement('canvas')
@@ -228,8 +283,21 @@ function resize() {
   canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
 }
 
-let phase = 0
+// Generic shape-shifter: hold the current shape, then either morph or cut to a
+// next shape chosen in order or at random. Two live distance fields (curIdx,
+// nxtIdx) are lerped by `morphAmt`, so any shape can dissolve into any other.
+let curIdx = 0
+let nxtIdx = 1
+let slotT = 0 // 0..1 progress through the current shape's slot
 let prevNow = 0
+function pickNext(cur) {
+  if (params.order === 'Random' && SHAPES.length > 1) {
+    let n
+    do { n = Math.floor(Math.random() * SHAPES.length) } while (n === cur)
+    return n
+  }
+  return (cur + 1) % SHAPES.length
+}
 
 function frame(now) {
   rt.tick(now)
@@ -259,26 +327,32 @@ function frame(now) {
     ctx.globalCompositeOperation = 'source-over'
   }
 
-  // --- pick + morph two suits ----------------------------------------------
-  const N = SUITS.length
-  if (params.autoCycle) phase += dt * params.cycle
-  else {
-    const target = Math.round(params.shape)
-    // ease toward the chosen suit (wrap-aware, short way round)
-    let diff = target - phase
-    diff -= Math.round(diff / N) * N
-    phase += diff * Math.min(1, dt * 4)
+  // --- advance the shape-shifter -------------------------------------------
+  const N = SHAPES.length
+  const cut = params.transition === 'Cut'
+  let m = 0
+  if (params.autoCycle) {
+    slotT += dt * params.cycle
+    if (slotT >= 1) { slotT -= Math.floor(slotT); curIdx = nxtIdx; nxtIdx = pickNext(curIdx) }
+    // Cut: hold the current shape, snap at the slot boundary. Morph: hold, then
+    // cross-dissolve to the next over the last stretch of the slot.
+    if (!cut) {
+      const mt = Math.max(0, Math.min(1, (slotT - 0.55) / 0.4))
+      m = mt * mt * (3 - 2 * mt)
+    }
+  } else {
+    const target = ((Math.round(params.shape) % N) + N) % N
+    nxtIdx = target
+    if (cut || target === curIdx) {
+      curIdx = target; slotT = 0; m = 0
+    } else {
+      slotT += dt * 3
+      if (slotT >= 1) { curIdx = target; slotT = 0; m = 0 }
+      else m = slotT * slotT * (3 - 2 * slotT)
+    }
   }
-  let base = Math.floor(phase) % N
-  if (base < 0) base += N
-  let frac = phase - Math.floor(phase)
-  // hold each suit, then a quick morph in the last stretch of its slot
-  const morph = params.autoCycle
-    ? Math.max(0, Math.min(1, (frac - 0.62) / 0.34))
-    : frac
-  const m = morph * morph * (3 - 2 * morph)
-  const a = sdfs[base]
-  const b = sdfs[(base + 1) % N]
+  const a = sdfs[curIdx]
+  const b = sdfs[nxtIdx]
 
   // --- spray field ----------------------------------------------------------
   const pulse = rt.beat.state.pulse * params.pulse

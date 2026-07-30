@@ -1,7 +1,7 @@
 {
   "title": "Stencil Spray",
-  "description": "Airbrushed playing-card suits. Each suit — heart, spade, club, diamond and a four-point sparkle — is rasterised into a signed distance field, and the spray is a function of that distance: densest right at the stencil edge and feathering outward, so the symbol reads as clean negative space punched out of a cloud of paint drifting over grainy paper. Because real distance fields drive it, two suits crossfade by lerping their fields, giving a smooth morph from one symbol into the next as the deck cycles. Halo width, spray grain, inside glow, core burn, spin, paint and paper colours are all live, and a beat can bloom the spray so the paint pulses to sound.",
-  "tags": ["spray paint", "stencil", "airbrush", "card suits", "distance field", "morph", "generative", "audio"],
+  "description": "Airbrushed stencils. A whole set of shapes — the card suits (heart, spade, club, diamond), a four-point sparkle and a five-point star, a crescent, a flower, a lightning bolt, a hexagon, a triangle and a teardrop — are each rasterised into a signed distance field, and the spray is a function of that distance: densest right at the stencil edge and feathering outward, so the symbol reads as clean negative space punched out of a cloud of paint drifting over grainy paper. Because real distance fields drive it, any shape dissolves into any other by lerping their fields. The shifter is generic: cycle in order or at random, and morph smoothly or hard-cut between shapes — or pick one by hand. Halo width, spray grain, inside glow, core burn, spin, paint and paper colours are all live, and a beat can bloom the spray so the paint pulses to sound.",
+  "tags": ["spray paint", "stencil", "airbrush", "shapes", "distance field", "morph", "generative", "audio"],
   "tech": ["canvas2d"],
   "created": "2026-07-30"
 }
