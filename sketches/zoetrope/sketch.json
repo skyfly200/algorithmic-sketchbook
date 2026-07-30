@@ -1,6 +1,6 @@
 {
   "title": "Zoetrope",
-  "description": "The Victorian animation drum. A slotted cylinder spins, and through its slits a strip of still drawings springs to life — a bouncing ball, a running figure, a flapping bird or a blooming flower — one frame flicking to the next as each slot sweeps past. Spin it up until the slit strobe locks and the figure animates; slow it and the sequence smears. Subject, frame count, spin speed, slit width and palette are live and mappable.",
+  "description": "The Victorian animation drum, on a wooden stand with a spindle and brass rims. A slotted cylinder spins, the animation strip is painted around the inside wall (you can see it ghosted across the back), and through the near slits it springs to life a frame at a time — the classic Muybridge galloping horse, a walk cycle, a runner, a flapping bird, a leaping fish, a bouncing ball, a blooming flower or a spinning star. Spin it up until the slit strobe locks and the figure animates; slow it and the sequence smears. Subject, frame count, spin speed, slit width, lamp glow and palette are live and mappable.",
   "tags": ["animation", "zoetrope", "retro", "generative", "audio-reactive"],
   "tech": ["canvas2d"],
   "created": "2026-07-22"
