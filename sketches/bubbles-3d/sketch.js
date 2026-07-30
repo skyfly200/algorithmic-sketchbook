@@ -52,15 +52,21 @@ function drawBubble(b, t, lx, ly) {
   ctx.save()
   ctx.translate(b.x, b.y)
 
-  // wobbling outline clip so the bubble deforms on surface tension
+  // wobbling outline — traced finely so the silhouette, shading and rim all
+  // follow the SAME wavy curve. (Using a circle for the fills/rim while the clip
+  // wobbled is what cut those straight chords across the bubble at high wobble.)
   const wob = params.wobble * 0.06
-  ctx.beginPath()
-  for (let a = 0; a <= Math.PI * 2 + 0.06; a += 0.12) {
-    const rr = R * (1 + wob * Math.sin(a * b.lobes + b.wob + t * b.spin))
-    const x = Math.cos(a) * rr, y = Math.sin(a) * rr
-    a === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+  const Rcov = R * (1 + wob) + 2 // radius that always covers the wobble bulges
+  function trace(scale) {
+    ctx.beginPath()
+    for (let a = 0; a <= Math.PI * 2 + 0.05; a += 0.045) {
+      const rr = R * scale * (1 + wob * Math.sin(a * b.lobes + b.wob + t * b.spin))
+      const x = Math.cos(a) * rr, y = Math.sin(a) * rr
+      a === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+    }
+    ctx.closePath()
   }
-  ctx.closePath()
+  trace(1)
   ctx.save()
   ctx.clip()
 
@@ -71,7 +77,7 @@ function drawBubble(b, t, lx, ly) {
   body.addColorStop(0.93, 'rgba(160,200,255,0.30)')
   body.addColorStop(1, 'rgba(220,240,255,0.6)')
   ctx.fillStyle = body
-  ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill()
+  ctx.beginPath(); ctx.arc(0, 0, Rcov, 0, Math.PI * 2); ctx.fill() // cover the whole clipped shape
 
   // 2) thin-film interference: a single centred radial sweep whose hue cycles
   //    with radius (the film's path length) and drifts as the film thins — the
@@ -89,7 +95,7 @@ function drawBubble(b, t, lx, ly) {
     g.addColorStop(rf, hsl(hue, 60, 62, 0.09 * params.iridescence * edge))
   }
   ctx.fillStyle = g
-  ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill()
+  ctx.beginPath(); ctx.arc(0, 0, Rcov, 0, Math.PI * 2); ctx.fill()
 
   // 3) primary specular glare — a hot spot where the light hits the sphere,
   //    positioned by the (orbiting) light direction so it slides as light moves
@@ -110,11 +116,12 @@ function drawBubble(b, t, lx, ly) {
   ctx.beginPath(); ctx.arc(wx, wy, R * 0.3, 0, Math.PI * 2); ctx.fill()
 
   ctx.restore() // remove clip
-  // 5) crisp Fresnel rim stroke on top
+  // 5) crisp Fresnel rim stroke on top — traces the same wavy outline
   ctx.globalCompositeOperation = 'lighter'
   ctx.lineWidth = Math.max(1, R * 0.018)
   ctx.strokeStyle = 'rgba(200,230,255,0.34)'
-  ctx.beginPath(); ctx.arc(0, 0, R * 0.99, 0, Math.PI * 2); ctx.stroke()
+  ctx.lineJoin = 'round'
+  trace(0.99); ctx.stroke()
   ctx.restore()
 }
 
