@@ -1,0 +1,7 @@
+{
+  "title": "Stained Glass",
+  "description": "Recompose a live source as a leaded stained-glass window. A slowly drifting Voronoi mosaic cuts the frame into glass panes; each pane takes a single saturated colour sampled from the source under it, lit with a soft glassy sheen and a diagonal light streak, and the panes are separated by dark leaded came lines. Pane size, leading width, glass saturation, sheen, drift and pane irregularity are live. A filter: it re-glazes whatever feeds it (camera, a clip, the demo or the layers below), and the mic can lift the sheen.",
+  "tags": ["stained glass", "voronoi", "mosaic", "filter", "stylize", "camera"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-30"
+}

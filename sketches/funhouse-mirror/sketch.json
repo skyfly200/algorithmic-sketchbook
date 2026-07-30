@@ -1,0 +1,7 @@
+{
+  "title": "Funhouse Mirror",
+  "description": "The carnival hall of warped mirrors over a live source. Each frame is redrawn as horizontal then vertical strips, every one stretched or squeezed by a distortion profile, so the image bulges out, pinches in, ripples and wobbles like a sheet of curved silvered glass. Pick a mirror — Wavy, Bulge, Pinch or a Carnival mix — and dial the distortion, ripple count, wobble speed and how much the vertical axis warps too. A filter: it warps whatever feeds it (camera, a dropped clip, the demo, or the layers below), and the mic can pump the distortion.",
+  "tags": ["funhouse", "mirror", "warp", "distortion", "filter", "camera"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-30"
+}
