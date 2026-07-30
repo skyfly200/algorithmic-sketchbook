@@ -20,13 +20,18 @@ built-in demo scene, or the live Mixer/Patch feed, and then apply their effect.
 The current filters include:
 
 - **Optical / lens** — camera lens (focus, focal plane, dirt), lens flare,
-  diffraction-style looks, polarization.
-- **Texture / print** — pointillism, halftone, painterly (watercolour, oil,
-  charcoal, ink, pastel), interlacing.
+  diffraction-style looks, polarization, **funhouse mirror** (wavy / bulge /
+  pinch / carnival warps).
+- **Texture / print** — pointillism, halftone, **painterly** (watercolour, oil,
+  charcoal, ink, pastel and **spray paint**), **stained glass** (a leaded
+  Voronoi mosaic), interlacing.
 - **Colour / signal** — channel offset, colour filter, CRT, VHS defects,
   rolling shutter.
-- **Atmosphere** — fog, mist, glow, nebula gasses, light-through-leaves.
-- **Motion / time** — delay, feedback, motion extraction, warp.
+- **Atmosphere** — fog, mist, glow, nebula gasses, **light through leaves**
+  (with a colour-temperature control and focal-plane interference ripple).
+- **Motion / time** — delay, feedback, motion extraction, warp, and the
+  **FPS limiter** (sample-and-hold any source to a chosen frame rate for a
+  stop-motion / on-twos stutter, with step-blend and motion echo).
 - **Kaleidoscope** and **strobe / UV** stylings.
 
 ## Why the split matters

@@ -25,8 +25,8 @@ arbitrary network and blit the result to a fullscreen stage.
 | **Filter** | A source-[filter](#/docs/effects-filters) sketch. Its video input is piped in as the filter's source each frame. |
 | **Media** | Your webcam, dropped files, recorded clips, or a library item as a source. |
 | **Text** | Rendered text with a mappable font — size, weight, tracking and colour can all be modulated. |
-| **Mask** | Multiplies a content stream by a matte (luma or a second stream). |
-| **Polygon Mask** | A projection-mapping mask whose points you drag directly on the output. |
+| **Mask** | Multiplies a content stream by a matte — a luma key, a second image stream, or a **Polygon** node's shape. |
+| **Polygon** | A source that fills an editable polygon whose points you drag directly on the output. Wire it into a **Mask**'s matte input to projection-map, or use it as a coloured shape. |
 | **Portal** | Remaps a rectangular (or shaped) region of the frame elsewhere, with recursion for infinity-mirror looks. |
 | **Blend** | Composites two streams with any blend mode and a mix amount. |
 | **Geometry** | A mesh living in geometry space — pick a shape and material, and its *displace* control warps every vertex along its normal (a vertex shader in miniature). Its dotted output is geometry, not pixels: it only plugs into a Camera. |

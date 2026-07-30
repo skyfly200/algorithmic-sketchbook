@@ -19,6 +19,7 @@ const ORDER = [
   ['patch', 'mdi-vector-polyline'],
   ['autopilot', 'mdi-robot-outline'],
   ['effects-filters', 'mdi-image-filter-vintage'],
+  ['settings', 'mdi-cog-outline'],
   ['authoring', 'mdi-code-tags'],
   ['runtime', 'mdi-api'],
   ['offline', 'mdi-wifi-off'],
