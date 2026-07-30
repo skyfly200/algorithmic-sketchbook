@@ -2,7 +2,9 @@
 // the frame gives a colour + gradient field; strokes are laid perpendicular to
 // the gradient (i.e. along contours) so they flow around forms, exactly how a
 // painter follows edges. The medium (watercolour / oil / charcoal / ink /
-// pastel) changes the stroke shape, opacity, colour treatment and paper.
+// pastel / spray) changes the stroke shape, opacity, colour treatment and
+// paper — spray swaps the bristle strokes for soft airbrushed stipple clouds
+// with overspray grain and the odd drip, graffiti-on-a-wall style.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
 
@@ -11,7 +13,7 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
 const params = rt.params({
-  style: { value: 'Watercolour', type: 'select', options: ['Watercolour', 'Oil', 'Charcoal', 'Ink', 'Pastel'], label: 'Medium' },
+  style: { value: 'Watercolour', type: 'select', options: ['Watercolour', 'Oil', 'Charcoal', 'Ink', 'Pastel', 'Spray'], label: 'Medium' },
   brush: { value: 1, min: 0.4, max: 3, step: 0.05, label: 'Brush size' },
   sizeVary: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Brush size variation' },
   lengthVary: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Stroke length variation' },
@@ -63,7 +65,40 @@ function styleBg() {
   const s = params.style
   if (s === 'Ink') return '#f6f3ec'
   if (s === 'Charcoal') return '#d9d3c6'
+  if (s === 'Spray') return '#3c4048' // a concrete wall for the paint to bite into
   return null // watercolour/oil/pastel start from the paper
+}
+
+// A spray-paint dab: a soft airbrushed core of the sampled colour, a scatter of
+// fine overspray dots with jittered colour/alpha (the grainy halo you get off a
+// rattle-can), and the occasional running drip. Drawn in world space.
+function sprayDab(x, y, rad, r, g, b, tex) {
+  const a = 0.14 + tex * 0.13
+  const g0 = ctx.createRadialGradient(x, y, 0, x, y, rad)
+  g0.addColorStop(0, `rgba(${r | 0},${g | 0},${b | 0},${a})`)
+  g0.addColorStop(0.55, `rgba(${r | 0},${g | 0},${b | 0},${a * 0.45})`)
+  g0.addColorStop(1, `rgba(${r | 0},${g | 0},${b | 0},0)`)
+  ctx.fillStyle = g0
+  ctx.beginPath(); ctx.arc(x, y, rad, 0, 6.283); ctx.fill()
+  const dots = (5 + tex * 16) | 0
+  for (let k = 0; k < dots; k++) {
+    const ang = Math.random() * 6.283, rr = rad * (0.45 + Math.random())
+    const jit = (Math.random() * 2 - 1) * 26 * tex
+    ctx.fillStyle = `rgba(${clampC(r + jit) | 0},${clampC(g + jit) | 0},${clampC(b + jit) | 0},${a * (0.3 + Math.random() * 0.6)})`
+    ctx.beginPath(); ctx.arc(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr, Math.random() * 1.7 * PR + 0.4, 0, 6.283); ctx.fill()
+  }
+  // an occasional running drip — the graffiti signature
+  if (Math.random() < 0.012 * (0.3 + tex)) {
+    const dl = rad * (2 + Math.random() * 6)
+    const g1 = ctx.createLinearGradient(x, y, x, y + dl)
+    g1.addColorStop(0, `rgba(${r | 0},${g | 0},${b | 0},${Math.min(0.9, a * 2.2)})`)
+    g1.addColorStop(1, `rgba(${r | 0},${g | 0},${b | 0},0)`)
+    ctx.strokeStyle = g1
+    ctx.lineWidth = Math.max(1, rad * 0.16); ctx.lineCap = 'round'
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (Math.random() * 2 - 1) * rad * 0.12, y + dl); ctx.stroke()
+    ctx.fillStyle = `rgba(${r | 0},${g | 0},${b | 0},${Math.min(0.9, a * 2)})`
+    ctx.beginPath(); ctx.arc(x + (Math.random() * 2 - 1) * rad * 0.1, y + dl, rad * 0.13, 0, 6.283); ctx.fill() // bead at the tip
+  }
 }
 
 const clampC = (v) => v < 0 ? 0 : v > 255 ? 255 : v
@@ -143,6 +178,13 @@ function frame(now) {
     const len = Math.max(base * 0.4, base * (1.2 + grad * 2) * params.length * lvar)
     const wdt = base * 0.5 * svar
     const tex = params.texture
+
+    if (style === 'Spray') {
+      // no oriented stroke — lay a soft airbrushed dab, denser on flat areas
+      const rad = base * 1.3 * (0.8 + grad * 0.7) * svar
+      sprayDab(x, y, rad, r, g, b, tex)
+      continue
+    }
 
     ctx.save()
     ctx.translate(x, y)
