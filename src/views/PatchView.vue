@@ -133,7 +133,7 @@ const TYPES = {
   text: { title: 'Text', ins: 0, color: '#ff9ec4' },
   portal: { title: 'Portal', ins: 1, color: '#8ad0ff' }, // remap a region elsewhere
   mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
-  shape: { title: 'Polygon Mask', ins: 1, color: '#f2ad00' }, // clip to an editable polygon (projection mapping)
+  polygon: { title: 'Polygon', ins: 0, color: '#f2ad00' }, // a matte-shape source: white editable polygon → wire into a Mask
   blend: { title: 'Blend', ins: 2, color: '#a0e060' },
   // Geometry space: a mesh source (its displacement stands in for a vertex
   // shader) and a virtual Camera that rasterizes connected geometry down to a
@@ -165,9 +165,9 @@ const PARAM_RANGES = {
   // Portal: a source region is remapped (copied/scaled) into a destination
   // region — all eight edges control-mappable so the portal can roam.
   portal: { srcX: [0, 1], srcY: [0, 1], srcW: [0.05, 1], srcH: [0.05, 1], dstX: [0, 1], dstY: [0, 1], dstW: [0.05, 1], dstH: [0.05, 1] },
-  // Polygon Mask: only the edge softness is a scalar worth modulating; the
+  // Polygon: only the edge softness is a scalar worth modulating; the
   // vertices are edited by dragging on the output.
-  shape: { feather: [0, 0.5] },
+  polygon: { feather: [0, 0.5] },
 }
 // Fallback font list (generic families + common web-safe faces) used until the
 // user loads their real installed fonts via the Local Font Access API.
@@ -273,8 +273,31 @@ function normalizeNodes(list) {
       n.type = 'media'
       n.params = { mode: 'camera', mediaId: null }
     }
+    // Legacy "Polygon Mask" (shape) → the new Polygon matte source. Its old
+    // content input is rewired to a Mask node in migrateGraph(); here we just
+    // switch the type and drop the now-meaningless invert (Mask owns that).
+    if (n.type === 'shape') { n.type = 'polygon'; delete n.params.invert }
   }
   return list
+}
+// The old Polygon Mask clipped its input to the polygon. Now Polygon is a
+// source, so reconnect any legacy graph: for each converted polygon that had a
+// content wire, insert a Mask (content × polygon) in its place so old routings
+// keep clipping as before.
+function migrateGraph(nodesArr, edgesArr) {
+  let maxId = nodesArr.reduce((m, n) => Math.max(m, n.id ?? 0), 0)
+  for (const poly of [...nodesArr]) {
+    if (poly.type !== 'polygon') continue
+    const inEdge = edgesArr.find((e) => e.to === poly.id)
+    if (!inEdge) continue // a fresh Polygon source — nothing to rewire
+    const m = { id: ++maxId, type: 'mask', x: poly.x, y: poly.y, params: { strength: 1, invert: false } }
+    nodesArr.push(m)
+    // reroute the polygon's downstream consumers to come from the new Mask
+    for (const e of edgesArr) if (e.from === poly.id) e.from = m.id
+    inEdge.to = m.id; inEdge.port = 0 // old content → Mask.content
+    edgesArr.push({ from: poly.id, to: m.id, port: 1 }) // polygon → Mask.matte
+    poly.x -= 60; poly.y += 70 // nudge the polygon out from under the mask
+  }
 }
 const saved = settings.persistEditors ? loadGraph() : null
 let nextId = 1
@@ -282,6 +305,7 @@ const nodes = reactive(normalizeNodes(saved?.nodes) ?? [])
 const edges = reactive(saved?.edges ?? [])
 // Control links: an Input node's value → a numeric param on another node.
 const links = reactive(saved?.links ?? [])
+migrateGraph(nodes, edges) // reconnect legacy Polygon-Mask graphs
 if (nodes.length) nextId = Math.max(...nodes.map((n) => n.id)) + 1
 
 // --- undo / redo: every persisted change pushes the previous graph state ----
@@ -379,8 +403,8 @@ function addNode(type) {
                       ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false }
                       : type === 'portal'
                         ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }
-                        : type === 'shape'
-                          ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0, invert: false }
+                        : type === 'polygon'
+                          ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0 }
                           : type === 'geo'
                             ? { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2 }
                             : type === 'vcam'
@@ -389,9 +413,9 @@ function addNode(type) {
                                 ? { mode: 'multiply', strength: 1, invert: false }
                                 : {},
   })
-  // Polygon Mask nodes lock by default so a mapped mask isn't nudged or
-  // randomized by accident — its corners are still editable via "Edit masks".
-  if (type === 'shape') n.locked = true
+  // Polygon nodes lock by default so a mapped matte isn't nudged or
+  // randomized by accident — its corners are still editable via "Edit points".
+  if (type === 'polygon') n.locked = true
   nodes.push(n)
   st(n.id) // create runtime state
   persist()
@@ -1979,35 +2003,19 @@ function evalNode(node) {
         octx.globalCompositeOperation = 'source-over'
       } catch { /* tainted matte */ }
     }
-  } else if (node.type === 'shape') {
-    // Clip the input to an editable polygon — the projection-mapping mask.
-    // Vertices live in node.params.points as normalized [x,y]; drag them on
-    // the output (Edit masks mode) to fit real surfaces.
-    const content = inputCanvas(node, 0)
-    if (content) octx.drawImage(content, 0, 0, W, H)
+  } else if (node.type === 'polygon') {
+    // A matte-shape SOURCE: a white editable polygon on black. Vertices live in
+    // node.params.points (normalized [x,y]); drag them on the output. Wire this
+    // node's output into a Mask node's matte input to cut a picture to the
+    // shape (the Mask node's own "invert matte" flips it — projection mapping).
     const pts = node.params.points || []
-    if (content && pts.length >= 3) {
-      const invert = !!node.params.invert
+    if (pts.length >= 3) {
       const feather = pval(node, 'feather') || 0
-      octx.globalCompositeOperation = 'destination-in'
-      if (feather > 0.001) {
-        // Soft edge: build a blurred matte and keep the content under it.
-        const m = s.matte || (s.matte = document.createElement('canvas'))
-        if (m.width !== W || m.height !== H) { m.width = W; m.height = H }
-        const mx = m.getContext('2d')
-        mx.clearRect(0, 0, W, H)
-        mx.filter = `blur(${feather * 0.12 * Math.min(W, H)}px)`
-        mx.fillStyle = '#fff'
-        polyPath(mx, pts, invert)
-        mx.fill(invert ? 'evenodd' : 'nonzero')
-        mx.filter = 'none'
-        octx.drawImage(m, 0, 0)
-      } else {
-        octx.fillStyle = '#fff'
-        polyPath(octx, pts, invert)
-        octx.fill(invert ? 'evenodd' : 'nonzero')
-      }
-      octx.globalCompositeOperation = 'source-over'
+      octx.fillStyle = '#fff'
+      if (feather > 0.001) octx.filter = `blur(${feather * 0.12 * Math.min(W, H)}px)`
+      polyPath(octx, pts, false)
+      octx.fill('nonzero')
+      octx.filter = 'none'
     }
   } else if (node.type === 'blend') {
     // "swap" flips which input is the base and which is composited on top.
@@ -2377,7 +2385,7 @@ function stageFit() {
   const dispH = H * scale
   return { offX: (vw.value - dispW) / 2, offY: (vh.value - dispH) / 2, dispW, dispH }
 }
-const shapeNodes = computed(() => nodes.filter((n) => n.type === 'shape'))
+const shapeNodes = computed(() => nodes.filter((n) => n.type === 'polygon'))
 // Per shape-node handle/edge geometry in screen pixels for the SVG overlay.
 const maskGeom = computed(() => {
   geomVer.value // reactive dep on resolution changes
@@ -2770,8 +2778,8 @@ const PRESET_BLOCKS = [
     nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'effect', x: 0, y: RY * 2 }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'blend', x: CX * 2, y: RY }, { type: 'output', x: CX * 3, y: RY }],
     edges: [{ from: 0, to: 3, port: 0 }, { from: 1, to: 3, port: 1 }, { from: 3, to: 4, port: 0 }, { from: 2, to: 4, port: 1 }, { from: 4, to: 5, port: 0 }] },
   { name: 'Polygon-mapped',
-    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'shape', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
-    edges: [{ from: 0, to: 1, port: 0 }, { from: 1, to: 2, port: 0 }] },
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'polygon', x: CX, y: RY }, { type: 'mask', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
+    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }] },
   { name: 'Portal echo',
     nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'portal', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
     edges: [{ from: 0, to: 1, port: 0 }, { from: 1, to: 2, port: 0 }] },
@@ -2791,8 +2799,8 @@ function insertPreset(p) {
     if (mn.type === 'filter' && !params.slug) params.slug = pk(filterOptions.value)?.slug ?? ''
     if (mn.type === 'blend' && !params.mode) { params.mode = pk(BLENDS); params.mix = +(0.5 + Math.random() * 0.5).toFixed(2) }
     if (mn.type === 'portal' && !params.srcW) Object.assign(params, { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' })
-    if (mn.type === 'shape' && !params.points) Object.assign(params, { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0, invert: false })
-    return { id: i, type: mn.type, x: mn.x, y: mn.y, params, locked: mn.type === 'shape' }
+    if (mn.type === 'polygon' && !params.points) Object.assign(params, { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0 })
+    return { id: i, type: mn.type, x: mn.x, y: mn.y, params, locked: mn.type === 'polygon' }
   })
   insertBlock({ nodes: bn, edges: (p.edges || []).map((e) => ({ ...e })), links: (p.links || []).map((l) => ({ ...l })) })
   showToast(`Added “${p.name}”`)
@@ -2853,6 +2861,7 @@ function loadRouting(r) {
   nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
   edges.splice(0, edges.length, ...data.edges)
   links.splice(0, links.length, ...(data.links ?? []))
+  migrateGraph(nodes, edges) // reconnect legacy Polygon-Mask routings
   pruneOrphans()
   nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
   // Keep runtime state (canvases, bound iframes/video) for node ids that
@@ -2990,7 +2999,7 @@ const tourSteps = [
   { title: 'Patch — the studio', body: 'A node compositor: wire generator effects through filters and blends into an Output, then project it. This is the deep end.' },
   { target: '[data-tour="patch-add"]', title: 'Build the graph', body: 'Add effects, filters, text, media, masks and blends from here, then drag a node’s right port to another’s left port to wire them.', pad: 8 },
   { target: '[data-tour="patch-random"]', title: 'Randomize', body: 'Deal out a whole new random-but-sensible patch in one click (undoable). It draws from the effect pool you set in Settings.' },
-  { target: '[data-tour="patch-mask"]', title: 'Projection mapping', body: 'Add a Polygon Mask node, then turn this on and drag the mask’s corners on the output to fit it to a real surface.' },
+  { target: '[data-tour="patch-mask"]', title: 'Projection mapping', body: 'Add a Polygon node (wire it into a Mask), then turn this on and drag the polygon’s corners on the output to fit it to a real surface.' },
   { target: '[data-tour="patch-show"]', title: 'Plan a show', body: 'Capture the patch as cues and step through them, or lay them on a timeline that ramps parameters between them.' },
   { target: '[data-tour="patch-output"]', title: 'Go live', body: 'Switch to output-only and fullscreen for a clean projection, pop the output to a second display, or export the patch to a file.' },
 ]
@@ -3116,7 +3125,7 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
         <v-btn icon="mdi-image-multiple" variant="tonal" size="small" title="Add Media (camera · files · clips)" :style="{ color: TYPES.media.color }" @click="addNode('media')" />
         <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
-        <v-btn icon="mdi-vector-polygon" variant="tonal" size="small" title="Add Polygon Mask (drag points on the output — projection mapping)" :style="{ color: TYPES.shape.color }" @click="addNode('shape')" />
+        <v-btn icon="mdi-vector-polygon" variant="tonal" size="small" title="Add Polygon (an editable matte shape — wire into a Mask)" :style="{ color: TYPES.polygon.color }" @click="addNode('polygon')" />
         <v-btn icon="mdi-shape-outline" variant="tonal" size="small" title="Add Portal (remap a region elsewhere)" :style="{ color: TYPES.portal.color }" @click="addNode('portal')" />
         <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
         <v-btn icon="mdi-cube-outline" variant="tonal" size="small" title="Add Geometry (a mesh in vertex space)" :style="{ color: TYPES.geo.color }" @click="addNode('geo')" />
@@ -3944,12 +3953,12 @@ onBeforeUnmount(() => {
             <label class="chk"><input type="checkbox" v-model="n.params.border" @change="persist" @pointerdown.stop /> outline</label>
           </template>
 
-          <template v-if="n.type === 'shape'">
+          <template v-if="n.type === 'polygon'">
+            <div class="media-hint">A matte shape — outputs a white polygon on black. Wire it into a <b>Mask</b> node's matte input to cut a picture to this shape (the Mask's “invert matte” flips it).</div>
             <label>
               <span class="pjack" :ref="(el) => bindJack(n.id, 'feather', el)" :data-jack-node="n.id" data-jack-param="feather" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'feather')" />
               feather <NumSlider :min="0" :max="0.5" :step="0.01" :model-value="n.params.feather" @update:model-value="n.params.feather = $event" @commit="persist" />
             </label>
-            <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert (cut a hole)</label>
             <div class="shape-row">
               <button class="shape-btn" :class="{ on: maskEdit }" @pointerdown.stop @click="maskEdit = !maskEdit">{{ maskEdit ? 'editing points' : 'edit points' }}</button>
               <button class="shape-btn" @pointerdown.stop @click="resetShape(n.id)">reset</button>
