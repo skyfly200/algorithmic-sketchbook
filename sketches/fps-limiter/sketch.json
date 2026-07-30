@@ -1,0 +1,7 @@
+{
+  "title": "FPS Limiter",
+  "description": "Throttle any source to a chosen frame rate. The upstream image keeps running at full speed, but the filter only samples it every 1/fps seconds and holds that frame until the next sample, so smooth motion becomes a stepped, stop-motion / anime 'on-twos' stutter — great for a choppy, hand-drawn or old-hardware cadence. Step blend eases each jump into a short crossfade instead of a hard cut, and motion echo persists a little of the previous frame for a trailing smear. Target FPS, blend and echo are live; the mic can nudge the rate so a kick drops it to a chunkier stutter.",
+  "tags": ["fps", "frame rate", "stop-motion", "stutter", "on twos", "filter", "stylize"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-30"
+}
