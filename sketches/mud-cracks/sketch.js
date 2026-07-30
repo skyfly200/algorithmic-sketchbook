@@ -22,7 +22,8 @@ const params = rt.params({
   curl: { value: 1, min: 0, max: 2, step: 0.05, label: 'Edge curl' },
   detail: { value: 1, min: 0, max: 2, step: 0.05, label: 'Fine cracks' },
   irregular: { value: 0.7, min: 0, max: 1.5, step: 0.05, label: 'Irregularity' },
-  hue: { value: 27, min: 0, max: 45, step: 1, label: 'Mud hue' },
+  hue: { value: 27, min: 0, max: 360, step: 1, label: 'Mud hue' },
+  sat: { value: 1, min: 0, max: 1.6, step: 0.05, label: 'Mud saturation' },
 })
 rt.mapInput('audio.level', 'dryness', 0.3)
 
@@ -64,6 +65,7 @@ let RW = 0, RH = 0, img = null, low = null, lctx = null
 let edge = null   // distance to the nearest cell boundary (px) — small = crack
 let tone = null   // per-pixel plate tone
 let openF = null  // per-pixel "opens at this dryness" threshold → progressive cracking
+let grain = null  // fine damp mottle — keeps the wet mud irregular, not a flat slab
 
 // jittered-grid Worley: returns F2−F1 (edge distance, px) and the nearest cell hash
 function worley(px, py, cell, seed) {
@@ -90,7 +92,7 @@ function build() {
   low = document.createElement('canvas'); low.width = RW; low.height = RH
   lctx = low.getContext('2d'); img = lctx.createImageData(RW, RH)
   const N = RW * RH
-  edge = new Float32Array(N); tone = new Float32Array(N); openF = new Float32Array(N)
+  edge = new Float32Array(N); tone = new Float32Array(N); openF = new Float32Array(N); grain = new Float32Array(N)
   const seed = Math.floor(rt.random(0, 90000))
   const big = Math.max(24, RH * 0.14 / params.scale)
   const small = big * 0.42
@@ -119,6 +121,9 @@ function build() {
       tone[i] = 0.5 + (b.id - 0.5) * 0.6 + (fbm(x * 0.03, y * 0.03, seed + 900) - 0.5) * 0.35 * irr // mottled plates
       // regions dry (and so crack) at different times → progressive fracturing
       openF[i] = vnoise((x / RW) * 3 + seed + 3, (y / RH) * 3, 3) * 0.7
+      // fine damp mottle (sediment patches, uneven wetting) — a two-scale noise
+      // that reads even on wet mud so the wet state isn't a uniform dark slab
+      grain[i] = (fbm(x * 0.06, y * 0.06, seed + 1300) - 0.5) + (fbm(x * 0.22, y * 0.22, seed + 1700) - 0.5) * 0.5
     }
   }
 }
@@ -152,7 +157,7 @@ function frame(now) {
   // global dryness with an optional slow wet↔dry cycle
   let dry = params.dryness
   if (params.autoDry > 0.01) dry = Math.max(0, Math.min(1, dry + Math.sin(t * params.autoDry * 0.3) * 0.4))
-  wet.amt = Math.max(0, wet.amt - 0.012)
+  wet.amt = Math.max(0, wet.amt - 0.008) // slower, smoother re-dry after a splash
 
   const hue = params.hue
   const cwMax = (RH * 0.02) * params.crackWidth
@@ -161,21 +166,24 @@ function frame(now) {
   for (let y = 0; y < RH; y++) {
     for (let x = 0; x < RW; x++) {
       const i = y * RW + x
-      // local dryness: a dragged wet spot re-moistens the nearby ground
+      // local dryness: a dragged wet spot re-moistens the nearby ground, with a
+      // soft-edged falloff so the wet↔dry boundary reads as a smooth soak
       let ldry = dry
       if (wet.amt > 0.01) {
         const dd = Math.hypot(x - wet.x, y - wet.y)
-        ldry = Math.max(0, ldry - wet.amt * Math.max(0, 1 - dd / (RH * 0.18)))
+        ldry = Math.max(0, ldry - wet.amt * smooth01(RH * 0.22, RH * 0.04, dd))
       }
-      // has this spot's crack opened yet, and how wide?
-      const opened = smooth01(openF[i], openF[i] + 0.15, ldry)
-      const cw = cwMax * (0.25 + ldry * 0.9) * opened
+      // has this spot's crack opened yet, and how wide? A wide interpolation band
+      // fades the cracks open/closed gradually; a floor keeps a faint damp
+      // hairline even on wet mud so the plate network never fully disappears.
+      const opened = smooth01(openF[i], openF[i] + 0.32, ldry)
+      const cw = cwMax * (0.12 + ldry * 0.9) * (0.28 + 0.72 * opened)
       const e = edge[i]
       const crack = 1 - smooth01(cw * 0.5, cw + 1, e) // 1 deep in crack → 0 on the plate
 
       // plate colour: wet = dark rich brown, dry = pale dusty tan
       const lig = (18 + ldry * 26) * (0.85 + tone[i] * 0.3)
-      const sat = 45 - ldry * 22
+      const sat = (45 - ldry * 22) * params.sat
       // edge curl / bevel: shade from the gradient of the edge field so plate
       // rims catch light on one side and fall into shadow toward the crack
       const eL = x > 0 ? edge[i - 1] : e, eR = x < RW - 1 ? edge[i + 1] : e
@@ -183,7 +191,10 @@ function frame(now) {
       const bevel = (-(eR - eL) * 0.6 - (eD - eU) * 0.7) * curl * opened // lit upper-left
       const rim = smooth01(cw, cw + RH * 0.02, e) // only near the crack lip
 
-      let L = lig + bevel * 14 * rim
+      // damp mottle: uneven sediment/wetness, stronger while the mud is wet so the
+      // wet state stays irregular instead of a flat dark slab
+      const damp = grain[i] * (7 + (1 - ldry) * 16)
+      let L = lig + damp + bevel * 14 * rim
       L = Math.max(4, Math.min(70, L))
       let [r, g, b] = hsl(hue, sat, L)
       const darken = 1 - crack * (0.82 + ldry * 0.12) // recessed, damp shadow in the crack

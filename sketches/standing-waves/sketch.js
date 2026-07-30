@@ -17,12 +17,14 @@ const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
 const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: CAPTURE })
 
 const params = rt.params({
-  mode: { value: 'Membrane', type: 'select', options: ['Blob', 'Membrane'], label: 'Mode' },
+  mode: { value: 'Membrane', type: 'select', options: ['Blob', 'Membrane', 'Outline'], label: 'Mode' },
   baseRadius: { value: 0.5, min: 0.15, max: 0.85, step: 0.01, label: 'Base radius' },
   waves: { value: 6, min: 0, max: 24, step: 1, label: 'Waves (mode 1)' },
   amplitude: { value: 0.28, min: 0, max: 0.6, step: 0.01, label: 'Amplitude 1' },
   waves2: { value: 13, min: 0, max: 30, step: 1, label: 'Waves (mode 2)' },
   amplitude2: { value: 0.12, min: 0, max: 0.5, step: 0.01, label: 'Amplitude 2' },
+  waves3: { value: 20, min: 0, max: 40, step: 1, label: 'Waves (mode 3)' },
+  amplitude3: { value: 0, min: 0, max: 0.4, step: 0.01, label: 'Amplitude 3 (0 = off)' },
   radialNodes: { value: 3, min: 0, max: 9, step: 1, label: 'Radial nodes (membrane)' },
   speed: { value: 1, min: 0.05, max: 4, step: 0.05, label: 'Vibration speed' },
   spin: { value: 0.15, min: -2, max: 2, step: 0.05, label: 'Spin' },
@@ -40,7 +42,7 @@ void main() { gl_Position = vec4(position, 0.0, 1.0); }`
 const FRAG = `#version 300 es
 precision highp float;
 uniform vec2 u_res;
-uniform float u_time, u_r0, u_m1, u_a1, u_m2, u_a2, u_nodes, u_speed, u_spin, u_outline, u_hue, u_glow, u_mode;
+uniform float u_time, u_r0, u_m1, u_a1, u_m2, u_a2, u_m3, u_a3, u_nodes, u_speed, u_spin, u_outline, u_hue, u_glow, u_mode;
 out vec4 outColor;
 const float PI = 3.14159265;
 
@@ -57,10 +59,11 @@ void main() {
   float r = length(p);
   float a = atan(p.y, p.x);
 
-  // two standing-wave rim modes breathing at slightly different rates
+  // up to three standing-wave rim modes breathing at slightly different rates
   float o1 = sin(u_speed * u_time);
   float o2 = sin(u_speed * 1.37 * u_time + 1.7);
-  float Rb = u_r0 + u_a1 * o1 * cos(u_m1 * a) + u_a2 * o2 * cos(u_m2 * a);
+  float o3 = sin(u_speed * 0.83 * u_time + 3.1);
+  float Rb = u_r0 + u_a1 * o1 * cos(u_m1 * a) + u_a2 * o2 * cos(u_m2 * a) + u_a3 * o3 * cos(u_m3 * a);
   Rb = max(0.03, Rb);
 
   float e = fwidth(r) * 1.5 + 0.0025; // anti-aliased edge
@@ -76,7 +79,7 @@ void main() {
     } else {
       col = fill * inside * (0.75 + 0.35 * smoothstep(Rb, 0.0, r)); // brighter toward centre
     }
-  } else {
+  } else if (u_mode < 1.5) {
     // Membrane — the drumhead's nodal field: angular + radial standing waves,
     // two tones for the +/- antinodes, dark nodal lines between them.
     float rr = r / Rb; // 0..1 within the shape
@@ -88,6 +91,11 @@ void main() {
     vec3 fld = mix(neg, pos, 0.5 + 0.5 * s) * (0.15 + 0.85 * abs(s));
     if (u_outline > 0.001) inside *= smoothstep(u_outline + e, u_outline - e, abs(r - Rb));
     col = fld * inside;
+  } else {
+    // Outline — just the rim curve, a clean glowing stroke on an empty field.
+    float w = max(u_outline, 0.008);
+    float line = smoothstep(w + e, w - e, abs(r - Rb));
+    col = hsv(u_hue, 0.6, 1.0) * line;
   }
 
   // glowing rim on the boundary
@@ -120,7 +128,7 @@ gl.enableVertexAttribArray(position)
 gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
 const u = {}
-for (const name of ['u_res', 'u_time', 'u_r0', 'u_m1', 'u_a1', 'u_m2', 'u_a2', 'u_nodes', 'u_speed', 'u_spin', 'u_outline', 'u_hue', 'u_glow', 'u_mode'])
+for (const name of ['u_res', 'u_time', 'u_r0', 'u_m1', 'u_a1', 'u_m2', 'u_a2', 'u_m3', 'u_a3', 'u_nodes', 'u_speed', 'u_spin', 'u_outline', 'u_hue', 'u_glow', 'u_mode'])
   u[name] = gl.getUniformLocation(program, name)
 
 function resize() {
@@ -138,13 +146,15 @@ function frame(now) {
   gl.uniform1f(u.u_a1, params.amplitude)
   gl.uniform1f(u.u_m2, params.waves2)
   gl.uniform1f(u.u_a2, params.amplitude2)
+  gl.uniform1f(u.u_m3, params.waves3)
+  gl.uniform1f(u.u_a3, params.amplitude3)
   gl.uniform1f(u.u_nodes, params.radialNodes)
   gl.uniform1f(u.u_speed, params.speed)
   gl.uniform1f(u.u_spin, params.spin)
   gl.uniform1f(u.u_outline, params.outline)
   gl.uniform1f(u.u_hue, params.hue)
   gl.uniform1f(u.u_glow, params.glow)
-  gl.uniform1f(u.u_mode, params.mode === 'Membrane' ? 1 : 0)
+  gl.uniform1f(u.u_mode, params.mode === 'Outline' ? 2 : params.mode === 'Membrane' ? 1 : 0)
   gl.drawArrays(gl.TRIANGLES, 0, 3)
   requestAnimationFrame(frame)
 }
