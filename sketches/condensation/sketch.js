@@ -129,13 +129,13 @@ function buildGrid(cell) {
   return { grid, cols, cell }
 }
 
-function nearbyIndices(gh, x, y) {
+function nearbyIndices(gh, x, y, R = 1) {
   const { grid, cols, cell } = gh
   const cx = (x / cell) | 0
   const cy = (y / cell) | 0
   const out = []
-  for (let j = -1; j <= 1; j++)
-    for (let i = -1; i <= 1; i++) {
+  for (let j = -R; j <= R; j++)
+    for (let i = -R; i <= R; i++) {
       const b = grid.get((cy + j) * cols + (cx + i))
       if (b) out.push(...b)
     }
@@ -156,7 +156,14 @@ function frame(now) {
   const grow = params.growth * rt.pixelRatio * 7 * dt
   for (const d of drops) {
     const ease = d.r < maxR ? 1 : Math.max(0, 1 - (d.r - maxR) / maxR)
-    d.r += grow * (0.5 + d.r / (maxR * 2)) * (d.g ?? 1) * ease
+    let step = grow * (0.5 + d.r / (maxR * 2)) * (d.g ?? 1) * ease
+    // Never grow by more than a small slice of the current radius in one frame:
+    // if a drop balloons past a neighbour in a single step it can sail through
+    // the coalescence test and just sit there overlapping. Capping the step
+    // keeps growth and merging in lock-step so touching drops actually fuse.
+    const cap = 0.6 * rt.pixelRatio + d.r * 0.045
+    if (step > cap) step = cap
+    d.r += step
   }
 
   // Gravity drip: big droplets slide down and sweep up what they touch.
@@ -166,24 +173,30 @@ function frame(now) {
     }
   }
 
-  // Keep grid cells small so dense buckets stay cheap; large droplets that
-  // miss a distant partner one frame simply catch it the next.
-  const cell = Math.max(14, maxR * 0.5)
+  // Size the grid cell to the LARGEST current droplet — merged beads grow well
+  // past maxR, and if the cell is smaller than they are two big drops can end up
+  // several cells apart and never get paired, so they just sit there overlapping.
+  let rmax = 0
+  for (const d of drops) if (d.r > rmax) rmax = d.r
+  const cell = Math.max(14, rmax)
 
-  // Coalesce overlapping droplets (volume-conserving), a couple of passes for chains.
-  for (let pass = 0; pass < 2; pass++) {
+  // Coalesce overlapping droplets (volume-conserving), a few passes for chains.
+  for (let pass = 0; pass < 3; pass++) {
     const gh = buildGrid(cell)
     for (let i = 0; i < drops.length; i++) {
       const a = drops[i]
       if (!a) continue
-      for (const k of nearbyIndices(gh, a.x, a.y)) {
+      // ±2 cells: two overlapping beads can be up to 2*rmax apart (= 2 cells).
+      for (const k of nearbyIndices(gh, a.x, a.y, 2)) {
         if (k <= i) continue
         const b = drops[k]
         if (!b) continue
         const dx = b.x - a.x
         const dy = b.y - a.y
         const dist = Math.hypot(dx, dy)
-        if (dist < (a.r + b.r) * 0.82) {
+        // Merge as soon as the beads meaningfully touch, rather than waiting
+        // for a deep overlap — a real breath figure fuses on contact.
+        if (dist < (a.r + b.r) * 0.93) {
           const va = a.r ** 3
           const vb = b.r ** 3
           const vt = va + vb
