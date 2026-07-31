@@ -1,8 +1,8 @@
 /**
  * Reishi Spore Cloud — lacquered reishi (lingzhi) growths quietly letting go
- * fine cocoa-brown spores. Grow them as the classic flat shelf conk on a stubby
- * trunk, as the branching "antler" (deer-horn) form, or both, and place one to
- * four of them at randomised spots along the ground. The spores stream off the
+ * fine cocoa-brown spores. Grow them as the classic lacquered shelf cantilevering
+ * out from the side of a woody trunk, as the branching "antler" (deer-horn) form,
+ * or both, and place one to four of them at randomised spots along the ground. The spores stream off the
  * pore surface (or the antler tips) as a fine, laminar flow that shears and
  * curls on slow turbulence, backlit so the dense parts glow golden-brown.
  *
@@ -21,7 +21,7 @@ const params = rt.params({
   rise: { value: 0.5, min: -0.4, max: 1, step: 0.02, label: 'Rise / settle' },
   wind: { value: -0.2, min: -1, max: 1, step: 0.02, label: 'Wind' },
   conks: { value: 1, min: 1, max: 4, step: 1, label: 'Conks' },
-  form: { value: 'Conk', type: 'select', options: ['Conk', 'Antler', 'Both'], label: 'Growth form' },
+  form: { value: 'Trunk', type: 'select', options: ['Trunk', 'Antler', 'Both'], label: 'Growth form' },
   iridescence: { value: 0.2, min: 0, max: 1, step: 0.02, label: 'Iridescent glimmer' },
   hue: { value: 32, min: 12, max: 48, step: 1, label: 'Spore tint' },
   glow: { value: 1, min: 0.4, max: 1.8, step: 0.05, label: 'Glow' },
@@ -55,7 +55,7 @@ let conks = []
 let defSig = ''
 function chooseForm(i) {
   const f = params.form
-  if (f === 'Both') return (i % 2 === 0) ? 'Conk' : 'Antler'
+  if (f === 'Both') return (i % 2 === 0) ? 'Trunk' : 'Antler'
   return f
 }
 // A branching antler in normalised coords (base at 0,0, growing up = -y).
@@ -77,7 +77,7 @@ function buildConkDefs() {
     const form = chooseForm(i)
     const fx = (0.16 + 0.68 * (i + 0.5) / n) + rt.random(-0.05, 0.05)
     const hf = rt.random(0.12, 0.19)
-    const def = { fx, hf, phase: rt.random(0, TAU), form }
+    const def = { fx, hf, phase: rt.random(0, TAU), form, trunkH: rt.random(0, 1), dir: rt.rng() < 0.5 ? -1 : 1 }
     if (form === 'Antler') {
       def.segs = []; def.tips = []
       const trunks = 1 + (rt.rng() < 0.5 ? 1 : 0)
@@ -94,8 +94,13 @@ function layoutConks() {
   const baseY = H * 0.99
   conks = conkDefs.map((d) => {
     const half = Math.min(W, H) * d.hf, thick = half * 0.5
-    const cx = W * d.fx, cy = baseY - thick * 1.2
-    const c = { cx, cy, half, thick, baseY, phase: d.phase, form: d.form }
+    // the shelf sits partway up a vertical trunk (raised off the ground)
+    const raise = d.form === 'Antler' ? 0 : half * (0.9 + (d.trunkH ?? 0) * 0.8)
+    const dir = d.dir ?? 1
+    const cx = W * d.fx, cy = baseY - thick * 1.2 - raise
+    // the trunk stands to one side; the shelf cantilevers out from it
+    const trunkX = cx - dir * half * 0.82
+    const c = { cx, cy, half, thick, baseY, phase: d.phase, form: d.form, dir, trunkX }
     if (d.form === 'Antler') {
       const S = Math.min(W, H) * 0.62
       c.segs = d.segs.map((s) => ({ x0: cx + s.x0 * S, y0: baseY + s.y0 * S, x1: cx + s.x1 * S, y1: baseY + s.y1 * S, w0: s.w0 * S, w1: s.w1 * S }))
@@ -162,13 +167,27 @@ function capPath(g, sc, c) {
 }
 function drawConk(c) {
   const g = ctx
-  g.fillStyle = '#2c1a12'
+  // the woody trunk the shelf grows from — a vertical log standing to ONE SIDE;
+  // the cap cantilevers out from it like a real shelf fungus
+  const tw = c.half * 0.16 // trunk half-width
+  const tx = c.trunkX
+  const trunkTopY = c.cy - c.half * 0.5
+  const tg = g.createLinearGradient(tx - tw, 0, tx + tw, 0)
+  tg.addColorStop(0, '#100a06'); tg.addColorStop(0.45, '#3a2418'); tg.addColorStop(1, '#0d0704')
+  g.fillStyle = tg
   g.beginPath()
-  g.moveTo(c.cx - c.half * 0.14, c.cy + c.thick * 0.28)
-  g.quadraticCurveTo(c.cx - c.half * 0.26, c.baseY, c.cx - c.half * 0.02, c.baseY)
-  g.lineTo(c.cx + c.half * 0.13, c.baseY)
-  g.quadraticCurveTo(c.cx + c.half * 0.03, c.cy + c.thick * 0.28, c.cx + c.half * 0.16, c.cy + c.thick * 0.2)
+  g.moveTo(tx - tw, trunkTopY)
+  g.quadraticCurveTo(tx, trunkTopY - tw * 0.8, tx + tw, trunkTopY)
+  g.quadraticCurveTo(tx + tw * 1.4, c.baseY, tx + tw * 1.7, c.baseY)
+  g.lineTo(tx - tw * 1.7, c.baseY)
+  g.quadraticCurveTo(tx - tw * 1.4, c.baseY, tx - tw, trunkTopY)
   g.closePath(); g.fill()
+
+  // tilt the whole cap so its free (outer) end droops away from the trunk
+  g.save()
+  g.translate(tx, c.cy)
+  g.rotate(c.dir * 0.13)
+  g.translate(-tx, -c.cy)
 
   const K = 24
   for (let k = K; k >= 1; k--) {
@@ -200,6 +219,7 @@ function drawConk(c) {
   capPath(g, 1, c); g.stroke()
   g.strokeStyle = 'hsla(42,45%,88%,0.6)'; g.lineWidth = Math.max(1.5, PR * 2)
   capPath(g, 0.95, c); g.stroke()
+  g.restore()
 }
 
 // --- antler (deer-horn) form: branching red lacquered fingers ---------------
