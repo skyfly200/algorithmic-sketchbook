@@ -1,0 +1,7 @@
+{
+  "title": "Gems",
+  "description": "A slowly turning cluster of faceted mineral crystals — brassy pyrite cubes, clear quartz points, amethyst, citrine, rose quartz, emerald, ruby, sapphire, fluorite octahedra and diamond. Each stone is a little polyhedron built from its real crystal habit (cube, hexagonal point, flat table, bipyramid or octahedron), lit facet by facet against a velvet dark field so faces catch and lose the light as the druse rotates. Translucent gems let their back facets glow through with a soft rim while pyrite reads as brushed metal with fine striations, and the brightest facets throw four-point star glints. Choose a single gemstone or a mixed druse; crystal count, cluster size, spin, light angle, facet contrast, sparkle and glow are live, and with the mic on each beat flares the sparkle.",
+  "tags": ["gems", "crystals", "minerals", "faceted", "3d", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-07-31"
+}
