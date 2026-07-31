@@ -1,7 +1,7 @@
 {
   "title": "Ferrofluid Speaker",
-  "description": "Black magnetic fluid on a clean white field, driven by sound. An electromagnet under the centre magnetises the fluid, and along the field lines it doesn't just bead up — it stands into a crown of Rosensweig spikes, ridged peaks that radiate out along the field arcs. On the bass the field surges and the spikes climb and lean, then sink back into a glossy central pool between hits. The fluid is an anisotropic metaball field — each lump is stretched along the local field direction, so the sum forms radial ridges rather than round balls — shaded like oily black chrome with a wet white specular and a cool rim, plus a soft contact shadow. Gravity is ignored: the only forces are the magnet and the fluid's cohesion. Turn on the mic to drive it live; with no mic a synthetic kick keeps it dancing. Audio drive, field strength, spike count, spike reach, peak sharpness, field-arc curl, fluid amount, viscosity and sheen hue are live.",
-  "tags": ["ferrofluid", "speaker", "audio-reactive", "physics", "metaball", "generative"],
+  "description": "Floating black metaballs on a clean white field, driven by sound. An electromagnet at the centre pulls the fluid into a clustered, glossy central mass ringed by satellite droplets; on the bass the drops rush inward and merge, then relax and scatter into beads between hits. The fluid is a metaball field so nearby drops fuse with smooth necks, shaded like oily black chrome with a wet white specular, a cool rim sheen and a soft contact shadow. Turn on the mic to drive it live; with no mic a synthetic kick keeps it dancing. Audio drive, magnet pull, droplet count, fluid amount, spread, reach, viscosity and sheen hue are live.",
+  "tags": ["ferrofluid", "speaker", "metaball", "audio-reactive", "physics", "generative"],
   "tech": ["canvas2d"],
   "created": "2026-07-25"
 }
