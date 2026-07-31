@@ -337,7 +337,8 @@ function frame(now) {
     // Cut: hold the current shape, snap at the slot boundary. Morph: hold, then
     // cross-dissolve to the next over the last stretch of the slot.
     if (!cut) {
-      const mt = Math.max(0, Math.min(1, (slotT - 0.55) / 0.4))
+      // hold the clean shape for most of the slot, then a quick cross-dissolve
+      const mt = Math.max(0, Math.min(1, (slotT - 0.78) / 0.2))
       m = mt * mt * (3 - 2 * mt)
     }
   } else {
@@ -365,13 +366,20 @@ function frame(now) {
   const goff = (Math.floor(now * 0.06) * 613) % grain.length // animate stipple
   const data = img.data
   const size = G * G
+  const Wi = 1 / Wout, Wii = 1 / Win, fillR = 1 / (Wout * 0.9)
+  // spray alpha from one shape's signed distance — each shape stays its own
+  // clean self; the transition CROSS-DISSOLVES the two alphas rather than
+  // lerping the distance fields (which fused them into broken hybrid shapes).
+  const alphaOf = (d) => {
+    let al = d >= 0 ? Math.exp(-d * Wi) : Math.exp(d * Wii)
+    if (fillAmt > 0 && d < 0) { const f = fillAmt * Math.min(1, -d * fillR); if (f > al) al = f }
+    return al
+  }
+  const dissolving = m > 0.001 && m < 0.999
   for (let i = 0; i < size; i++) {
-    const d = a[i] + (b[i] - a[i]) * m // morphed signed distance
     let al
-    if (d >= 0) al = Math.exp(-d / Wout)
-    else al = Math.exp(d / Win) // <1, sharp inner edge
-    // inside glow (positive-stencil look): brighten toward centre
-    if (fillAmt > 0 && d < 0) al = Math.max(al, fillAmt * Math.min(1, -d / (Wout * 0.9)))
+    if (dissolving) al = alphaOf(a[i]) * (1 - m) + alphaOf(b[i]) * m
+    else al = alphaOf(m >= 0.999 ? b[i] : a[i])
     // stipple grain
     const gv = grain[(i + goff) % grain.length]
     al *= 1 - grainAmt * (1 - gv)
