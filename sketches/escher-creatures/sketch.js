@@ -44,20 +44,30 @@ const params = rt.params({
 // direction, so the tile is one repeated prototile and the tiling stays gapless.
 const MOTIFS = {
   Birds: {
-    tiling: 'square', depth: 0.3,
-    prof: {
-      h: [{ at: 0.5, amp: 0.85, w: 0.26 }, { at: 0.15, amp: -0.35, w: 0.12 }], // wing sweep + shoulder notch
-      v: [{ at: 0.7, amp: 0.8, w: 0.15 }, { at: 0.32, amp: -0.55, w: 0.16 }],  // head/beak bulge + neck notch
+    tiling: 'square', depth: 0.42,
+    // A bird flying up-and-right. The top/bottom edge carries the back with a
+    // swept wing + tail notch; the side edge carries the head, beak and belly.
+    curves: {
+      // back (top) & belly (bottom): one smooth wing hump rising off the back
+      h: [[0, 0], [0.5, -0.24], [1, 0]],
+      // head (right) & tail-notch (left): a beak spike near the top, then the body
+      // tucks in below — on the mirrored left edge that tuck becomes the tail poke
+      v: [[0, 0], [0.2, -0.36], [0.38, -0.02], [0.64, 0.16], [1, 0]],
     },
     orient: () => 0, cls: (i, j) => (i + j) & 1, feat: drawBird, tones: 2,
   },
   Fish: {
-    tiling: 'square', depth: 0.32,
-    prof: {
-      h: [{ at: 0.5, amp: 0.7, w: 0.3 }, { at: 0.82, amp: 0.5, w: 0.1 }],      // body curve + tail flare
-      v: [{ at: 0.4, amp: 0.75, w: 0.17 }, { at: 0.72, amp: -0.4, w: 0.13 }],  // nose bump + mouth notch
+    tiling: 'square', depth: 0.42,
+    // A fish swimming right. The horizontal edges give the body a gentle bow; the
+    // vertical edge carries a pointed nose (right) whose mirror is the tail socket
+    // on the left, so fish sit nose-to-tail.
+    curves: {
+      // a self-contained fish (head-point at the left, body tapering right); plumper
+      // and blunter than the bird so the two motifs read differently
+      h: [[0, 0], [0.5, -0.16], [1, 0]],
+      v: [[0, 0], [0.24, -0.30], [0.46, -0.04], [0.68, 0.16], [1, 0]],
     },
-    orient: (i, j) => (j & 1 ? Math.PI : 0), cls: (i, j) => j & 1, feat: drawFish, tones: 2,
+    orient: () => 0, cls: (i, j) => (i + j) & 1, feat: drawFish, tones: 2,
   },
   Lizards: {
     tiling: 'rhombille', depth: 0.26,
@@ -104,14 +114,44 @@ function bumpsFor(ang) {
   if (motif.tiling === 'rhombille') return motif.prof.a
   return Math.abs(Math.sin(ang)) < 0.5 ? motif.prof.h : motif.prof.v
 }
+// Catmull-Rom through authored control points, so a creature edge is a smooth
+// 2D curve in the edge's local frame: u runs along the edge (0->1, may fold back
+// for beaks/tails), v is the perpendicular offset. Opposite edges of a tile share
+// the SAME curve, so the deformed tile still tiles the plane by translation.
+function catmull(p0, p1, p2, p3, t) {
+  const t2 = t * t, t3 = t2 * t
+  return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+}
+function sampleCurve(cps, N) {
+  const m = cps.length, out = []
+  for (let k = 0; k <= N; k++) {
+    const tt = (k / N) * (m - 1)
+    let i = Math.floor(tt); if (i > m - 2) i = m - 2
+    const f = tt - i
+    const a = cps[Math.max(0, i - 1)], b = cps[i], c = cps[i + 1], d = cps[Math.min(m - 1, i + 2)]
+    out.push([catmull(a[0], b[0], c[0], d[0], f), catmull(a[1], b[1], c[1], d[1], f)])
+  }
+  return out
+}
 // Sample edge A->B with a deterministic offset keyed to the canonical ordering
 // of its endpoints, so the two tiles sharing it produce an identical boundary.
 function edgeSamples(A, B) {
   let P = A, Q = B, rev = false
   if (A[0] > B[0] || (A[0] === B[0] && A[1] > B[1])) { P = B; Q = A; rev = true }
   const dx = Q[0] - P[0], dy = Q[1] - P[1], len = Math.hypot(dx, dy) || 1
-  const nx = -dy / len, ny = dx / len
+  const tx = dx / len, ty = dy / len, nx = -dy / len, ny = dx / len
   let ang = Math.atan2(dy, dx); ang = ((ang % Math.PI) + Math.PI) % Math.PI
+  // Authored-curve creatures (birds, fish): sample the smooth 2D edge curve.
+  if (motif.curves) {
+    const cv = Math.abs(Math.sin(ang)) < 0.5 ? motif.curves.h : motif.curves.v
+    const amp = params.plump
+    const smp = sampleCurve(cv, 26), out = []
+    for (const [u, v] of smp) {
+      out.push([P[0] + tx * len * u + nx * len * v * amp, P[1] + ty * len * u + ny * len * v * amp])
+    }
+    if (rev) out.reverse()
+    return out
+  }
   const bumps = bumpsFor(ang)
   const depth = (motif.depth || 0) * params.plump
   const N = 18, out = []
@@ -211,30 +251,36 @@ function buildTiling(u) {
 // --- interior features, drawn in a normalised frame (forward = +x, span ~1) ---
 function drawBird(g, ink) {
   g.strokeStyle = ink; g.fillStyle = ink; g.lineCap = 'round'; g.lineJoin = 'round'
+  // the bird faces LEFT (beak at -x); head/back up, tail sweeping to the right
+  // eye near the head
+  g.beginPath(); g.arc(-0.2, -0.14, 0.052, 0, 6.28); g.fill()
+  // beak: a short wedge at the front point
   g.lineWidth = 0.028
-  // wing: a swept chevron across the body
-  g.beginPath(); g.moveTo(-0.12, -0.04); g.quadraticCurveTo(0.08, 0.02, 0.22, 0.2); g.stroke()
-  g.beginPath(); g.moveTo(-0.16, 0.02); g.quadraticCurveTo(0.0, 0.1, 0.12, 0.26); g.stroke()
-  // tail feathers
-  g.beginPath(); g.moveTo(-0.3, -0.06); g.lineTo(-0.46, -0.14); g.moveTo(-0.3, 0.0); g.lineTo(-0.47, -0.02); g.stroke()
-  // eye
-  g.beginPath(); g.arc(0.24, -0.13, 0.05, 0, 6.28); g.fill()
+  g.beginPath(); g.moveTo(-0.3, -0.07); g.lineTo(-0.43, -0.05); g.stroke()
+  // wing: two swept feather strokes across the back
+  g.lineWidth = 0.03
+  g.beginPath(); g.moveTo(-0.06, -0.06); g.quadraticCurveTo(0.12, 0.02, 0.26, -0.02); g.stroke()
+  g.beginPath(); g.moveTo(-0.03, 0.02); g.quadraticCurveTo(0.16, 0.1, 0.3, 0.06); g.stroke()
+  // tail feather rays to the lower right
+  g.lineWidth = 0.024
+  g.beginPath(); g.moveTo(0.22, 0.06); g.lineTo(0.42, 0.14); g.moveTo(0.25, 0.11); g.lineTo(0.43, 0.22); g.stroke()
 }
 function drawFish(g, ink) {
   g.strokeStyle = ink; g.fillStyle = ink; g.lineCap = 'round'; g.lineJoin = 'round'
-  g.lineWidth = 0.026
-  // gill
-  g.beginPath(); g.moveTo(0.16, -0.14); g.quadraticCurveTo(0.1, 0, 0.16, 0.14); g.stroke()
+  // the fish faces LEFT (head at -x); tail to the right
+  // eye near the head
+  g.beginPath(); g.arc(-0.22, -0.1, 0.05, 0, 6.28); g.fill()
+  // gill arc just behind the head
+  g.lineWidth = 0.024
+  g.beginPath(); g.moveTo(-0.12, -0.16); g.quadraticCurveTo(-0.05, -0.02, -0.12, 0.12); g.stroke()
   // pectoral fin
-  g.beginPath(); g.moveTo(0.05, 0.06); g.quadraticCurveTo(-0.02, 0.2, -0.12, 0.24); g.stroke()
-  // lateral line + a couple scales
-  g.lineWidth = 0.016
-  g.beginPath(); g.moveTo(0.24, -0.02); g.quadraticCurveTo(-0.05, 0.02, -0.3, 0.0); g.stroke()
-  // tail fin rays
+  g.beginPath(); g.moveTo(-0.02, 0.04); g.quadraticCurveTo(0.06, 0.2, 0.16, 0.24); g.stroke()
+  // lateral line
+  g.lineWidth = 0.015
+  g.beginPath(); g.moveTo(-0.2, -0.02); g.quadraticCurveTo(0.06, 0.0, 0.28, 0.02); g.stroke()
+  // tail fin rays to the right
   g.lineWidth = 0.022
-  g.beginPath(); g.moveTo(-0.32, 0); g.lineTo(-0.48, -0.14); g.moveTo(-0.32, 0.02); g.lineTo(-0.48, 0.16); g.stroke()
-  // eye
-  g.beginPath(); g.arc(0.28, -0.05, 0.045, 0, 6.28); g.fill()
+  g.beginPath(); g.moveTo(0.3, 0.02); g.lineTo(0.46, -0.12); g.moveTo(0.3, 0.05); g.lineTo(0.46, 0.2); g.stroke()
 }
 function drawLizard(g, ink) {
   g.strokeStyle = ink; g.fillStyle = ink; g.lineCap = 'round'; g.lineJoin = 'round'
@@ -252,9 +298,13 @@ function drawLizard(g, ink) {
     g.moveTo(bx, by); g.lineTo(bx + 0.06, by + 0.03 * s)
     g.stroke()
   }
-  // eye near the head
-  g.lineWidth = 0.03
-  g.beginPath(); g.arc(0.3, -0.05, 0.045, 0, 6.28); g.fill()
+  // rounded head at the outer end + eye
+  g.lineWidth = 0.026
+  g.beginPath(); g.arc(0.34, 0, 0.07, 0, 6.28); g.stroke()
+  g.beginPath(); g.arc(0.33, -0.045, 0.04, 0, 6.28); g.fill()
+  // curled tail at the hub end
+  g.lineWidth = 0.026
+  g.beginPath(); g.moveTo(-0.34, 0); g.quadraticCurveTo(-0.44, 0.02, -0.42, 0.12); g.stroke()
 }
 
 // --- render ------------------------------------------------------------------
