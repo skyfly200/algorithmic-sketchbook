@@ -231,10 +231,14 @@ function portalShapePath(ctx, shape, x, y, w, h) {
   }
 }
 const BLENDS = [
-  'screen', 'add', 'lighten', 'darken', 'multiply', 'overlay', 'soft-light',
+  'normal', 'screen', 'add', 'lighten', 'darken', 'multiply', 'overlay', 'soft-light',
   'hard-light', 'color-dodge', 'color-burn', 'difference', 'exclusion',
   'hue', 'saturation', 'color', 'luminosity',
 ]
+// Blend modes that actually *mix* two pictures — 'normal' (plain over) is
+// excluded here because with two opaque inputs it just hides the base; it's
+// reserved for compositing a shaped/transparent layer over another.
+const MIX_BLENDS = BLENDS.filter((m) => m !== 'normal')
 // Input sources grouped for the pickers (audio, midi, mouse, touch, tilt,
 // time, leap, artnet — per-category optgroups instead of one long list).
 const INPUT_GROUPS = computed(() => {
@@ -462,8 +466,10 @@ function pruneOrphans() {
 // --- randomize: deal out a whole new patch -------------------------------
 // Builds a fresh random-but-sensible graph: 1–3 effect sources, each pushed
 // through a random filter chain, the streams folded together with random
-// blends (or the odd mask), an Output at the end, and a control node wired
-// into a blend mix. Goes through persist(), so it's a single undo step.
+// blends, an Output at the end, and a control node wired into a blend mix.
+// Masks, when used, cut a picture to a proper matte (a Polygon or Text), not a
+// second picture. Goes through persist(), so it's a single undo step. Drives
+// both the RNG dice and the Patch auto-reroll.
 function randomPatch() {
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
   const chance = (p) => Math.random() < p
@@ -517,25 +523,83 @@ function randomPatch() {
     if (PRODUCER.has(kn.type) && !edges.some((e) => e.from === kn.id)) heads.push(kn)
   }
 
-  // Fold the chains together pairwise with blends (or the odd mask).
   let c = maxCol + 1
+
+  // Cut a picture to a shape with a Mask, the way the node is meant to be used:
+  // the picture on the content input (port 0) and a real *matte* on port 1 — an
+  // editable Polygon shape or bright Text, whose luminance keys what shows
+  // through. (A Mask is NOT a two-picture combiner: feeding it two effects just
+  // silhouettes one through the other's brightness. Two pictures are folded with
+  // blends below instead.)
+  const randPolyPoints = () => {
+    const n = 3 + Math.floor(Math.random() * 5)
+    const cx = 0.5 + (Math.random() * 2 - 1) * 0.08, cy = 0.5 + (Math.random() * 2 - 1) * 0.08
+    const rx = 0.26 + Math.random() * 0.16, ry = 0.26 + Math.random() * 0.16
+    const rot = Math.random() * Math.PI * 2, pts = []
+    for (let i = 0; i < n; i++) {
+      const a = rot + (i / n) * Math.PI * 2, jt = 0.85 + Math.random() * 0.3
+      pts.push([
+        +Math.min(0.98, Math.max(0.02, cx + Math.cos(a) * rx * jt)).toFixed(3),
+        +Math.min(0.98, Math.max(0.02, cy + Math.sin(a) * ry * jt)).toFixed(3),
+      ])
+    }
+    return pts
+  }
+  const maskShape = (content, cc, y) => {
+    let matte
+    if (chance(0.3)) {
+      matte = mk('text', { text: pick(['BRIGHT', 'WAVES', 'GLOW', 'LOVE', 'DREAM']), font: 'sans-serif', size: 0.34, weight: 800, tracking: 0.02, x: 0.5, y: 0.5, hue: 0, sat: 0, val: 100, rotate: 0, italic: false, glow: 0, bg: false }, Math.max(0, cc - 1), y + 170)
+    } else {
+      matte = mk('polygon', { points: randPolyPoints(), feather: +(Math.random() * 0.35).toFixed(2) }, Math.max(0, cc - 1), y + 170)
+      matte.locked = true
+    }
+    const m = mk('mask', { mode: 'multiply', strength: +(0.75 + Math.random() * 0.25).toFixed(2), invert: chance(0.25) }, cc, y)
+    edges.push({ from: content.id, to: m.id, port: 0 }) // picture → content
+    edges.push({ from: matte.id, to: m.id, port: 1 })   // shape / text → matte
+    return m
+  }
+
+  // Maybe cut a single source layer to a shape so it can be overlaid on the rest
+  // as a shape cutout. More likely when there are ≥2 layers to sit it over.
+  if (heads.length && chance(heads.length > 1 ? 0.5 : 0.3)) {
+    const idx = Math.floor(Math.random() * heads.length)
+    heads[idx] = maskShape(heads[idx], c, heads[idx].y)
+    c++
+  }
+
+  // Fold the chains together pairwise. When one input is a shaped (masked) layer
+  // it's overlaid on top of the other with a plain 'normal' blend — a shape
+  // cutout of one effect over another — instead of a random mixing mode that
+  // would ignore its transparency.
   const blends = []
   while (heads.length > 1) {
     const a = heads.shift()
     const b = heads.shift()
-    const useMask = chance(0.2)
-    const node = useMask
-      ? mk('mask', {}, c, (a.y + b.y) / 2)
-      : mk('blend', { mode: pick(BLENDS), mix: +(0.4 + Math.random() * 0.6).toFixed(2) }, c, (a.y + b.y) / 2)
-    edges.push({ from: a.id, to: node.id, port: 0 })
-    edges.push({ from: b.id, to: node.id, port: 1 })
-    if (!useMask) blends.push(node)
+    const aMask = a.type === 'mask', bMask = b.type === 'mask'
+    let base = a, top = b, mode, mix
+    if (aMask !== bMask) {
+      base = aMask ? b : a
+      top = aMask ? a : b           // the shaped layer sits on top
+      mode = 'normal'
+      mix = 1
+    } else {
+      mode = pick(MIX_BLENDS)
+      mix = +(0.4 + Math.random() * 0.6).toFixed(2)
+    }
+    const node = mk('blend', { mode, mix }, c, (a.y + b.y) / 2)
+    edges.push({ from: base.id, to: node.id, port: 0 }) // base
+    edges.push({ from: top.id, to: node.id, port: 1 })  // top / overlay
+    blends.push(node)
     heads.unshift(node)
     c++
   }
 
-  const outNode = keptOut || mk('output', {}, c, heads[0].y + 10)
-  edges.push({ from: heads[0].id, to: outNode.id, port: 0 })
+  // maybe cut the whole finished mix to a shape as a final flourish
+  let head = heads[0]
+  if (chance(0.28)) { head = maskShape(head, c, head.y); c++ }
+
+  const outNode = keptOut || mk('output', {}, c, head.y + 10)
+  edges.push({ from: head.id, to: outNode.id, port: 0 })
 
   // A control node driving a blend's mix, when there is one.
   if (blends.length && chance(0.8)) {
@@ -2023,7 +2087,7 @@ function evalNode(node) {
     const b = inputCanvas(node, node.params.swap ? 0 : 1)
     if (a) octx.drawImage(a, 0, 0, W, H)
     if (b) {
-      octx.globalCompositeOperation = node.params.mode === 'add' ? 'lighter' : node.params.mode
+      octx.globalCompositeOperation = node.params.mode === 'add' ? 'lighter' : node.params.mode === 'normal' ? 'source-over' : node.params.mode
       octx.globalAlpha = pval(node, 'mix') ?? 1 // top input's contribution (modulated)
       octx.drawImage(b, 0, 0, W, H)
       octx.globalAlpha = 1
@@ -2780,6 +2844,24 @@ const PRESET_BLOCKS = [
   { name: 'Polygon-mapped',
     nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'polygon', x: CX, y: RY }, { type: 'mask', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
     edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }] },
+  // one effect cut to a shape, laid over a second effect — the "shape cutout
+  // overlay": B masked by a polygon, composited normal over background A.
+  { name: 'Shape cutout overlay',
+    nodes: [
+      { type: 'effect', x: 0, y: 0 },                              // 0: background A
+      { type: 'effect', x: 0, y: RY },                             // 1: overlay B
+      { type: 'mask', x: CX, y: RY },                              // 2: cut B to shape
+      { type: 'polygon', x: CX, y: RY * 1.9, params: { points: [[0.5, 0.14], [0.8, 0.32], [0.8, 0.68], [0.5, 0.86], [0.2, 0.68], [0.2, 0.32]], feather: 0.05 } }, // 3: shape matte
+      { type: 'blend', x: CX * 2, y: RY * 0.5, params: { mode: 'normal', mix: 1 } }, // 4: overlay over A
+      { type: 'output', x: CX * 3, y: RY * 0.5 },                  // 5
+    ],
+    edges: [
+      { from: 1, to: 2, port: 0 }, // B → mask content
+      { from: 3, to: 2, port: 1 }, // polygon → mask matte
+      { from: 0, to: 4, port: 0 }, // A → blend base
+      { from: 2, to: 4, port: 1 }, // masked B → blend top
+      { from: 4, to: 5, port: 0 },
+    ] },
   { name: 'Portal echo',
     nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'portal', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
     edges: [{ from: 0, to: 1, port: 0 }, { from: 1, to: 2, port: 0 }] },
