@@ -1,11 +1,13 @@
 /**
- * Gems — a slowly turning cluster of faceted mineral crystals: brassy pyrite
- * cubes, clear quartz points, amethyst, citrine, rose quartz, emerald, ruby,
- * sapphire, fluorite octahedra and diamond. Each crystal is a little polyhedron
- * built from its real habit (cube, hexagonal point, table, bipyramid or
- * octahedron), lit facet-by-facet with a fixed studio light so faces flash as
- * the druse rotates. Translucent stones let their back facets glow through;
- * pyrite reads as metal. Bright facets throw star glints that pulse on the beat.
+ * Gems & Crystals — a slowly turning cluster of gemstones and mineral crystals:
+ * raw habits (pyrite & salt cubes, quartz/amethyst/citrine points, emerald
+ * prisms, tourmaline, selenite blades, fluorite octahedra) alongside traditional
+ * faceted cuts (a round-brilliant diamond, cushion ruby and oval sapphire). Each
+ * stone is a little polyhedron built from its real crystal habit or gem cut, lit
+ * facet-by-facet with a fixed studio light so faces flash as the druse rotates.
+ * Translucent stones let their back facets glow through; pyrite reads as metal;
+ * tourmaline and selenite carry lengthwise striations. Bright facets throw star
+ * glints that pulse on the beat.
  *
  * Variety, crystal count, cluster size, spin, light angle, facet contrast,
  * sparkle and glow are live. Turn on the mic and each beat flares the sparkle.
@@ -19,7 +21,7 @@ const ctx = canvas.getContext('2d')
 const params = rt.params({
   variety: {
     value: 'Mixed', type: 'select', label: 'Gemstone',
-    options: ['Mixed', 'Pyrite', 'Quartz', 'Amethyst', 'Citrine', 'Rose Quartz', 'Emerald', 'Ruby', 'Sapphire', 'Fluorite', 'Diamond'],
+    options: ['Mixed', 'Pyrite', 'Quartz', 'Amethyst', 'Citrine', 'Rose Quartz', 'Emerald', 'Ruby', 'Sapphire', 'Diamond', 'Fluorite', 'Salt', 'Tourmaline', 'Selenite'],
   },
   count: { value: 18, min: 5, max: 40, step: 1, label: 'Crystals' },
   size: { value: 1, min: 0.55, max: 1.7, step: 0.02, label: 'Cluster size' },
@@ -91,12 +93,80 @@ function habitBipyr(h = 1.2, r = 0.8) {
   return seatBase({ v, f })
 }
 
+function ringA(y, r, n, phase, aspect) {
+  const o = []
+  for (let k = 0; k < n; k++) { const a = phase + (k / n) * TAU; o.push([Math.cos(a) * r * aspect, y, Math.sin(a) * r]) }
+  return o
+}
+// round brilliant cut (table + faceted crown + pavilion to a culet) — the
+// classic gem cut, used for diamond
+function habitBrilliant(n = 12, rt = 0.55, R = 0.96, hc = 0.36, hp = 0.95) {
+  const table = ringA(hc, rt, n, 0, 1), girdle = ringA(0, R, n, 0, 1)
+  const cmid = ringA(hc * 0.5, (rt + R) * 0.5, n, Math.PI / n, 1) // half-step offset → star/bezel facets
+  const v = [...table, ...girdle, ...cmid, [0, -hp, 0]]
+  const G = n, M = 2 * n, CU = 3 * n, f = []
+  const top = []; for (let i = 0; i < n; i++) top.push(i); f.push(top)
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    f.push([i, M + i, j]); f.push([M + i, M + j, j])          // upper crown
+    f.push([G + i, M + i, G + j]); f.push([M + i, M + j, G + j]) // lower crown
+    f.push([G + i, G + j, CU])                                // pavilion mains
+  }
+  return seatBase({ v, f })
+}
+// step / cushion cut (concentric ledges to a keel) — used for coloured stones
+function habitStep(n = 8, rt = 0.5, R = 0.92, hc = 0.32, hp = 0.82, aspect = 1) {
+  const table = ringA(hc, rt, n, 0, aspect)
+  const cstep = ringA(hc * 0.5, rt * 0.35 + R * 0.65, n, 0, aspect)
+  const girdle = ringA(0, R, n, 0, aspect)
+  const pstep = ringA(-hp * 0.5, R * 0.5, n, 0, aspect)
+  const v = [...table, ...cstep, ...girdle, ...pstep, [0, -hp, 0]]
+  const S = n, G = 2 * n, P = 3 * n, K = 4 * n, f = []
+  const top = []; for (let i = 0; i < n; i++) top.push(i); f.push(top)
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    f.push([i, j, S + j, S + i]); f.push([S + i, S + j, G + j, G + i])   // crown steps
+    f.push([G + i, G + j, P + j, P + i]); f.push([P + i, P + j, K])       // pavilion steps
+  }
+  return seatBase({ v, f })
+}
+// elongated striated prism with a 3-fold rounded cross-section (tourmaline)
+function habitTourmaline(n = 12, body = 2.1, cap = 0.3, r = 0.5) {
+  const tri = (y) => {
+    const o = []
+    for (let k = 0; k < n; k++) { const a = (k / n) * TAU, rad = r * (1 + 0.16 * Math.cos(3 * a)); o.push([Math.cos(a) * rad, y, Math.sin(a) * rad]) }
+    return o
+  }
+  const bot = tri(0), top = tri(body), apex = [0, body + cap, 0]
+  const v = [...bot, ...top, apex], A = 2 * n, f = []
+  for (let i = 0; i < n; i++) { const j = (i + 1) % n; f.push([i, j, n + j, n + i]) }
+  for (let i = 0; i < n; i++) { const j = (i + 1) % n; f.push([n + i, n + j, A]) }
+  const base = []; for (let i = 0; i < n; i++) base.push(i); f.push(base)
+  return seatBase({ v, f })
+}
+// tabular bladed crystal with a chisel end (selenite / gypsum)
+function habitBlade(w = 0.36, th = 0.14, body = 1.7, len = 2.4) {
+  const b = [[-w, 0, -th], [w, 0, -th], [w, 0, th], [-w, 0, th]]
+  const s = [[-w, body, -th], [w, body, -th], [w, body, th], [-w, body, th]]
+  const ridge = [[-w * 0.55, len, 0], [w * 0.55, len, 0]]
+  const v = [...b, ...s, ...ridge]
+  const f = [
+    [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7], // sides
+    [4, 5, 9, 8], [6, 7, 8, 9], [5, 6, 9], [7, 4, 8],        // chisel roof
+    [0, 1, 2, 3],                                            // base
+  ]
+  return seatBase({ v, f })
+}
+
 const HABITS = {
   cube: habitCube(), octa: habitOcta(), point: habitPoint(),
   shortPoint: habitPoint(1.0, 0.7, 0.68), table: habitTable(), bipyr: habitBipyr(),
+  brilliant: habitBrilliant(12), sapphireCut: habitStep(10, 0.5, 0.92, 0.3, 0.8, 1.4),
+  rubyCut: habitStep(8, 0.52, 0.9, 0.3, 0.78, 1.12), tourmaline: habitTourmaline(12),
+  blade: habitBlade(),
 }
-// index of the apex vertex for point habits (used to tint terminations)
-const APEX_IDX = { point: 12, shortPoint: 12 }
+// index of the apex vertex for point-terminated habits (used to tint terminations)
+const APEX_IDX = { point: 12, shortPoint: 12, tourmaline: 24 }
 
 // --- species: colour (0..1 rgb), habit, material -----------------------------
 function C(r, g, b) { return [r, g, b] }
@@ -107,10 +177,15 @@ const SPECIES = {
   Citrine: { habit: 'point', col: C(0.92, 0.66, 0.20), alpha: 0.72, metal: 0, shin: 78, spec: C(1, 0.98, 0.85), sizeMul: 0.98 },
   'Rose Quartz': { habit: 'shortPoint', col: C(0.93, 0.68, 0.74), alpha: 0.72, metal: 0, shin: 60, spec: C(1, 0.96, 0.97), sizeMul: 0.92 },
   Emerald: { habit: 'table', col: C(0.10, 0.68, 0.42), alpha: 0.74, metal: 0, shin: 70, spec: C(0.9, 1, 0.95), sizeMul: 0.92 },
-  Ruby: { habit: 'bipyr', col: C(0.80, 0.14, 0.28), alpha: 0.8, metal: 0, shin: 84, spec: C(1, 0.92, 0.94), sizeMul: 0.9 },
-  Sapphire: { habit: 'bipyr', col: C(0.18, 0.34, 0.82), alpha: 0.8, metal: 0, shin: 84, spec: C(0.92, 0.96, 1), sizeMul: 0.9 },
+  // faceted cut coloured stones
+  Ruby: { habit: 'rubyCut', col: C(0.82, 0.12, 0.26), alpha: 0.85, metal: 0, shin: 110, spec: C(1, 0.9, 0.92), sizeMul: 0.9 },
+  Sapphire: { habit: 'sapphireCut', col: C(0.14, 0.30, 0.82), alpha: 0.85, metal: 0, shin: 110, spec: C(0.9, 0.95, 1), sizeMul: 0.9 },
+  Diamond: { habit: 'brilliant', col: C(0.95, 0.97, 1.0), alpha: 0.87, metal: 0, shin: 150, spec: C(1, 1, 1), sizeMul: 0.85 },
   Fluorite: { habit: 'octa', col: C(0.32, 0.72, 0.66), alpha: 0.72, metal: 0, shin: 66, spec: C(0.95, 1, 1), sizeMul: 0.95 },
-  Diamond: { habit: 'octa', col: C(0.94, 0.96, 1.0), alpha: 0.6, metal: 0, shin: 120, spec: C(1, 1, 1), sizeMul: 0.82 },
+  // pure crystalline forms
+  Salt: { habit: 'cube', col: C(0.93, 0.95, 0.98), alpha: 0.5, metal: 0, shin: 55, spec: C(1, 1, 1), sizeMul: 0.66 },
+  Tourmaline: { habit: 'tourmaline', col: C(0.13, 0.62, 0.40), alpha: 0.74, metal: 0, shin: 72, spec: C(0.95, 1, 0.97), tip: C(0.88, 0.30, 0.45), striae: 1, striaeDir: 'along', striaeCol: 'rgba(8,38,24,0.4)', sizeMul: 1.05 },
+  Selenite: { habit: 'blade', col: C(0.90, 0.90, 0.96), alpha: 0.5, metal: 0, shin: 36, spec: C(1, 1, 1), striae: 1, striaeDir: 'along', striaeCol: 'rgba(255,255,255,0.16)', sizeMul: 1.15 },
 }
 const SPECIES_NAMES = Object.keys(SPECIES)
 
@@ -292,16 +367,24 @@ function frame(now) {
     ctx.lineWidth = Math.max(0.6, PR * 0.7)
     ctx.strokeStyle = sp.metal ? 'rgba(60,42,10,0.85)' : `rgba(255,255,255,${0.35 + f.spec * 0.5})`
     ctx.stroke()
-    // pyrite striations: fine parallel lines across the face
+    // crystal striations: fine parallel grooves on side faces (pyrite across the
+    // face; tourmaline & selenite run lengthwise along the prism)
     if (sp.striae && f.front && f.poly.length === 8) {
-      ctx.globalAlpha = 0.22
-      ctx.strokeStyle = 'rgba(40,28,6,0.9)'
+      ctx.globalAlpha = 0.24
+      ctx.strokeStyle = sp.striaeCol || (sp.metal ? 'rgba(40,28,6,0.9)' : 'rgba(30,40,35,0.5)')
       ctx.lineWidth = Math.max(0.5, PR * 0.5)
       const [x0, y0, x1, y1, x2, y2, x3, y3] = f.poly
       ctx.beginPath()
-      for (let s = 0.15; s < 1; s += 0.16) {
-        ctx.moveTo(x0 + (x3 - x0) * s, y0 + (y3 - y0) * s)
-        ctx.lineTo(x1 + (x2 - x1) * s, y1 + (y2 - y1) * s)
+      if ((sp.striaeDir || 'across') === 'along') {
+        for (let s = 0.16; s < 1; s += 0.16) {
+          ctx.moveTo(x0 + (x1 - x0) * s, y0 + (y1 - y0) * s)
+          ctx.lineTo(x3 + (x2 - x3) * s, y3 + (y2 - y3) * s)
+        }
+      } else {
+        for (let s = 0.15; s < 1; s += 0.16) {
+          ctx.moveTo(x0 + (x3 - x0) * s, y0 + (y3 - y0) * s)
+          ctx.lineTo(x1 + (x2 - x1) * s, y1 + (y2 - y1) * s)
+        }
       }
       ctx.stroke()
     }
