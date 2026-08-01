@@ -1,15 +1,7 @@
 {
   "title": "Grass Field",
-  "description": "A meadow of thousands of blades bending in the wind — each a tapered Bézier sway driven by a travelling wind field so gusts roll across as visible waves, with depth haze, wildflowers and a warm sky. The pointer parts the grass.",
-  "tags": [
-    "generative",
-    "nature",
-    "wind",
-    "audio-reactive",
-    "interactive"
-  ],
-  "tech": [
-    "canvas2d"
-  ],
+  "description": "A dense meadow rendered with shell texturing — the fast grass trick Acerola (Garrett Gunnell) breaks down. Rather than drawing every blade, the tilted ground plane is raymarched as a stack of shells, and a fragment is kept only while the shell's height stays under a per-tuft height mask, so each surviving shell is a thinner slice up the blade and the stack tapers into grass. A travelling wind wave with slow gusts sways the blades, stronger toward the tips, and the sun catches them warm at the top while the bases fall into shade; dry blades turn golden and the odd tuft is crowned with a wildflower. Density, wind strength, gustiness, blade height, grass hue, dryness, wildflowers and sun height are live; the pointer parts the grass, and the mic drives the wind.",
+  "tags": ["generative", "nature", "grass", "shell-texturing", "wind", "audio-reactive", "interactive"],
+  "tech": ["webgl2"],
   "created": "2026-07-21"
 }
