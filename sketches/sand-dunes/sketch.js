@@ -3,7 +3,8 @@
 // downwind, and is deposited (more readily in a wind shadow), then avalanches
 // wherever the slope exceeds the angle of repose. Barchans and ridges emerge,
 // crawl downwind, split and merge — evolving forever. Rendered from above with
-// raking sunlight so the lee slopes fall into shadow.
+// a low raking sun: sky-blue-filled shadows, migrating wind ripples corrugating
+// the gentle windward flanks, and darker, smoother lee slip-faces.
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
@@ -26,13 +27,27 @@ rt.mapInput('audio.level', 'wind', 0.4)
 // per-pixel — so the physics stays cheap but the picture looks smooth.
 const RS = 3
 let GW = 0, GH = 0, h = null, W = 0, H = 0, PR = 1
-let RW = 0, RH = 0, img = null, low = null, lctx = null, hr = null
+let RW = 0, RH = 0, img = null, low = null, lctx = null, hr = null, hrb = null
 function build() {
-  GW = 220; GH = Math.max(80, Math.round(GW * (H / W)))
+  GW = 130; GH = Math.max(50, Math.round(GW * (H / W)))   // coarser grid → bigger dunes
   h = new Uint16Array(GW * GH)
-  for (let i = 0; i < h.length; i++) h[i] = 3 + (rt.rng() * 4 | 0) // a shallow sand sheet
+  // Seed transverse dune ridges (perpendicular to the wind) so there is real
+  // dune structure from the start; the Werner saltation then migrates, splits
+  // and reshapes them into barchans and ridges as it runs.
+  const wr = (params.windDir * Math.PI) / 180
+  const wx = Math.cos(wr), wy = Math.sin(wr)
+  for (let y = 0; y < GH; y++) {
+    for (let x = 0; x < GW; x++) {
+      const proj = x * wx + y * wy
+      let v = 9 + 4.5 * Math.sin(proj * 0.12) + 2.5 * Math.sin(proj * 0.29 + 2.0)
+        + 2.0 * Math.sin(y * 0.18 + 1.3) * Math.sin(x * 0.05)
+      v += rt.rng() * 2
+      h[y * GW + x] = Math.max(0, Math.round(v))
+    }
+  }
   RW = GW * RS; RH = GH * RS
   hr = new Float32Array(RW * RH)
+  hrb = new Float32Array(RW * RH)
   low = document.createElement('canvas'); low.width = RW; low.height = RH
   lctx = low.getContext('2d'); img = lctx.createImageData(RW, RH)
 }
@@ -90,31 +105,78 @@ function sampleH(fx, fy) {
   return (a * (1 - xf) + b * xf) * (1 - yf) + (c * (1 - xf) + e * xf) * yf
 }
 
-function render() {
+function render(now) {
   const sun = (params.sun * Math.PI) / 180
   const lx = Math.cos(sun), ly = Math.sin(sun)
   const d = img.data
   const hue = params.hue
   const inv = 1 / RS
-  // Pass 1: resample the coarse height field into the fine render buffer.
+  const t = now * 0.001
+  // Pass 1: resample the coarse height field into the fine render buffer, then
+  // a light separable blur so dune bodies read as smooth rolling sand rather
+  // than cell-scale grain (the ripples are added back procedurally in Pass 2).
   for (let y = 0; y < RH; y++) {
     const fy = y * inv
     for (let x = 0; x < RW; x++) hr[y * RW + x] = sampleH(x * inv, fy)
   }
-  // Pass 2: shade per fine pixel from the smooth resampled gradient.
-  const k = 0.12 * RS // gradient step is 1/RS of a sim cell → scale back up
+  const rad = RS
+  for (let y = 0; y < RH; y++) {
+    const row = y * RW
+    for (let x = 0; x < RW; x++) {
+      let s = 0
+      for (let k = -rad; k <= rad; k++) s += hr[row + Math.min(RW - 1, Math.max(0, x + k))]
+      hrb[row + x] = s / (2 * rad + 1)
+    }
+  }
+  for (let x = 0; x < RW; x++) {
+    for (let y = 0; y < RH; y++) {
+      let s = 0
+      for (let k = -rad; k <= rad; k++) s += hrb[Math.min(RH - 1, Math.max(0, y + k)) * RW + x]
+      hr[y * RW + x] = s / (2 * rad + 1)
+    }
+  }
+  // Pass 2: shade per fine pixel — a low raking sun, shadows filled with cool
+  // sky light, wind ripples corrugating the gentle windward flanks (migrating
+  // slowly downwind), and darker, smoother lee slip-faces.
+  const wr = (params.windDir * Math.PI) / 180
+  const wxf = Math.cos(wr), wyf = Math.sin(wr)
+  const gs = 0.55            // scales the slab gradient into a surface slope
+  const nz = 2.2             // surface "up" → how flat the normals sit
+  const rAmp = 0.13, rFreq = 0.62
   for (let y = 0; y < RH; y++) {
     for (let x = 0; x < RW; x++) {
       const i = y * RW + x
       const xl = x > 0 ? i - 1 : i, xr = x < RW - 1 ? i + 1 : i
       const yu = y > 0 ? i - RW : i, yd = y < RH - 1 ? i + RW : i
-      const gx = hr[xr] - hr[xl]
-      const gy = hr[yd] - hr[yu]
+      const sx = (hr[xr] - hr[xl]) * gs
+      const sy = (hr[yd] - hr[yu]) * gs
       const c = hr[i]
-      const shade = Math.max(0.15, 0.6 - gx * lx * k - gy * ly * k + Math.min(0.3, c * 0.02))
+      const nlen = Math.hypot(sx, sy, nz)
+      // raking sun (with a little elevation so flats aren't pure mid-grey)
+      let shade = 0.34 + 0.72 * Math.max(0, (-sx * lx - sy * ly + nz * 0.4) / nlen)
+      const slope = Math.hypot(sx, sy)
+      const gdotw = sx * wxf + sy * wyf          // >0 windward (stoss), <0 lee
+      // wind ripples: fine transverse corrugations, only on the gentle windward
+      // flanks, fading on steep slip-faces and bare flats
+      const stoss = Math.max(0, gdotw) / (slope + 0.001)
+      const proj = x * wxf + y * wyf
+      const rip = Math.sin(proj * rFreq - t * params.wind * 1.4)
+        + 0.35 * Math.sin(proj * rFreq * 2.7 + (x * wyf - y * wxf) * 0.13)
+      const rmask = stoss * Math.min(1, slope * 2.5) * Math.max(0, 1 - slope * 0.4)
+      shade += rip * rAmp * rmask
+      // lee slip-face: steep and downwind-facing → a touch darker and smoother
+      const lee = Math.max(0, -gdotw) / (slope + 0.001)
+      shade -= lee * Math.max(0, Math.min(0.14, (slope - 1.1) * 0.12))
+      shade = Math.max(0.12, Math.min(1.15, shade))
+      // colour: warm sunlit sand; shadows filled with cool sky-blue ambient
+      const L = Math.min(88, 30 + shade * 54 + Math.min(0.1, c * 0.008) * 60)
+      let r = 0, g = 0, b = 0
+      { const arr = hsl(hue, 46, L); r = arr[0]; g = arr[1]; b = arr[2] }
+      const dk = Math.max(0, 0.55 - shade) * 0.6   // shadow amount
+      r = r * (1 - dk) + 78 * dk
+      g = g * (1 - dk) + 96 * dk
+      b = b * (1 - dk) + 128 * dk
       const p = i * 4
-      const l = Math.min(85, 30 + shade * 60)
-      const [r, g, b] = hsl(hue, 45, l)
       d[p] = r; d[p + 1] = g; d[p + 2] = b; d[p + 3] = 255
     }
   }
@@ -133,7 +195,7 @@ function hsl(h, s, l) {
 function frame(now) {
   rt.tick(now)
   step()
-  render()
+  render(now)
   requestAnimationFrame(frame)
 }
 window.addEventListener('resize', resize)
