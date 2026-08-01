@@ -1,0 +1,7 @@
+{
+  "title": "Birefringence",
+  "description": "Double refraction — the way a clear rhomb of calcite laid over text splits it into two offset images. The upstream frame is drawn twice: the ordinary ray straight through and the extraordinary ray sheared sideways by an amount and direction set like the crystal's optic axis, so edges and text ghost into doubles. Rotate the crystal and the second image swings around the first. Turn up the interference and the whole field breaks into the drifting spectral bands you see looking through a birefringent crystal between crossed polarisers, tinted with the 'color' blend so it glows without going dark. A filter: it doubles and colours whatever feeds it — camera, a dropped clip, the built-in demo, or the layers below in a mix.",
+  "tags": ["birefringence", "calcite", "double-refraction", "polarization", "filter", "optical"],
+  "tech": ["canvas2d"],
+  "created": "2026-08-01"
+}
