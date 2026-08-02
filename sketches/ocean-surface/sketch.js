@@ -42,20 +42,27 @@ vec3 hsl(float h,float s,float l){ vec3 r=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)
 // domain warp turns parallel ripples into choppy, interacting swell. We also
 // carry the analytic slope for exact normals and a steepness sum for foam.
 float waves(vec2 p, out vec2 deriv, out float steep){
-  float f=1.1*u_scale, a=1.0, sp=u_wind, ang=u_seed, ampSum=0.0, h=0.0;
+  float f=1.0*u_scale, a=1.0, sp=u_wind, ang=u_seed, ampSum=0.0, h=0.0;
   deriv=vec2(0.0); steep=0.0;
-  vec2 wp=p;
-  float drag=0.13*u_chop;              // domain-warp strength
+  // Large-scale meander: bend the whole sampling grid with a couple of slow,
+  // very-low-frequency waves so the wave train never tiles across the ocean.
+  // (Without this the domain-warp couples every octave to the lowest frequency
+  // and the sea looks "super repeating" once choppiness climbs.)
+  vec2 wp=p + 1.8*vec2(sin(p.y*0.10 + u_time*0.13), sin(p.x*0.083 - u_time*0.10))
+            + 0.9*vec2(sin(p.y*0.031 - 1.7), sin(p.x*0.027 + 2.3));
+  float drag=0.05+0.05*u_chop;         // domain-warp strength (capped — no longer
+                                       //   blows up and syncs to one wavelength)
+  float k=0.8+0.28*u_chop;             // choppiness now sharpens the crests
   for(int i=0;i<OCT;i++){
     vec2 d=vec2(cos(ang),sin(ang));
     float x=dot(d,wp)*f + u_time*sp*1.4;
-    float w=exp(sin(x)-1.0);           // sharp-crested wave
-    float dw=w*cos(x);                 // d/dx
+    float w=exp(k*(sin(x)-1.0));       // sharp-crested wave, sharper when choppy
+    float dw=w*k*cos(x);               // d/dx
     h+=a*w; ampSum+=a;
     wp+=d*(-dw*a*f*drag);              // <- the Acerola drag / domain warp
     deriv+=d*(a*dw*f);                 // world-space slope for the normal
     steep+=a*f*abs(dw);               // crest sharpness → foam
-    a*=0.82; f*=1.16; sp*=1.07; ang+=2.3999632;
+    a*=0.85; f*=1.16; sp*=1.07; ang+=2.3999632;
   }
   h/=ampSum; deriv/=ampSum; steep/=ampSum;
   return h;
