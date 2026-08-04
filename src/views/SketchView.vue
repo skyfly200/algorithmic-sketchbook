@@ -198,10 +198,20 @@ function onFsChange() {
 // Space toggles rendering — the runtime freezes its rAF loop on pause.
 const paused = ref(false)
 function onKey(e) {
-  if (e.code !== 'Space' || e.target.matches('input, textarea, select, [contenteditable]')) return
-  e.preventDefault()
-  paused.value = !paused.value
-  post({ type: 'sketch:pause', paused: paused.value })
+  if (e.target.matches('input, textarea, select, [contenteditable]')) return
+  if (e.metaKey || e.ctrlKey || e.altKey) return // leave browser/OS combos alone
+  const k = e.key.toLowerCase()
+  if (e.code === 'Space') { // pause / resume rendering
+    e.preventDefault(); paused.value = !paused.value; post({ type: 'sketch:pause', paused: paused.value }); return
+  }
+  if (k === 'r') { e.preventDefault(); randomize(); return }                 // reseed + shuffle params
+  if (k === 'c') { e.preventDefault(); showControls.value = !showControls.value; return } // controls panel
+  if (k === 'f') { e.preventDefault(); fullscreen(); return }                // fullscreen
+  if (k === 'b') { e.preventDefault(); post({ type: 'sketch:beat', energy: 1 }); return } // manual beat
+  if (k >= '1' && k <= '9') {                                                // recall a saved scene
+    const s = savedScenes.value[+k - 1]
+    if (s) { e.preventDefault(); applyScene(s) }
+  }
 }
 
 onMounted(() => {
