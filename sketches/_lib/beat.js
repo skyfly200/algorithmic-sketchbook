@@ -70,18 +70,33 @@ export function createBeatDetector(opts = {}) {
     } catch {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true }) // device gone → default
     }
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)()
-    // Autoplay policies can leave the context suspended until a user gesture;
-    // start() is called from a click, so resume() here is allowed.
-    if (audioCtx.state === 'suspended') await audioCtx.resume()
-    analyser = audioCtx.createAnalyser()
-    analyser.fftSize = 512
-    analyser.smoothingTimeConstant = 0.4
-    audioCtx.createMediaStreamSource(stream).connect(analyser)
+    // Build the AudioContext defensively. Switching the input device reloads the
+    // sketch iframe, and browsers cap live AudioContexts (~6) — a leaked one from
+    // a previous load makes `new AudioContext()` throw, which used to break audio
+    // for every device until a full refresh. If it throws, release the mic we
+    // just opened and surface the error instead of leaving a half-open state.
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+      // Autoplay policies can leave the context suspended until a user gesture;
+      // start() is called from a click, so resume() here is allowed.
+      if (audioCtx.state === 'suspended') await audioCtx.resume()
+      analyser = audioCtx.createAnalyser()
+      analyser.fftSize = 512
+      analyser.smoothingTimeConstant = 0.4
+      audioCtx.createMediaStreamSource(stream).connect(analyser)
+    } catch (e) {
+      stream?.getTracks().forEach((t) => t.stop())
+      try { audioCtx?.close() } catch { /* ignore */ }
+      audioCtx = analyser = stream = null
+      throw e
+    }
     bins = new Uint8Array(analyser.frequencyBinCount)
     history = []
     state.active = true
   }
+  // Release the microphone and AudioContext when the iframe navigates away (a
+  // device switch reloads it), so contexts don't pile up to the browser limit.
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { try { stop() } catch { /* ignore */ } })
 
   function stop() {
     stream?.getTracks().forEach((t) => t.stop())
