@@ -49,11 +49,21 @@ A **🎤 mic button** appears on audio-reactive sketches. Grant microphone acces
 and their default audio mappings come alive — beats, loudness and spectral bands
 start driving the motion. Nothing listens until you opt in.
 
-## Keyboard & pointer
+## Keyboard shortcuts
 
-- **Space** pauses/resumes the sketch in the viewer.
-- The pointer is passed through to the sketch, so pieces that react to the mouse
-  or to touch respond directly.
+Shortcuts work in the viewer when no text field is focused.
+
+| Key | Action |
+| --- | --- |
+| Space | Pause or resume rendering. |
+| R | Reseed and shuffle the parameters. |
+| C | Toggle the controls panel. |
+| F | Toggle fullscreen. |
+| B | Fire a manual beat. |
+| 1–9 | Recall the matching saved scene. |
+
+The pointer passes through to the sketch. Pieces that react to the mouse or
+touch respond directly.
 
 ## Present / display mode
 

@@ -21,7 +21,9 @@ The current filters include:
 
 - **Optical / lens** — camera lens (focus, focal plane, dirt), lens flare,
   diffraction-style looks, polarization, **funhouse mirror** (wavy / bulge /
-  pinch / carnival warps).
+  pinch / carnival warps), and **birefringence** (calcite double refraction: the
+  upstream image splits into an ordinary and a sheared extraordinary copy, with
+  optional spectral interference bands).
 - **Texture / print** — pointillism, halftone, **painterly** (watercolour, oil,
   charcoal, ink, pastel and **spray paint**), **stained glass** (a leaded
   Voronoi mosaic), interlacing.

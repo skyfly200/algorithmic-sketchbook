@@ -25,7 +25,7 @@ arbitrary network and blit the result to a fullscreen stage.
 | **Filter** | A source-[filter](#/docs/effects-filters) sketch. Its video input is piped in as the filter's source each frame. |
 | **Media** | Your webcam, dropped files, recorded clips, or a library item as a source. |
 | **Text** | Rendered text with a mappable font — size, weight, tracking and colour can all be modulated. |
-| **Mask** | Multiplies a content stream by a matte — a luma key, a second image stream, or a **Polygon** node's shape. |
+| **Mask** | Cuts a content stream to a matte: the matte's brightness sets what shows through. Feed a shape (a **Polygon** or bright **Text**), not a second picture. To mix two pictures, use a **Blend**. |
 | **Polygon** | A source that fills an editable polygon whose points you drag directly on the output. Wire it into a **Mask**'s matte input to projection-map, or use it as a coloured shape. |
 | **Portal** | Remaps a rectangular (or shaped) region of the frame elsewhere, with recursion for infinity-mirror looks. |
 | **Blend** | Composites two streams with any blend mode and a mix amount. |
@@ -42,8 +42,9 @@ arbitrary network and blit the result to a fullscreen stage.
 - **Blocks** are reusable named subgraphs. Save a selection as a block, then
   stamp it into the graph as many times as you like. There are also built-in
   **common patterns** (blended pair, filtered effect, layered trio, portal echo,
-  audio-reactive blend, …) that fill themselves in from your enabled effect
-  pool.
+  polygon-mapped, **shape cutout overlay**, audio-reactive blend, …) that fill
+  themselves in from your enabled effect pool. The shape cutout overlay masks one
+  effect to a shape and composites it over another with a plain **normal** blend.
 - **Replace-branch (↺)** on a node's header retires everything feeding that node
   and grows a fresh upstream branch in its place, laid out tidily so nothing
   overlaps.
