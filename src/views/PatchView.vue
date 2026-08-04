@@ -411,7 +411,7 @@ function addNode(type) {
                         : type === 'polygon'
                           ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0 }
                           : type === 'geo'
-                            ? { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2 }
+                            ? { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28 }
                             : type === 'vcam'
                               ? { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, lightSat: 34, lightVal: 86, spin: true }
                               : type === 'mask'
@@ -646,7 +646,7 @@ function randomizeLook() {
       const rng = PARAM_RANGES[n.type]
       if (rng) for (const [name, r] of Object.entries(rng)) n.params[name] = stepQuant(r[0], r[1])
       if (n.type === 'blend') { n.params.mode = pick(BLENDS); n.params.mix = +(0.3 + Math.random() * 0.6).toFixed(2) }
-      if (n.type === 'geo') { n.params.shape = pick(GEO_SHAPES); n.params.material = pick(GEO_MATERIALS); n.params.hue = Math.floor(Math.random() * 360) }
+      if (n.type === 'geo') { n.params.shape = pick(GEO_SHAPES); n.params.material = pick(GEO_MATERIALS); n.params.hue = Math.floor(Math.random() * 360); n.params.flutes = 4 + Math.floor(Math.random() * 12); n.params.twist = Math.round((Math.random() * 2 - 1) * 270); n.params.groove = +(0.12 + Math.random() * 0.36).toFixed(2) }
       if (n.type === 'vcam') n.params.lightHue = Math.floor(Math.random() * 360)
       if (n.type === 'text') n.params.hue = Math.floor(Math.random() * 360)
     }
@@ -1731,9 +1731,9 @@ function getRenderer() {
   }
   return geoRenderer
 }
-const GEO_SHAPES = ['Cube', 'Sphere', 'Torus', 'Icosahedron', 'Torus knot', 'Cone', 'Cylinder', 'Plane']
+const GEO_SHAPES = ['Cube', 'Sphere', 'Torus', 'Icosahedron', 'Torus knot', 'Cone', 'Cylinder', 'Plane', 'Gaudí column']
 const GEO_MATERIALS = ['Solid', 'Wireframe', 'Points', 'Normals']
-function buildGeometry(shape, detail) {
+function buildGeometry(shape, detail, geo) {
   const d = Math.max(0, Math.min(4, Math.round(detail ?? 2)))
   switch (shape) {
     case 'Sphere': return new THREE.SphereGeometry(1, 24 + d * 12, 16 + d * 8)
@@ -1743,8 +1743,49 @@ function buildGeometry(shape, detail) {
     case 'Cone': return new THREE.ConeGeometry(1, 1.8, 24 + d * 12, 3 + d * 3)
     case 'Cylinder': return new THREE.CylinderGeometry(0.8, 0.8, 1.7, 24 + d * 12, 2 + d * 2)
     case 'Plane': return new THREE.PlaneGeometry(2.2, 2.2, 12 + d * 10, 12 + d * 10)
+    case 'Gaudí column': return buildGaudiColumn(d, geo?.flutes, geo?.twist, geo?.groove)
     default: return new THREE.BoxGeometry(1.5, 1.5, 1.5, 4 + d * 6, 4 + d * 6, 4 + d * 6)
   }
+}
+// A Gaudí column: sweep two fluted star profiles up a shaft, twisting each the
+// opposite way, and keep their radial minimum (the intersection). Where the
+// counter-twists cross, the flutes fold into the branching forms Gaudí used
+// for the Sagrada Família. Centred on the origin and scaled to unit-ish size so
+// it sits alongside the other Geometry-node shapes in the Camera.
+function buildGaudiColumn(d, flutes, twist, groove) {
+  const points = Math.max(3, Math.round(flutes ?? 8))
+  const twRad = ((twist ?? 90) * Math.PI) / 180
+  const depth = Math.max(0, groove ?? 0.28)
+  const baseR = 0.72
+  const half = 1.15 // column runs y = -half .. +half
+  const radial = Math.max(32, points * (10 + d * 8))
+  const rows = 40 + d * 40
+  const mod = (n, m) => ((n % m) + m) % m
+  const fluteR = (angle, tw) => baseR + Math.cos(mod(angle - tw, Math.PI * 2) * points) * depth
+  const verts = [], uvs = []
+  for (let yi = 0; yi <= rows; yi++) {
+    const v = yi / rows
+    const y = -half + v * (half * 2)
+    const twA = v * twRad, twB = v * -twRad
+    for (let ri = 0; ri <= radial; ri++) {
+      const u = ri / radial
+      const a = u * Math.PI * 2
+      const r = Math.min(fluteR(a, twA), fluteR(a, twB)) // Gaudí intersection
+      verts.push(Math.cos(a) * r, y, Math.sin(a) * r)
+      uvs.push(u, v)
+    }
+  }
+  const idx = [], stride = radial + 1
+  for (let yi = 0; yi < rows; yi++) for (let ri = 0; ri < radial; ri++) {
+    const aI = yi * stride + ri, bI = aI + 1, cI = (yi + 1) * stride + ri, dI = cI + 1
+    idx.push(aI, bI, dI, aI, dI, cI)
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3))
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  g.setIndex(idx)
+  g.computeVertexNormals()
+  return g
 }
 // HSV (h 0-360, s/v 0-100) → HSL fractions, for THREE.Color.setHSL and CSS.
 // Colour nodes store H/S/V; the classic single-hue look is the default S/V.
@@ -1764,13 +1805,13 @@ function makeMaterial(material, hue, sat, val) {
   return new THREE.MeshStandardMaterial({ color: col, metalness: 0.25, roughness: 0.45 })
 }
 function buildObject(geo) {
-  const g = buildGeometry(geo.shape, geo.detail)
+  const g = buildGeometry(geo.shape, geo.detail, geo)
   if (!g.attributes.normal) g.computeVertexNormals()
   const base = Float32Array.from(g.attributes.position.array)
   const nrm = Float32Array.from(g.attributes.normal.array)
   const mat = makeMaterial(geo.material, geo.hue, geo.sat, geo.val)
   const obj = geo.material === 'Points' ? new THREE.Points(g, mat) : new THREE.Mesh(g, mat)
-  obj.userData = { shape: geo.shape, material: geo.material, detail: geo.detail, base, nrm, warped: false }
+  obj.userData = { shape: geo.shape, material: geo.material, detail: geo.detail, flutes: geo.flutes, twist: geo.twist, groove: geo.groove, base, nrm, warped: false }
   return obj
 }
 function disposeObject(obj) {
@@ -1850,6 +1891,22 @@ function geoWire(shape) {
     const n = 4, s = 1.1, grid = []
     for (let i = 0; i <= n; i++) { const row = []; for (let j = 0; j <= n; j++) { row.push(V.length); V.push([(j / n * 2 - 1) * s, (i / n * 2 - 1) * s, 0]) } grid.push(row) }
     for (let i = 0; i <= n; i++) for (let j = 0; j <= n; j++) { if (j < n) E.push([grid[i][j], grid[i][j + 1]]); if (i < n) E.push([grid[i][j], grid[i + 1][j]]) }
+  } else if (shape === 'Gaudí column') {
+    // a few stacked counter-twisted fluted rings sketch the intersected column
+    const pts = 8, nring = 6, nu = 16, half = 1.05, baseR = 0.72, depth = 0.26, tw = Math.PI / 2
+    const mod = (x, m) => ((x % m) + m) % m
+    const grid = []
+    for (let i = 0; i < nring; i++) {
+      const v = i / (nring - 1), y = -half + v * half * 2, tA = v * tw, tB = v * -tw, ring = []
+      for (let j = 0; j < nu; j++) {
+        const a = (2 * Math.PI * j) / nu
+        const r = Math.min(baseR + Math.cos(mod(a - tA, Math.PI * 2) * pts) * depth, baseR + Math.cos(mod(a - tB, Math.PI * 2) * pts) * depth)
+        ring.push(V.length); V.push([Math.cos(a) * r, y, Math.sin(a) * r])
+      }
+      grid.push(ring)
+    }
+    for (const ring of grid) ringEdges(ring)
+    for (let i = 0; i < nring - 1; i++) for (let j = 0; j < nu; j++) E.push([grid[i][j], grid[i + 1][j]])
   } else {
     V.push([-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1])
     E.push([0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7])
@@ -1877,7 +1934,7 @@ function drawGeoGlyph(ctx, ang, hue, warp, shape, sat, val) {
 }
 function evalGeo(node, octx) {
   const p = node.params
-  st(node.id).geo = { shape: p.shape, material: p.material, hue: p.hue, sat: p.sat, val: p.val, displace: p.displace, freq: p.freq, spin: p.spin, detail: p.detail }
+  st(node.id).geo = { shape: p.shape, material: p.material, hue: p.hue, sat: p.sat, val: p.val, displace: p.displace, freq: p.freq, spin: p.spin, detail: p.detail, flutes: p.flutes, twist: p.twist, groove: p.groove }
   const t = performance.now() * 0.001
   octx.fillStyle = '#0a0e14'
   octx.fillRect(0, 0, W, H)
@@ -1918,7 +1975,8 @@ function evalCamera(node, octx) {
   for (const [id, obj] of three.meshes) if (!want.has(id)) { three.scene.remove(obj); disposeObject(obj); three.meshes.delete(id) }
   inputs.forEach(({ id, geo }, idx) => {
     let obj = three.meshes.get(id)
-    if (!obj || obj.userData.shape !== geo.shape || obj.userData.material !== geo.material || obj.userData.detail !== geo.detail) {
+    if (!obj || obj.userData.shape !== geo.shape || obj.userData.material !== geo.material || obj.userData.detail !== geo.detail ||
+        obj.userData.flutes !== geo.flutes || obj.userData.twist !== geo.twist || obj.userData.groove !== geo.groove) {
       if (obj) { three.scene.remove(obj); disposeObject(obj) }
       obj = buildObject(geo); three.meshes.set(id, obj); three.scene.add(obj)
     }
@@ -3960,6 +4018,11 @@ onBeforeUnmount(() => {
               </select>
             </label>
             <label>color <ColorField v-model:h="n.params.hue" v-model:s="n.params.sat" v-model:v="n.params.val" @change="persist" /></label>
+            <template v-if="n.params.shape === 'Gaudí column'">
+              <label>flutes <NumSlider :min="3" :max="20" :step="1" :model-value="n.params.flutes ?? 8" @update:model-value="n.params.flutes = $event" @commit="persist" /></label>
+              <label>twist <NumSlider :min="-360" :max="360" :step="5" :model-value="n.params.twist ?? 90" @update:model-value="n.params.twist = $event" @commit="persist" /></label>
+              <label>groove <NumSlider :min="0" :max="0.6" :step="0.01" :model-value="n.params.groove ?? 0.28" @update:model-value="n.params.groove = $event" @commit="persist" /></label>
+            </template>
             <label>displace <NumSlider :min="0" :max="1" :step="0.01" :model-value="n.params.displace" @update:model-value="n.params.displace = $event" @commit="persist" /></label>
             <label>frequency <NumSlider :min="0.5" :max="6" :step="0.1" :model-value="n.params.freq" @update:model-value="n.params.freq = $event" @commit="persist" /></label>
             <label>spin <NumSlider :min="0" :max="3" :step="0.05" :model-value="n.params.spin" @update:model-value="n.params.spin = $event" @commit="persist" /></label>
