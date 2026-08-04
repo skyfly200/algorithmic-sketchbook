@@ -179,6 +179,7 @@ function render() {
 
 const drag = { on: false, x: 0, y: 0 }
 let lastNow = 0
+let pourAcc = 0
 function frame(now) {
   rt.tick(now)
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
@@ -189,7 +190,12 @@ function frame(now) {
   const byte = 1 + ((huePhase * 254) | 0)
 
   const nF = Math.round(params.faucets)
-  const passes = Math.max(0, Math.round(params.pour * 7))
+  // Accumulate a fractional pour budget so a low rate trickles (a pass every few
+  // frames) instead of quantising to a full pass per faucet every frame — which
+  // dumped far too much sand once several faucets ran at once.
+  pourAcc += params.pour * 7
+  const passes = Math.floor(pourAcc)
+  pourAcc -= passes
   const spoutW = Math.max(2, (cols * 0.03) | 0)
   if (nF === 1) {
     // a single spout sweeps briskly across the top → horizontal sand-art bands

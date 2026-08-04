@@ -101,11 +101,14 @@ function drawShape(c, name, cx, cy, s) {
     drawHeart(c, cx, cy - s * 0.08, s, -1) // heart pointing up
     drawStem(c, cx, cy + s * 0.35, s * 0.9)
   } else if (name === 'club') {
+    // three lobes — each needs its own subpath (moveTo) or arc() links them
+    // with stray connecting lines and the club comes out mangled
     const r = s * 0.44
+    const lobe = (lx, ly) => { c.moveTo(lx + r, ly); c.arc(lx, ly, r, 0, Math.PI * 2) }
     c.beginPath()
-    c.arc(cx, cy - s * 0.42, r, 0, Math.PI * 2)
-    c.arc(cx - s * 0.5, cy + s * 0.1, r, 0, Math.PI * 2)
-    c.arc(cx + s * 0.5, cy + s * 0.1, r, 0, Math.PI * 2)
+    lobe(cx, cy - s * 0.42)
+    lobe(cx - s * 0.5, cy + s * 0.1)
+    lobe(cx + s * 0.5, cy + s * 0.1)
     c.fill()
     drawStem(c, cx, cy + s * 0.3, s * 0.95)
   } else if (name === 'diamond') {

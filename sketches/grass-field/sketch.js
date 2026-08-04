@@ -64,27 +64,37 @@ void main(){
     vec2 px=uv; px.y-=shift;
     if(px.y>=HZ) continue;            // base would be in the sky
     float d; vec2 wp=ground(px,d);
-    // travelling wind wave + slow gust, stronger toward the tip
-    float ph=wp.y*0.22 - u_time*(1.2+u_wind*1.3);
-    float sway=(sin(ph)+0.45*sin(ph*1.9+wp.x*0.3))*u_wind;
-    float gust=sin(u_time*0.9+wp.x*0.12)*u_gust;
+    // per-tuft randomness keyed to a stable base cell (sampled before the sway)
+    vec2 bcell=floor(wp*density);
+    float r0=hash(bcell), r1=hash(bcell+5.0), r2=hash(bcell+11.0);
+    float ph0=r0*6.2831;                     // each tuft keeps its own timing
+    float lean=(r1-0.5)*0.6;                 // resting lean, per tuft
+    // Wind is a diagonal travelling wave desynchronised per tuft (ph0), plus
+    // roaming gust patches from a low-frequency field — so gusts roll across in
+    // patches instead of the whole field swaying as one.
+    float ph=wp.y*0.20 + wp.x*0.11 - u_time*(1.1+u_wind*1.2) + ph0*0.7;
+    float sway=(sin(ph)+0.4*sin(ph*1.7+ph0))*u_wind*(0.6+0.5*r2);
+    float gustField=sin(wp.x*0.05+wp.y*0.04-u_time*0.6)*sin(wp.y*0.037-u_time*0.43+1.3);
+    float gust=max(0.0,gustField)*u_gust*1.4;
     // pointer parts the grass (u_mouse sits off-screen until the pointer moves)
     vec2 mg=ground(u_mouse,d); float md=length(wp-mg);
     float part=exp(-md*0.9)*sign(wp.x-mg.x)*1.1;
-    wp.x+=(sway+gust+part)*y*0.32;
+    wp.x+=(sway+gust+lean+part)*y*0.32;
     vec2 cf=wp*density, cell=floor(cf), f=fract(cf);
-    float bh=0.4+0.6*hash(cell);      // this tuft's blade height
+    // patchy meadow: lush and thin areas from a low-frequency field
+    float pat=0.5+0.5*sin(bcell.x*0.21+1.0)*sin(bcell.y*0.19-0.5);
+    float bh=0.26+0.74*hash(cell)*mix(0.7,1.15,pat);   // wider height variance
     if(y>bh) continue;                // above the tip of this tuft
-    vec2 c=0.22+0.56*hash2(cell);     // blade footprint centre in the cell
-    float rad=mix(0.46,0.03,y/bh);    // taper: wide base -> fine tip
+    vec2 c=0.18+0.64*hash2(cell);     // blade footprint centre in the cell
+    float rad=mix(0.30+0.22*hash(cell+2.3),0.02,y/bh);   // varied blade thickness
     if(length(f-c)<rad){
       float tip=y/bh;                 // 0 base .. 1 tip along the blade
       float hj=hash(cell+7.7);
-      float hue=(u_hue+(hj-0.5)*26.0)/360.0;
+      float hue=(u_hue+(hj-0.5)*40.0)/360.0;             // wider hue spread
       hue=mix(hue, 0.12, u_dry*(0.3+0.6*tip)*hj); // dry blades go golden, tips first
-      float sat=mix(0.55,0.42,u_dry);
-      // vertical gradient (dark shaded base -> bright tip) + distance fade
-      float lig=mix(0.10,0.46,tip*tip);
+      float sat=mix(0.55,0.42,u_dry)*(0.85+0.3*hash(cell+4.4));
+      // vertical gradient (dark shaded base -> bright tip), per-tuft + patch shade
+      float lig=mix(0.09,0.44,tip*tip)*(0.82+0.36*pat+0.14*(hj-0.5));
       lig*=clamp(1.15-d*0.05,0.45,1.15);
       col=hsl(hue,sat,lig);
       tipShade=tip;
