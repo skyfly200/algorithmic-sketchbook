@@ -26,6 +26,7 @@ import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
 import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, sharedCameraStream, flipSharedCamera } from '../stores/media.js'
+import { pickFromGooglePhotos } from '../lib/googlePhotos.js'
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
 // feed, so in the graph they live behind a dedicated Filter node type that
 // pipes its video input straight into them.
@@ -1514,6 +1515,21 @@ function pickMedia(node, id) {
   node.params.mediaId = id
   node.params.mode = 'library'
   persist()
+}
+// Import from Google Photos via the Picker API (needs VITE_GOOGLE_CLIENT_ID).
+async function importGooglePhotos(node) {
+  try {
+    const picks = await pickFromGooglePhotos((m) => { if (m) showToast(m + '…') })
+    let first = null
+    for (const p of picks) {
+      const item = addMediaFile(new File([p.blob], p.name, { type: p.blob.type }))
+      if (!first) first = item
+    }
+    if (first) { node.params.mode = 'library'; node.params.mediaId = first.id; persist() }
+    showToast(picks.length ? `Added ${picks.length} from Google Photos` : 'Nothing selected')
+  } catch (e) {
+    showToast('Google Photos: ' + (e?.message || 'failed'))
+  }
 }
 
 // --- recording / snapshot / prebake ----------------------------------------
@@ -3981,6 +3997,7 @@ onBeforeUnmount(() => {
               ＋ Load files
               <input type="file" accept="image/*,video/*" multiple hidden @change="loadMediaFiles(n, $event)" />
             </label>
+            <button class="load-btn" title="Import photos or videos from Google Photos" @pointerdown.stop @click="importGooglePhotos(n)">🖼 Google Photos</button>
             <div v-if="n.params.mode === 'camera' && !cameraOn" class="media-hint">Camera is off — enable it with the webcam button in the toolbar.</div>
             <button v-if="n.params.mode === 'camera' && cameraOn" class="load-btn" title="Flip between the front and back camera" @pointerdown.stop @click="flipCamera">🔄 Flip camera</button>
           </template>

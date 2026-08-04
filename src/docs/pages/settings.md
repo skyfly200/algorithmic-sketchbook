@@ -55,3 +55,18 @@ Stale entries for effects that no longer exist are pruned automatically.
   favourites, saved routings and blocks, scenes, editor state, palettes and
   on-device performance data) to one file you can move to another machine, and
   restore it later.
+
+## Google Photos
+
+Media nodes can import from Google Photos through the Photos Picker API. The app
+ships without credentials, so set it up once:
+
+1. Enable the **Photos Picker API** in Google Cloud.
+2. Create an **OAuth 2.0 Client ID** (type: Web application). Add this app's
+   origin to the authorized JavaScript origins.
+3. Put the id in a `.env` file: `VITE_GOOGLE_CLIENT_ID=…apps.googleusercontent.com`.
+4. Rebuild.
+
+Click **Google Photos** on a Media node. Sign in, pick items in the Google
+window, and the files download into the media library. Without a client id the
+button reports that the setup is missing.

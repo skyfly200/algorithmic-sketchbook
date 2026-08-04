@@ -1,0 +1,111 @@
+// Google Photos Picker API client. Lets a user pick photos/videos from their
+// Google Photos and pull the bytes into the media library.
+//
+// SETUP (required, one-time — the app ships without credentials):
+//   1. In Google Cloud, enable the "Photos Picker API".
+//   2. Create an OAuth 2.0 Client ID (type: Web application) and add this app's
+//      origin to the authorized JavaScript origins.
+//   3. Put the client id in a `.env` file:  VITE_GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
+//   4. Rebuild. The "Google Photos" button in a Media node then works.
+//
+// Flow (per the Picker API): get an access token via Google Identity Services,
+// create a picker session, open its pickerUri for the user, poll the session
+// until they finish selecting, list the picked items, then download each item's
+// bytes with the bearer token.
+
+const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
+const SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly'
+const GIS_SRC = 'https://accounts.google.com/gsi/client'
+const API = 'https://photospicker.googleapis.com/v1'
+
+export function googlePhotosConfigured() { return !!CLIENT_ID }
+
+let gisReady = null
+function loadGis() {
+  if (window.google?.accounts?.oauth2) return Promise.resolve()
+  if (gisReady) return gisReady
+  gisReady = new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = GIS_SRC; s.async = true; s.defer = true
+    s.onload = () => resolve()
+    s.onerror = () => { gisReady = null; reject(new Error('Could not load Google sign-in.')) }
+    document.head.appendChild(s)
+  })
+  return gisReady
+}
+
+let tokenClient = null
+let accessToken = ''
+function getToken() {
+  return new Promise((resolve, reject) => {
+    const cb = (resp) => {
+      if (resp.error) reject(new Error(resp.error))
+      else { accessToken = resp.access_token; resolve(accessToken) }
+    }
+    if (!tokenClient) {
+      tokenClient = window.google.accounts.oauth2.initTokenClient({ client_id: CLIENT_ID, scope: SCOPE, callback: cb })
+    } else {
+      tokenClient.callback = cb
+    }
+    tokenClient.requestAccessToken({ prompt: accessToken ? '' : 'consent' })
+  })
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(`${API}/${path}`, {
+    ...opts,
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...(opts.headers || {}) },
+  })
+  if (!r.ok) throw new Error(`Google Photos API returned ${r.status}`)
+  return r.status === 204 ? {} : r.json()
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const secs = (s, fallback) => (s ? parseFloat(String(s).replace('s', '')) : 0) || fallback
+
+// Sign in, open the picker, wait for the user, download the picks.
+// onStatus(msg) reports progress. Returns [{ blob, name, kind }].
+export async function pickFromGooglePhotos(onStatus = () => {}) {
+  if (!CLIENT_ID) throw new Error('Set VITE_GOOGLE_CLIENT_ID to enable Google Photos (see docs).')
+  await loadGis()
+  onStatus('Waiting for Google sign-in')
+  await getToken()
+
+  onStatus('Opening the Google Photos picker')
+  const session = await api('sessions', { method: 'POST', body: '{}' })
+  window.open(session.pickerUri, '_blank', 'noopener')
+
+  // poll the session until the user finishes selecting
+  const interval = secs(session.pollingConfig?.pollInterval, 2)
+  const timeout = secs(session.pollingConfig?.timeoutIn, 600)
+  const deadline = Date.now() + timeout * 1000
+  let set = !!session.mediaItemsSet
+  while (!set) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for a selection.')
+    await sleep(Math.max(1, interval) * 1000)
+    set = !!(await api(`sessions/${session.id}`)).mediaItemsSet
+  }
+
+  onStatus('Downloading')
+  const items = []
+  let pageToken = ''
+  do {
+    const q = `mediaItems?sessionId=${encodeURIComponent(session.id)}&pageSize=100${pageToken ? `&pageToken=${pageToken}` : ''}`
+    const page = await api(q)
+    for (const it of page.mediaItems || []) items.push(it)
+    pageToken = page.nextPageToken || ''
+  } while (pageToken)
+
+  const out = []
+  for (const it of items) {
+    const mf = it.mediaFile || {}
+    const isVideo = it.type === 'VIDEO' || (mf.mimeType || '').startsWith('video')
+    try {
+      const r = await fetch(`${mf.baseUrl}=${isVideo ? 'dv' : 'd'}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      if (!r.ok) continue
+      out.push({ blob: await r.blob(), name: mf.filename || `photo-${out.length + 1}`, kind: isVideo ? 'video' : 'image' })
+    } catch { /* skip a failed item */ }
+  }
+  try { await api(`sessions/${session.id}`, { method: 'DELETE' }) } catch { /* best-effort cleanup */ }
+  onStatus('')
+  return out
+}
