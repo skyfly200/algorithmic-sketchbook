@@ -1,0 +1,7 @@
+{
+  "title": "Gaudí Intersected Column",
+  "description": "Gaudí generated his columns by sweeping two fluted star profiles up a shaft, twisting each the opposite way, then keeping the intersection of the pair (the radial minimum of the two). Where the twists cross, the flutes fold into the branching, load-following forms of the Sagrada Família. Height, base radius, point count, groove depth and twist are live for both profiles, plus a turntable rotation. Each beat pushes the grooves open.",
+  "tags": ["3d", "architecture", "procedural", "geometry", "math", "generative"],
+  "tech": ["three"],
+  "created": "2026-08-04"
+}
