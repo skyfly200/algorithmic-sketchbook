@@ -1,0 +1,7 @@
+{
+  "title": "Glowing Light Tubes",
+  "description": "A rack of neon and fluorescent tubes glowing in the dark. Each tube is a capsule of light: a soft coloured halo built from stacked additive strokes, a bright near-white core, and a hot pulse that travels along its length. The tubes flicker like real gas tubes and surge on the beat. Lay them out as a grid, a radial burst, concentric rings, or a scatter of angled rods. Layout, tube count, thickness, glow, base hue, hue spread, flicker and pulse speed are live; the mic drives the glow.",
+  "tags": ["neon", "tubes", "glow", "light", "audio-reactive", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-08-04"
+}

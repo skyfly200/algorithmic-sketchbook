@@ -1,0 +1,7 @@
+{
+  "title": "Smoke",
+  "description": "A rising plume of smoke advected by curl noise. Particles pour off a source and get carried by a swirling, low-divergence flow field plus buoyant rise and wind, then swell and thin as they climb. Each particle is a soft blob; stacked, they read as a curling column of smoke against the dark. Keep it grey, or tint the whole plume any hue. Emission, rise, turbulence, wind, source width, persistence, density and tint are live; the mic feeds the emission and each beat sends up a puff. Drag to steer the source around.",
+  "tags": ["smoke", "curl-noise", "particles", "fluid", "audio-reactive", "interactive", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-08-04"
+}

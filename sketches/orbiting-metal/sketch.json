@@ -1,0 +1,7 @@
+{
+  "title": "Orbiting Metal",
+  "description": "Polished metallic solids swing around a central pivot on a tilted ring, each spinning on its own axis. A generated studio environment (built in-scene, no external assets) drives the reflections, so the metal reads as chrome, gold or a coloured alloy depending on the tint. A key light and a cool rim light add a hot specular on top of the environment, and a beat kicks the orbit speed. Choose the shape (torus knot, sphere, icosahedron, torus, octahedron or capsule) and set count, orbit radius and speed, spin, metalness, polish and the metal's tint. Drag to look around.",
+  "tags": ["3d", "metal", "reflection", "pbr", "orbit", "audio-reactive", "generative"],
+  "tech": ["three"],
+  "created": "2026-08-04"
+}
