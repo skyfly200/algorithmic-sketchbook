@@ -1,6 +1,6 @@
 {
   "title": "Washboard Road",
-  "description": "The corrugation instability that ripples dirt and gravel roads. A sprung wheel rolls a looped road at speed, and every time it lands it scrapes grains and throws them a little downstream, so faint bumps grow into a regular washboard that marches along the road. A background process runs many fast passes so the pattern forms in seconds while one wheel rolls and bounces on the current surface for show, kicking up dust on the hard hits. Speed sets the ripple spacing; suspension bounce, scrape strength, downstream drift, grain slump, formation rate, dust and dirt hue are live. The mic feeds the formation rate.",
+  "description": "A dirt road seen straight down from above, corrugating over time. The washboard instability: traffic scrapes grains and throws them a little downstream on every bounce, so faint bumps grow into the regular transverse ripples that rut a gravel road. The lane starts smooth and washboards up until the ripples saturate, then a grader blade sweeps across, scrapes it flat, and the cycle repeats. Regrade on a beat, on the Auto-grade timer, or with the Regrade now button. Traffic speed, formation rate, suspension, scrape, downstream drift, grain slump, road scroll, wheel tracks and dirt hue are live.",
   "tags": ["washboard", "corrugation", "granular", "physics", "simulation", "generative"],
   "tech": ["canvas2d"],
   "created": "2026-08-04"

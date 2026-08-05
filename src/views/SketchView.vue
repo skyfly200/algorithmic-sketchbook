@@ -111,6 +111,14 @@ function setParam(name, value) {
   controls.value.values[name] = value
   post({ type: 'sketch:set-param', name, value })
 }
+// Bipolar params (min < 0 < max, e.g. -1..1) read as "centred on zero": show a
+// centre tick, snap to 0 within a small dead-zone, and let a double-click on the
+// track reset to 0.
+function isBipolar(spec) { return typeof spec.min === 'number' && spec.min < 0 && spec.max > 0 }
+function setParamSnapped(name, spec, value) {
+  if (isBipolar(spec) && Math.abs(value) < (spec.max - spec.min) * 0.05) value = 0
+  setParam(name, value)
+}
 
 function syncMappings() {
   post({ type: 'sketch:set-mappings', mappings: controls.value.mappings })
@@ -419,7 +427,11 @@ onUnmounted(() => {
                     density="compact"
                     hide-details
                     thumb-label
-                    @update:model-value="(v) => setParam(name, v)"
+                    :ticks="isBipolar(spec) ? { 0: '' } : undefined"
+                    :show-ticks="isBipolar(spec) ? 'always' : false"
+                    :title="isBipolar(spec) ? 'double-click to recentre at 0' : undefined"
+                    @update:model-value="(v) => setParamSnapped(name, spec, v)"
+                    @dblclick="isBipolar(spec) && setParam(name, 0)"
                   />
                 </template>
               </div>
