@@ -105,6 +105,13 @@ function layoutConks() {
       const S = Math.min(W, H) * 0.62
       c.segs = d.segs.map((s) => ({ x0: cx + s.x0 * S, y0: baseY + s.y0 * S, x1: cx + s.x1 * S, y1: baseY + s.y1 * S, w0: s.w0 * S, w1: s.w1 * S }))
       c.tips = d.tips.map((p) => ({ x: cx + p.x * S, y: baseY + p.y * S }))
+      // the conch shelf grows off the top of the antler stem (highest tip)
+      let top = c.tips[0] || { x: cx, y: cy }
+      for (const tp of c.tips) if (tp.y < top.y) top = tp
+      c.capCx = top.x; c.capCy = top.y; c.capHalf = half * 0.6; c.capThick = thick * 0.6
+    } else {
+      // on a trunk the cap is the whole growth
+      c.capCx = cx; c.capCy = cy; c.capHalf = half; c.capThick = thick
     }
     return c
   })
@@ -126,15 +133,10 @@ function spawn(n, burst) {
   if (!conks.length) return
   for (let i = 0; i < n; i++) {
     const c = conks[(Math.random() * conks.length) | 0]
-    let fx, fy
-    if (c.form === 'Antler' && c.tips.length) {
-      const tp = c.tips[(Math.random() * c.tips.length) | 0]
-      fx = tp.x + rt.random(-1, 1) * c.half * 0.06
-      fy = tp.y + rt.random(-1, 1) * c.half * 0.06
-    } else {
-      fx = c.cx + rt.random(-1, 1) * c.half * 0.85
-      fy = c.cy + c.thick * rt.random(0.1, 0.4)
-    }
+    // spores stream off the pore surface (underside) of the conch, wherever it
+    // sits — on a trunk or off the antler stem
+    const fx = c.capCx + rt.random(-1, 1) * c.capHalf * 0.85
+    const fy = c.capCy + c.capThick * rt.random(0.1, 0.4)
     const p = P.length < MAX ? {} : P[(Math.random() * P.length) | 0]
     p.x = fx; p.y = fy
     // laminar launch: little horizontal spread, a coherent gentle rise
@@ -151,25 +153,26 @@ rt.onBeat(({ energy }) => spawn(50 + (energy * 110 | 0), true))
 
 // --- lacquered reishi shelf conk --------------------------------------------
 function capPath(g, sc, c) {
-  const HW = c.half * sc, HT = c.thick * sc, UD = c.thick * 0.42 * sc
+  const cx = c.capCx, cy = c.capCy
+  const HW = c.capHalf * sc, HT = c.capThick * sc, UD = c.capThick * 0.42 * sc
   const n = 56
   g.beginPath()
   for (let i = 0; i <= n; i++) {
     const th = (i / n) * Math.PI
     const wob = 1 + 0.05 * Math.sin(th * 6 + c.phase) + 0.022 * Math.sin(th * 13 + c.phase * 1.7)
-    g.lineTo(c.cx + Math.cos(th) * HW, c.cy - Math.sin(th) * HT * wob)
+    g.lineTo(cx + Math.cos(th) * HW, cy - Math.sin(th) * HT * wob)
   }
   for (let i = 1; i <= n; i++) {
     const u = i / n
-    g.lineTo(c.cx - HW + 2 * HW * u, c.cy + Math.sin(u * Math.PI) * UD)
+    g.lineTo(cx - HW + 2 * HW * u, cy + Math.sin(u * Math.PI) * UD)
   }
   g.closePath()
 }
-function drawConk(c) {
+// the woody trunk the shelf grows from — a vertical log standing to ONE SIDE;
+// the cap cantilevers out from it like a real shelf fungus
+function drawTrunk(c) {
   const g = ctx
-  // the woody trunk the shelf grows from — a vertical log standing to ONE SIDE;
-  // the cap cantilevers out from it like a real shelf fungus
-  const tw = c.half * 0.16 // trunk half-width
+  const tw = c.half * 0.16
   const tx = c.trunkX
   const trunkTopY = c.cy - c.half * 0.5
   const tg = g.createLinearGradient(tx - tw, 0, tx + tw, 0)
@@ -182,12 +185,15 @@ function drawConk(c) {
   g.lineTo(tx - tw * 1.7, c.baseY)
   g.quadraticCurveTo(tx - tw * 1.4, c.baseY, tx - tw, trunkTopY)
   g.closePath(); g.fill()
-
-  // tilt the whole cap so its free (outer) end droops away from the trunk
+}
+// the lacquered shelf cap itself, at c.capCx/capCy — drawn the same whether the
+// stalk beneath it is a woody trunk or an antler stem
+function drawCap(c) {
+  const g = ctx
+  const px = c.capCx, py = c.capCy
+  // tilt the whole cap so its free (outer) end droops away from the stalk
   g.save()
-  g.translate(tx, c.cy)
-  g.rotate(c.dir * 0.13)
-  g.translate(-tx, -c.cy)
+  g.translate(px, py); g.rotate(c.dir * 0.13); g.translate(-px, -py)
 
   const K = 24
   for (let k = K; k >= 1; k--) {
@@ -199,17 +205,17 @@ function drawConk(c) {
   }
   g.save(); capPath(g, 0.995, c); g.clip()
   g.fillStyle = 'hsla(44,42%,80%,0.5)'
-  g.fillRect(0, c.cy + c.thick * 0.16, W, c.thick * 0.55)
-  const lgx = c.cx - c.half * 0.42, lgy = c.cy - c.thick * 0.6
-  const dome = g.createRadialGradient(lgx, lgy, 0, lgx, lgy, c.half * 1.5)
+  g.fillRect(0, py + c.capThick * 0.16, W, c.capThick * 0.55)
+  const lgx = px - c.capHalf * 0.42, lgy = py - c.capThick * 0.6
+  const dome = g.createRadialGradient(lgx, lgy, 0, lgx, lgy, c.capHalf * 1.5)
   dome.addColorStop(0, 'rgba(255,238,214,0.45)'); dome.addColorStop(0.45, 'rgba(255,225,195,0.08)'); dome.addColorStop(1, 'rgba(255,225,195,0)')
   g.fillStyle = dome; g.fillRect(0, 0, W, H)
-  const shx = c.cx + c.half * 0.5, shy = c.cy + c.thick * 0.6
-  const shade = g.createRadialGradient(shx, shy, 0, shx, shy, c.half * 1.4)
+  const shx = px + c.capHalf * 0.5, shy = py + c.capThick * 0.6
+  const shade = g.createRadialGradient(shx, shy, 0, shx, shy, c.capHalf * 1.4)
   shade.addColorStop(0, 'rgba(18,7,3,0.5)'); shade.addColorStop(0.6, 'rgba(18,7,3,0.12)'); shade.addColorStop(1, 'rgba(18,7,3,0)')
   g.fillStyle = shade; g.fillRect(0, 0, W, H)
   g.fillStyle = 'rgba(255,250,236,0.6)'
-  g.beginPath(); g.ellipse(lgx + c.half * 0.16, lgy + c.thick * 0.05, c.half * 0.16, c.thick * 0.12, -0.5, 0, TAU); g.fill()
+  g.beginPath(); g.ellipse(lgx + c.capHalf * 0.16, lgy + c.capThick * 0.05, c.capHalf * 0.16, c.capThick * 0.12, -0.5, 0, TAU); g.fill()
   for (let r = 0.26; r < 0.99; r += 0.085) {
     g.save(); g.translate(0, PR * 1.3); g.strokeStyle = 'rgba(26,10,5,0.3)'; g.lineWidth = Math.max(1, PR * 1.4); capPath(g, r, c); g.stroke(); g.restore()
     g.save(); g.translate(0, -PR * 1.0); g.strokeStyle = 'rgba(255,224,186,0.16)'; g.lineWidth = Math.max(1, PR); capPath(g, r, c); g.stroke(); g.restore()
@@ -221,6 +227,7 @@ function drawConk(c) {
   capPath(g, 0.95, c); g.stroke()
   g.restore()
 }
+function drawConk(c) { drawTrunk(c); drawCap(c) }
 
 // --- antler (deer-horn) form: branching red lacquered fingers ---------------
 function drawAntler(c) {
@@ -253,7 +260,10 @@ function drawAntler(c) {
 function drawGrowths() {
   // paint back-to-front (higher on screen = further, drawn first)
   const order = [...conks].sort((a, b) => a.baseY - b.baseY)
-  for (const c of order) c.form === 'Antler' ? drawAntler(c) : drawConk(c)
+  for (const c of order) {
+    if (c.form === 'Antler') { drawAntler(c); drawCap(c) } // conch grows off the stem
+    else drawConk(c)
+  }
 }
 
 let last = 0

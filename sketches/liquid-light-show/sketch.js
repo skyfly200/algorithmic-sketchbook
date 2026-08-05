@@ -30,6 +30,7 @@ const params = rt.params({
   viscosity: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Wobble' },
   flow: { value: 1, min: 0.1, max: 2.5, step: 0.05, label: 'Flow' },
   glow: { value: 1, min: 0.3, max: 1.8, step: 0.05, label: 'Saturation' },
+  edge: { value: 0.35, min: 0, max: 1.5, step: 0.05, label: 'Edge / rim' },
 })
 rt.mapInput('audio.level', 'heat', 0.5)
 rt.mapInput('audio.pulse', 'glow', 0.35)
@@ -107,10 +108,13 @@ function drawCell(c, t, H_, backlit) {
   }
   ctx.fillStyle = grad
   ctx.fill()
-  // iridescent thin-film rim
-  ctx.strokeStyle = `hsla(${(hue + 165) % 360},95%,65%,${(backlit ? 0.16 : 0.12) * g})`
-  ctx.lineWidth = Math.max(1, minS * 0.006)
-  ctx.stroke()
+  // iridescent thin-film rim — softer by default so blobs read as backlit
+  // fluid, not outlined shapes; the Edge param dials it back up.
+  if (params.edge > 0.001) {
+    ctx.strokeStyle = `hsla(${(hue + 165) % 360},95%,65%,${(backlit ? 0.16 : 0.12) * g * params.edge})`
+    ctx.lineWidth = Math.max(0.75, minS * 0.006) * (0.6 + params.edge * 0.6)
+    ctx.stroke()
+  }
 
   // interior air bubbles
   for (const b of c.bub) {

@@ -127,7 +127,18 @@ function texturedStroke(len, lw, r, g, b, a, tex) {
   }
 }
 
-let last = 0
+// A cheap fingerprint of the reduced field + params. Repainting the whole
+// canvas costs thousands of strokes, so only do it when the source frame
+// actually changed (a still image paints once) or a control moved.
+function fieldSum(d) {
+  let s = 0
+  for (let i = 0; i < d.length; i += 149) s = (s + d[i] * (i & 255)) | 0
+  return s
+}
+function paramSig() {
+  return `${params.style}|${params.brush}|${params.sizeVary}|${params.lengthVary}|${params.texture}|${params.density}|${params.length}|${params.edges}|${params.paper}|${params.mirror}|${W}x${H}`
+}
+let lastSum = null, lastSig = ''
 function frame(now) {
   rt.tick(now)
   const t = now * 0.001
@@ -138,6 +149,10 @@ function frame(now) {
   fbx.clearRect(0, 0, fw, fh)
   src.draw(fbx, fw, fh, { mirror: params.mirror })
   fdata = fbx.getImageData(0, 0, fw, fh).data
+  // skip the repaint when nothing changed — the last painting still stands
+  const sum = fieldSum(fdata), sig = paramSig()
+  if (sum === lastSum && sig === lastSig) { requestAnimationFrame(frame); return }
+  lastSum = sum; lastSig = sig
   if (!lum || lum.length !== fw * fh) lum = new Float32Array(fw * fh)
   for (let i = 0; i < fw * fh; i++) {
     const j = i * 4
