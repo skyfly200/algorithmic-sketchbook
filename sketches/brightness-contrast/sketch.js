@@ -8,13 +8,13 @@ import { createSource } from '../_lib/source.js'
 const rt = createRuntime()
 const params = rt.params({
   brightness: { value: 0, min: -1, max: 1, step: 0.01, label: 'Brightness' },
-  contrast: { value: 1, min: 0, max: 2.5, step: 0.02, label: 'Contrast' },
-  exposure: { value: 0, min: -2, max: 2, step: 0.02, label: 'Exposure (stops)' },
-  gamma: { value: 1, min: 0.3, max: 3, step: 0.02, label: 'Gamma' },
+  contrast: { value: 1, min: 0, max: 2, step: 0.02, label: 'Contrast' },
+  exposure: { value: 0, min: -1.5, max: 1.5, step: 0.02, label: 'Exposure (stops)' },
+  gamma: { value: 1, min: 0.4, max: 2.6, step: 0.02, label: 'Gamma' },
   saturation: { value: 1, min: 0, max: 2.5, step: 0.02, label: 'Saturation' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })
-rt.mapInput('audio.volume', 'brightness', 0.3)
+rt.mapInput('audio.volume', 'brightness', 0.12)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
@@ -41,7 +41,7 @@ function buildLut() {
   for (let v = 0; v < 256; v++) {
     let x = (v / 255) * expo // exposure (linear-ish gain)
     x = (x - 0.5) * con + 0.5 // contrast around mid grey
-    x += bri // brightness lift/drop
+    x += bri * 0.6 // brightness lift/drop — gentled so it doesn't blow straight to white/black
     x = x < 0 ? 0 : x > 1 ? 1 : x
     x = Math.pow(x, invG) // gamma
     lut[v] = x * 255

@@ -92,10 +92,12 @@ function relaxRoad() {
 }
 
 // Start a grader pass — the blade sweeps the whole road once, scraping it flat.
-function triggerGrade() { if (grader < 0) grader = 0 }
+// Any grade (manual, beat, or auto) restarts the auto-grade countdown, so a
+// skip pushes the next automatic grade a full interval away.
+let autoTimer = 0
+function triggerGrade() { if (grader < 0) { grader = 0; autoTimer = 0 } }
 rt.onBeat(() => { if (params.gradeOnBeat) triggerGrade() })
 rt.onAction('regrade', triggerGrade) // "Regrade now" button in the controls
-let autoTimer = 0
 let lastNow = performance.now()
 
 function resize() {
