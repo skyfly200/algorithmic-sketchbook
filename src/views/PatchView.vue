@@ -2385,11 +2385,18 @@ function nodeSlow(n) {
   return nodeScore(n) < SLOW_SCORE || (nodeCost[n.id] ?? 0) > SLOW_MS
 }
 function nodeSlowReason(n) {
-  return nodeScore(n) < SLOW_SCORE
-    ? 'Heavy effect — likely to lower the frame rate'
-    : 'Slow to composite — may lower the frame rate'
+  const ms = nodeCost[n.id] ?? 0
+  if (ms > SLOW_MS) return `Slow — ${ms.toFixed(1)} ms/frame to render, may drop the frame rate`
+  return 'Heavy effect — likely to lower the frame rate'
+}
+// Live per-node render cost (ms/frame), measured in the loop, for the badge.
+function nodeCostMs(n) { return nodeCost[n.id] ?? 0 }
+function nodeCostLevel(n) {
+  const ms = nodeCost[n.id] ?? 0
+  return ms > SLOW_MS * 2 ? 'bad' : ms > SLOW_MS ? 'warn' : ''
 }
 let fpsWindow = 0
+let costWindow = 0
 
 function loop(ts) {
   const now = ts ?? performance.now()
@@ -2439,7 +2446,11 @@ function loop(ts) {
       fps.value = Math.round((passCount * 1000) / (now - fpsWindow || 1))
       passCount = 0
       fpsWindow = now
-      // publish per-node composite cost for the slow-node badge (reactive)
+    }
+    // publish per-node render cost for the live perf badge (reactive), a touch
+    // more often than the FPS meter so a heavy node lights up quickly
+    if (now - costWindow >= 300) {
+      costWindow = now
       for (const n of nodes) { const c = rtState.get(n.id)?.cost; if (c != null) nodeCost[n.id] = +c.toFixed(2) }
     }
   }
@@ -3876,6 +3887,7 @@ onBeforeUnmount(() => {
             @blur="commitRename(n, $event.target.value)"
           />
           <span v-else class="node-name" title="Double-click to rename">{{ nodeTitle(n) }}</span>
+          <span v-if="nodeCostMs(n) > 2.5" class="node-ms" :class="nodeCostLevel(n)" :title="`${nodeCostMs(n).toFixed(1)} ms to render this node each frame`">{{ nodeCostMs(n).toFixed(1) }}ms</span>
           <v-icon v-if="nodeSlow(n)" icon="mdi-alert" size="16" class="node-warn" :title="nodeSlowReason(n)" @pointerdown.stop />
           <v-icon :icon="bodyEyeIcon(n)" size="13" class="node-lock" :class="{ 'node-keep-on': n.pinBody }" :title="bodyEyeTitle(n)" @pointerdown.stop @click="cycleBody(n)" />
           <v-icon v-if="TYPES[n.type].ins > 0" icon="mdi-backup-restore" size="13" class="node-lock" title="Replace the whole branch feeding this node" @pointerdown.stop @click="rerollUpstream(n)" />
@@ -4305,6 +4317,10 @@ onBeforeUnmount(() => {
 }
 .node-close { cursor: pointer; color: rgba(0,0,0,0.6); }
 .node-warn { color: #ffd23f; margin-right: 2px; filter: drop-shadow(0 0 4px rgba(255,60,60,0.95)); cursor: help; }
+/* live per-node render cost (ms/frame) — green under budget, amber/red over it */
+.node-ms { margin-right: 3px; padding: 0 3px; border-radius: 3px; font: 9px ui-monospace, monospace; line-height: 14px; color: #bfe6c4; background: rgba(0,0,0,0.28); cursor: help; }
+.node-ms.warn { color: #10141c; background: #ffd23f; }
+.node-ms.bad { color: #fff; background: #ff4d4d; }
 /* A slow node gets a prominent red outline + pulsing warning so it's obvious. */
 .node--slow { outline: 2px solid #ff4d4d; outline-offset: 0; box-shadow: 0 0 0 2px rgba(255,77,77,0.35), 0 6px 20px rgba(0,0,0,0.4); }
 .node--slow .node-warn { animation: warnPulse 1.4s ease-in-out infinite; }
