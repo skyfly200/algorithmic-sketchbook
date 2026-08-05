@@ -78,63 +78,72 @@ function resize() {
 }
 
 // --- droplets ----------------------------------------------------------------
-// A mix of a few heavy lumps (the central mass) and many light beads (satellites
-// and spray). Positions live in screen pixels, constrained to the window disc.
+// Beads of varied size scattered across the whole dish — no fixed central mass.
+// Every bead feels the field; the electromagnet's grip is strongest at the
+// centre and fades outward. Positions live in screen pixels, on the window disc.
 let drops = []
 let dropCount = -1
 function initDrops() {
   dropCount = Math.round(params.drops)
   drops = []
   for (let i = 0; i < dropCount; i++) {
-    const heavy = i < Math.max(3, dropCount * 0.28)
     const ang = rt.random(0, 6.28)
-    // heavy lumps rest near the magnet; light beads park scattered out on the dish
-    const rr = heavy ? rt.random(0, 0.22) : rt.random(0.32, 0.94)
+    // sqrt for an even spread over the disc's area, not clumped at the middle
+    const rr = Math.sqrt(rt.random(0.03, 0.9))
     drops.push({
       x: winX + Math.cos(ang) * rr * rx,
       y: winY + Math.sin(ang) * rr * ry,
       vx: 0, vy: 0,
-      r: (heavy ? rt.random(0.12, 0.19) : rt.random(0.03, 0.07)) * rx,
-      heavy,
-      mass: heavy ? rt.random(1.5, 2.4) : rt.random(0.4, 0.8),
+      r: rt.random(0.05, 0.14) * rx,
+      mass: rt.random(0.6, 1.6),
       homeR: rr, // resting radius on the dish
       homeA: ang,
       drift: rt.random(-0.25, 0.25), // slow orbit of the rest angle
       wph: rt.random(0, 6.28),
       wsp: rt.random(0.5, 1.4),
-      arm: rt.random(0, 1), // how strongly the bass flings this one outward
+      arm: rt.random(0.5, 1), // how hard the hit erupts this one
+      split: rt.random(0, 6.28), // per-drop eruption swirl phase
     })
   }
 }
 
 function updateDrops(t, dt, field) {
-  const damp = Math.pow(0.02 + params.viscosity * 0.78, dt * 6) // heavier = slower
-  const mag = params.magnet * (0.35 + field * 2.0) // extra inward pull, surges on bass
-  const reach = params.reach * Math.max(0, field - 0.3) * 2.4 // outward on hits
+  const mag = params.magnet * (0.35 + field * 2.0) // inward pull, surges on bass
+  const reach = params.reach * Math.max(0, field - 0.25) * 2.6 // eruption on hits
   const maxR = 0.98
   for (const d of drops) {
-    // rest position: the drop's home on the dish, slowly orbiting
+    // the field's grip is strongest at the magnet and fades toward the rim
+    const prox = 1 - Math.min(1, d.homeR)
+    const grip = 0.35 + prox * 0.85
+    // rest position: home on the dish, slowly orbiting; the field draws it inward
     const a = d.homeA + d.drift * t * 0.5 + Math.sin(t * d.wsp * 0.4 + d.wph) * 0.25 * params.spread
-    const hr = d.homeR * (1 - field * 0.55) // the field draws every home inward
+    const hr = d.homeR * (1 - field * 0.5 * grip)
     const hx = winX + Math.cos(a) * hr * rx
     const hy = winY + Math.sin(a) * hr * ry
     d.vx += (hx - d.x) * 5.5 / d.mass * dt
     d.vy += (hy - d.y) * 5.5 / d.mass * dt
-    // extra pull straight to the magnet on the bass
+    // inward magnet pull on the bass — EVERY drop reacts, central ones the most
     let dx = winX - d.x, dy = winY - d.y
     const dist = Math.hypot(dx, dy) || 1e-3
     dx /= dist; dy /= dist
-    d.vx += dx * mag / d.mass * dt * 30
-    d.vy += dy * mag / d.mass * dt * 30
-    // bass flings the lighter beads outward into reaching arms / spikes
+    d.vx += dx * mag * grip / d.mass * dt * 30
+    d.vy += dy * mag * grip / d.mass * dt * 30
+    // on the hit the surface goes unstable and every drop erupts outward along
+    // its own swirled axis (splitting off the cluster) before springing home
     if (reach > 0) {
-      const push = reach * d.arm * (d.heavy ? 0.3 : 1) / d.mass
-      d.vx -= dx * push * dt * 40
-      d.vy -= dy * push * dt * 40
+      const push = reach * d.arm * grip / d.mass
+      const ea = Math.atan2(-dy, -dx) + Math.sin(t * 3 + d.split) * 0.6
+      d.vx += Math.cos(ea) * push * dt * 42
+      d.vy += Math.sin(ea) * push * dt * 42
     }
     // jitter
     d.vx += Math.cos(t * d.wsp * 2.1 + d.wph) * params.spread * 3 * dt
     d.vy += Math.sin(t * d.wsp * 2.4 + d.wph) * params.spread * 3 * dt
+    // damping rises with distance from the centre — outer drops settle quickly
+    // while the ones near the magnet stay lively
+    const distProx = Math.min(1, Math.hypot(d.x - winX, d.y - winY) / rx)
+    const visc = params.viscosity * (1 - Math.min(0.7, distProx * 0.6))
+    const damp = Math.pow(0.02 + visc * 0.78, dt * 6)
     d.vx *= damp
     d.vy *= damp
     d.x += d.vx * dt * 60
