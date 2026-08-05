@@ -880,6 +880,8 @@ function pasteClipboard() {
 }
 function onKey(e) {
   if (editingName.value != null) return // don't hijack typing in the name field
+  const tag = document.activeElement?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return // typing elsewhere
   const mod = e.ctrlKey || e.metaKey
   if (mod && e.key === 'c') copySelection()
   else if (mod && e.key === 'v') pasteClipboard()
@@ -889,6 +891,10 @@ function onKey(e) {
     removeNode(selected.value)
     selected.value = null
   }
+  // settings visibility: h = hide all, s = show all, m = show only modulated
+  else if (!mod && e.key === 'h') hideAllBodies()
+  else if (!mod && e.key === 's') showAllBodies()
+  else if (!mod && e.key === 'm') showModulatedBodies()
 }
 function clearAll() {
   nodes.splice(0)
@@ -1594,6 +1600,36 @@ function snapshotPng() {
 // node can be tuned and made audio/MIDI/etc. reactive right in the graph.
 const effectControls = reactive(new Map()) // node id -> { schema, values, mappings }
 const showParams = reactive(new Map()) // node id -> bool
+
+// --- per-node settings visibility -------------------------------------------
+// Each node's controls body can be shown, hidden, or pinned. A single eye
+// control on the head cycles: follows global (shown) → pinned (always shown) →
+// hidden → follows. hideBody/pinBody live on the node so they persist and undo.
+function bodyShown(n) { return !!n.pinBody || !n.hideBody }
+function bodyEyeIcon(n) { return n.pinBody ? 'mdi-pin' : n.hideBody ? 'mdi-eye-off-outline' : 'mdi-eye-outline' }
+function bodyEyeTitle(n) {
+  return n.pinBody ? 'Settings pinned — stay visible when others hide (click to hide)'
+    : n.hideBody ? 'Settings hidden (click to show)'
+      : 'Settings shown — click to pin them visible'
+}
+function cycleBody(n) {
+  if (n.pinBody) { n.pinBody = false; n.hideBody = true }   // pinned → hidden
+  else if (n.hideBody) { n.hideBody = false }               // hidden → follows/shown
+  else { n.pinBody = true }                                 // shown → pinned
+  persist(); nextTick(() => layoutTick.value++)
+}
+// A node counts as "modulated" when a control link drives one of its params, an
+// effect has input mappings, or it is itself a control source you'd want to see.
+function nodeModulated(n) {
+  if (n.type === 'input' || n.type === 'xy' || n.type === 'tracker') return true
+  if (links.some((l) => l.node === n.id)) return true
+  const ec = effectControls.get(n.id)
+  return !!(ec && ec.mappings && ec.mappings.length)
+}
+function hideAllBodies() { for (const n of nodes) if (!n.pinBody) n.hideBody = true; persist(); nextTick(() => layoutTick.value++) }
+function showAllBodies() { for (const n of nodes) n.hideBody = false; persist(); nextTick(() => layoutTick.value++) }
+function showModulatedBodies() { for (const n of nodes) if (!n.pinBody) n.hideBody = !nodeModulated(n); persist(); nextTick(() => layoutTick.value++) }
+
 // Opening/closing the params panel shifts the param jacks below it, so nudge
 // the control-wire geometry to re-measure after the DOM settles.
 function toggleParams(id) {
@@ -3590,6 +3626,9 @@ onBeforeUnmount(() => {
         title="Apply — push the current board look to the held output"
         @click="applyToOutput"
       />
+      <v-btn icon="mdi-eye-off-outline" variant="text" size="small" title="Hide all node settings (h) — pinned nodes stay" @click="hideAllBodies" />
+      <v-btn icon="mdi-eye-outline" variant="text" size="small" title="Show all node settings (s)" @click="showAllBodies" />
+      <v-btn icon="mdi-sine-wave" variant="text" size="small" title="Show only modulated nodes (m) — those driven by an input" @click="showModulatedBodies" />
       <v-btn data-tour="patch-output" icon="mdi-projector-screen-outline" variant="text" size="small" title="Output only (hide routing)" @click="outputOnly = true" />
       <v-btn icon="mdi-help-circle-outline" variant="text" size="small" title="Replay the walkthrough" @click="startTour" />
       <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" variant="text" size="small" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
@@ -3838,6 +3877,7 @@ onBeforeUnmount(() => {
           />
           <span v-else class="node-name" title="Double-click to rename">{{ nodeTitle(n) }}</span>
           <v-icon v-if="nodeSlow(n)" icon="mdi-alert" size="16" class="node-warn" :title="nodeSlowReason(n)" @pointerdown.stop />
+          <v-icon :icon="bodyEyeIcon(n)" size="13" class="node-lock" :class="{ 'node-keep-on': n.pinBody }" :title="bodyEyeTitle(n)" @pointerdown.stop @click="cycleBody(n)" />
           <v-icon v-if="TYPES[n.type].ins > 0" icon="mdi-backup-restore" size="13" class="node-lock" title="Replace the whole branch feeding this node" @pointerdown.stop @click="rerollUpstream(n)" />
           <v-icon v-if="autoCanTouch(n)" :icon="n.keep ? 'mdi-pin' : 'mdi-pin-outline'" size="13" class="node-lock" :class="{ 'node-keep-on': n.keep }" :title="n.keep ? 'Kept — Autopilot won’t reshuffle this (click to allow)' : 'Keep — protect from Autopilot reshuffle'" @pointerdown.stop @click="n.keep = !n.keep; persist()" />
           <v-icon :icon="n.locked ? 'mdi-lock' : 'mdi-lock-open-variant-outline'" size="13" class="node-lock" :title="n.locked ? 'Locked — click to unlock' : 'Lock this node'" @pointerdown.stop @click="n.locked = !n.locked; persist()" />
@@ -3911,8 +3951,8 @@ onBeforeUnmount(() => {
           >{{ OUT_LABELS[n.type][oi - 1] }}</span>
         </template>
 
-        <!-- per-node controls -->
-        <div class="node-body">
+        <!-- per-node controls (hidden/pinned via the eye on the head) -->
+        <div v-show="bodyShown(n)" class="node-body">
           <template v-if="n.type === 'effect' || n.type === 'filter'">
             <div class="d-flex ga-1 align-center">
               <select v-model="n.params.slug" class="flex-grow-1" @change="persist" @pointerdown.stop>
