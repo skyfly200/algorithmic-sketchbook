@@ -1,0 +1,7 @@
+{
+  "title": "Counter-Rotating Rings",
+  "description": "A stack of concentric rings, each patterned with a repeating arc-tick motif and spinning the opposite way to its neighbours. Adjacent rings shear against one another so the disc reads as interlocking gearwork, with the inner rings turning faster than the outer ones. Ring count, spacing, arc coverage, tick count, spin speed, inner-fast gradient, radial twist, thickness, hue span and glow are live; each beat kicks the spin.",
+  "tags": ["rings", "concentric", "rotation", "geometric", "generative", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-08-05"
+}
