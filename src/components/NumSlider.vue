@@ -97,9 +97,14 @@ function commit() {
 </template>
 
 <style scoped>
-.numsl { display: flex; align-items: center; gap: 6px; width: 100%; }
-.track { position: relative; flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
-.rng { width: 100%; min-width: 0; }
+.numsl { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; max-width: 100%; }
+.track { position: relative; flex: 1 1 auto; min-width: 0; max-width: 100%; max-height: 28px; overflow: hidden; display: flex; align-items: center; }
+/* Keep the native slider horizontal and inside its track on every browser — some
+   render a range input vertical/oversized, which used to spill out of the node. */
+.rng {
+  width: 100%; min-width: 0; max-width: 100%; max-height: 26px; box-sizing: border-box;
+  writing-mode: horizontal-tb; -webkit-appearance: auto; appearance: auto;
+}
 /* centre tick for bipolar sliders — a subtle notch marking 0 */
 .zero {
   position: absolute; top: 50%; width: 2px; height: 11px; margin-left: -1px;
