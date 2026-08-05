@@ -18,6 +18,7 @@ const params = rt.params({
   transport: { value: 1, min: 0.2, max: 2.5, step: 0.05, label: 'Downstream drift' },
   relax: { value: 0.6, min: 0, max: 2, step: 0.05, label: 'Grain slump' },
   scroll: { value: 0.4, min: 0, max: 3, step: 0.05, label: 'Road scroll' },
+  xVar: { value: 0.4, min: 0, max: 1.5, step: 0.05, label: 'Cross variation' },
   gradeEvery: { value: 12, min: 0, max: 30, step: 1, label: 'Auto-grade (s)' },
   gradeOnBeat: { value: true, type: 'bool', label: 'Grade on beat' },
   regrade: { type: 'action', label: 'Regrade now' },
@@ -31,6 +32,13 @@ const N = 512                      // looped road length in cells (travel axis)
 let road = new Float32Array(N)     // ripple height per cell (+ = a raised crest)
 const CLAMP = 1.4                  // saturation cap on the ripple amplitude
 let scrollPos = 0                  // how far the road has slid past (cells)
+
+// The corrugation is shaded per pixel into a small buffer (so the cross-axis
+// warp is cheap), then scaled up to fill the whole view.
+const field = document.createElement('canvas')
+const fctx = field.getContext('2d')
+let fw = 0, fh = 0, fimg = null
+const shadeLUT = new Uint8ClampedArray(128 * 3) // dirt colour by slope
 
 // A grader blade sweeps across and scrapes the road flat behind it. -1 = idle,
 // otherwise a 0..1 position along the road; grade[i] tracks how flat each cell is.
@@ -104,7 +112,33 @@ function resize() {
   PR = rt.pixelRatio
   W = canvas.width = Math.floor(window.innerWidth * PR)
   H = canvas.height = Math.floor(window.innerHeight * PR)
+  // shade the corrugation into a capped-resolution buffer, then upscale to fill
+  fw = Math.min(W, 520)
+  fh = Math.max(2, Math.round(fw * H / W))
+  field.width = fw; field.height = fh
+  fimg = fctx.createImageData(fw, fh)
   if (!road.some((v) => v !== 0)) seedRoad()
+}
+
+// dirt colour ramp by slope (windward lit → lee shaded), rebuilt when hue moves
+let lutHue = -1
+function buildShadeLUT() {
+  lutHue = params.hue
+  for (let i = 0; i < 128; i++) {
+    const slope = (i / 127) * 2 - 1
+    const l = Math.max(19, Math.min(58, 33 + slope * 15))
+    const rgb = hslToRgb(params.hue, 38 - slope * 6, l)
+    shadeLUT[i * 3] = rgb[0]; shadeLUT[i * 3 + 1] = rgb[1]; shadeLUT[i * 3 + 2] = rgb[2]
+  }
+}
+function hslToRgb(h, s, l) {
+  h /= 360; s /= 100; l /= 100
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h * 6) % 2) - 1)), m = l - c / 2
+  let r = 0, g = 0, b = 0
+  const seg = Math.floor(h * 6) % 6
+  if (seg === 0) { r = c; g = x } else if (seg === 1) { r = x; g = c } else if (seg === 2) { g = c; b = x }
+  else if (seg === 3) { g = x; b = c } else if (seg === 4) { r = x; b = c } else { r = c; b = x }
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)]
 }
 
 const sampleRoad = (fx) => {
@@ -145,51 +179,52 @@ function frame(now) {
 
   scrollPos += params.scroll * dt * 8
 
-  // --- render: straight-down view. Travel runs top→bottom; ripples are the
-  //     transverse bands across the lane. ---
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  const roadW = W * 0.62, x0 = (W - roadW) / 2, x1 = x0 + roadW
-  // shoulders / surrounding dirt
-  ctx.fillStyle = hsl(params.hue - 6, 28, 15)
-  ctx.fillRect(0, 0, W, H)
-
-  const cellsPerPx = N / H * 0.35     // vertical zoom: how many cells fill the view
-  const step = Math.max(1, Math.floor(PR))
-  for (let y = 0; y < H; y += step) {
-    const cell = scrollPos + y * cellsPerPx
-    const h0 = sampleRoad(cell), h1 = sampleRoad(cell + 0.6)
-    const slope = Math.max(-1, Math.min(1, (h1 - h0) * 2.4)) // lit from the top
-    // base dirt, brightened on windward slopes, shaded in the lee — kept off
-    // pure black so ruts read as relief in dirt, not hard stripes
-    const l = 33 + slope * 15
-    ctx.fillStyle = hsl(params.hue, 38 - slope * 6, Math.max(19, Math.min(58, l)))
-    ctx.fillRect(x0, y, roadW, step)
-    // fresh-graded cells flash a pale scraped sheen
-    const g = sampleGraded(cell)
-    if (g > 0.02) { ctx.fillStyle = `rgba(220,210,190,${g * 0.35})`; ctx.fillRect(x0, y, roadW, step) }
-  }
-
-  // two compacted wheel tracks running down the lane — where ripples bite hardest
-  if (params.tracks) {
-    for (const cx of [x0 + roadW * 0.3, x0 + roadW * 0.7]) {
-      const tw = roadW * 0.16
-      const grad = ctx.createLinearGradient(cx - tw, 0, cx + tw, 0)
-      grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(0.5, 'rgba(0,0,0,0.28)'); grad.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.fillStyle = grad; ctx.fillRect(cx - tw, 0, tw * 2, H)
+  // --- render: straight-down view filling the whole frame. Travel runs
+  //     top→bottom; ripples are the transverse bands, warped across the width so
+  //     the washboard also varies in x instead of reading as perfect stripes. ---
+  if (params.hue !== lutHue) buildShadeLUT()
+  const cellsPerPx = N / fh * 0.35     // vertical zoom in the buffer
+  const xv = params.xVar
+  const tph = now * 0.00018
+  const data = fimg.data
+  const wheelA = fw * 0.3, wheelB = fw * 0.7, wheelW = fw * 0.14
+  for (let py = 0; py < fh; py++) {
+    const cellBase = scrollPos + py * cellsPerPx
+    const row = py * fw
+    for (let px = 0; px < fw; px++) {
+      const nx = px / fw
+      // cross-axis warp: two spatial waves + a slow drift bend the ripple lines
+      const warp = xv > 0.001
+        ? xv * (Math.sin(nx * 9.42 + py * 0.02 + tph) + 0.5 * Math.sin(nx * 19.5 - tph * 0.7)) * 2.2
+        : 0
+      const cell = cellBase + warp
+      const h0 = sampleRoad(cell), h1 = sampleRoad(cell + 0.6)
+      let slope = (h1 - h0) * 2.4
+      slope = slope < -1 ? -1 : slope > 1 ? 1 : slope
+      const li = (((slope + 1) * 0.5) * 127) | 0
+      let r = shadeLUT[li * 3], g = shadeLUT[li * 3 + 1], b = shadeLUT[li * 3 + 2]
+      // compacted wheel tracks bite darker where tyres run
+      if (params.tracks) {
+        const tr = Math.min(1, (Math.max(0, wheelW - Math.abs(px - wheelA)) + Math.max(0, wheelW - Math.abs(px - wheelB))) / wheelW)
+        if (tr > 0) { const k = 1 - tr * 0.28; r *= k; g *= k; b *= k }
+      }
+      // fresh-graded cells flash a pale scraped sheen
+      const gr = sampleGraded(cell)
+      if (gr > 0.02) { const a = gr * 0.35; r += (220 - r) * a; g += (210 - g) * a; b += (190 - b) * a }
+      const o = (row + px) * 4
+      data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = 255
     }
   }
+  fctx.putImageData(fimg, 0, 0)
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.imageSmoothingEnabled = true
+  ctx.drawImage(field, 0, 0, W, H)
 
-  // road edges
-  ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 2 * PR
-  ctx.beginPath(); ctx.moveTo(x0, 0); ctx.lineTo(x0, H); ctx.moveTo(x1, 0); ctx.lineTo(x1, H); ctx.stroke()
-
-  // the grader blade: a bright angled bar sweeping down the lane
+  // the grader blade: a bright bar sweeping down the whole road
   if (grader >= 0) {
-    const by = (((grader * N - scrollPos) / cellsPerPx) % H + H) % H
-    ctx.fillStyle = 'rgba(255,240,210,0.9)'
-    ctx.fillRect(x0 - roadW * 0.06, by - 3 * PR, roadW * 1.12, 6 * PR)
-    ctx.fillStyle = 'rgba(120,130,140,0.9)'
-    ctx.fillRect(x0 - roadW * 0.06, by, roadW * 1.12, 5 * PR)
+    const by = (((grader * N - scrollPos) / (N / H * 0.35)) % H + H) % H
+    ctx.fillStyle = 'rgba(255,240,210,0.9)'; ctx.fillRect(0, by - 3 * PR, W, 6 * PR)
+    ctx.fillStyle = 'rgba(120,130,140,0.9)'; ctx.fillRect(0, by, W, 5 * PR)
   }
 
   requestAnimationFrame(frame)

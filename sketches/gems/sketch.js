@@ -23,7 +23,7 @@ const params = rt.params({
     value: 'Mixed', type: 'select', label: 'Gemstone',
     options: ['Mixed', 'Pyrite', 'Quartz', 'Amethyst', 'Citrine', 'Rose Quartz', 'Emerald', 'Ruby', 'Sapphire', 'Diamond', 'Fluorite', 'Salt', 'Tourmaline', 'Selenite'],
   },
-  count: { value: 18, min: 5, max: 40, step: 1, label: 'Crystals' },
+  count: { value: 1, min: 1, max: 40, step: 1, label: 'Crystals' },
   size: { value: 1, min: 0.55, max: 1.7, step: 0.02, label: 'Cluster size' },
   spin: { value: 0.25, min: -1, max: 1, step: 0.02, label: 'Spin' },
   light: { value: 40, min: 0, max: 360, step: 1, label: 'Light angle' },
