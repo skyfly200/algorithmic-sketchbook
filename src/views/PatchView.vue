@@ -321,7 +321,9 @@ const snapshot = () => JSON.stringify({ nodes, edges, links })
 let lastSnap = snapshot()
 
 function persist() {
-  if (settings.persistEditors) localStorage.setItem(STORE_KEY, JSON.stringify({ nodes, edges, links }))
+  // Autosave carries the effect sketches' own param values + mappings too, so a
+  // browser reload restores the whole patch — not just the node graph.
+  if (settings.persistEditors) localStorage.setItem(STORE_KEY, JSON.stringify({ nodes, edges, links, effects: currentEffects() }))
   if (restoring) return
   const s = snapshot()
   if (s !== lastSnap) {
@@ -343,7 +345,7 @@ function applySnap(s) {
   const ids = new Set(nodes.map((n) => n.id))
   for (const id of [...rtState.keys()]) if (!ids.has(id)) { disposeRuntime(id); rtState.delete(id) }
   for (const n of nodes) st(n.id)
-  if (settings.persistEditors) localStorage.setItem(STORE_KEY, s)
+  if (settings.persistEditors) localStorage.setItem(STORE_KEY, JSON.stringify({ ...data, effects: currentEffects() }))
   lastSnap = s
   restoring = false
   nextTick(() => layoutTick.value++)
@@ -393,9 +395,9 @@ function addNode(type) {
       type === 'blend'
         ? { mode: 'screen' }
         : type === 'effect'
-          ? { slug: effectOptions.value[0]?.slug ?? '' }
+          ? { slug: effectOptions.value[0]?.slug ?? '', seed: randSeed() }
           : type === 'filter'
-            ? { slug: filterOptions.value[0]?.slug ?? '' }
+            ? { slug: filterOptions.value[0]?.slug ?? '', seed: randSeed() }
             : type === 'input'
               ? { source: 'audio.volume', scale: 1, offset: 0, invert: false, curve: 'linear' }
               : type === 'xy'
@@ -859,13 +861,17 @@ function copySelection() {
 function pasteClipboard() {
   if (!clipboard.value) return
   const c = clipboard.value
+  const params = JSON.parse(JSON.stringify(c.params))
+  // A pasted effect/filter gets a fresh generative seed so the copy is a new
+  // variation instead of an identical twin of the original.
+  if ((c.type === 'effect' || c.type === 'filter') && 'seed' in params) params.seed = randSeed()
   const n = reactive({
     id: nextId++,
     type: c.type,
     name: c.name,
     x: 80 + (nodes.length % 5) * 30,
     y: 110 + (nodes.length % 5) * 30,
-    params: JSON.parse(JSON.stringify(c.params)),
+    params,
   })
   nodes.push(n)
   st(n.id)
@@ -1613,12 +1619,18 @@ function onEffectMessage(e) {
 function postToEffect(id, msg) {
   rtState.get(id)?.iframe?.contentWindow?.postMessage(msg, '*')
 }
+// Effect sliders stream update:model-value on every drag frame, so coalesce the
+// autosave write instead of hammering localStorage each pixel.
+let persistTimer = 0
+function persistSoon() { clearTimeout(persistTimer); persistTimer = setTimeout(persist, 250) }
 function setEffectParam(id, name, value) {
   effectControls.get(id).values[name] = value
   postToEffect(id, { type: 'sketch:set-param', name, value })
+  persistSoon() // so the tweak survives a reload / autosave
 }
 function syncEffectMappings(id) {
   postToEffect(id, { type: 'sketch:set-mappings', mappings: effectControls.get(id).mappings })
+  persist()
 }
 function addEffectMapping(id) {
   const c = effectControls.get(id)
@@ -3226,6 +3238,9 @@ onMounted(async () => {
   window.addEventListener('message', onEffectMessage)
   window.addEventListener('keydown', onKey)
   window.addEventListener('pointermove', trackMouse)
+  // Restore each effect sketch's saved param values + mappings from the autosave
+  // once its iframe announces ready (onEffectMessage drains pendingEffects).
+  if (saved?.effects && Object.keys(saved.effects).length) { pendingEffects = { ...saved.effects }; nextTick(applyPendingEffects) }
   raf = requestAnimationFrame(loop)
 })
 function trackMouse(e) {
