@@ -1,10 +1,12 @@
-// Gaudí Column Field — a fragment-shader Gaudí column. Two fluted star profiles
-// are swept up a shaft and twisted opposite ways; their radial minimum carves the
-// grooves, which spiral because the twist grows with height. It renders as a lit
-// stone column, not a flat field. Two "misgeneration" modes then treat the column
-// SURFACE: Moiré interference beats a high-frequency grid against itself into
-// shimmering fringes, and Edge warping pinches and tears the flutes near the
-// silhouette with hard overfitted rings, like a net hallucinating detail.
+// Gaudí Column (Shader) — a fragment-shader Gaudí column. Two fluted star
+// profiles are swept up a shaft and twisted opposite ways; their radial minimum
+// carves the grooves, which spiral because the twist grows with height. It
+// renders as a lit stone column, not a flat field. Two "misgeneration" modes
+// then treat the column SURFACE: Moiré interference beats a high-frequency grid
+// against itself into shimmering fringes, and Edge warping pinches and tears the
+// flutes near the silhouette with hard overfitted rings, like a net
+// hallucinating detail. (For the pattern across the whole plane, see Gaudí Fold
+// Field.)
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()

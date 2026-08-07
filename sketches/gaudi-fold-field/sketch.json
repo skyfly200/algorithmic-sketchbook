@@ -1,0 +1,7 @@
+{
+  "title": "Gaudí Fold Field",
+  "description": "The full-screen sibling of the Gaudí Column shader: the same procedural organic fold pattern from the column, rendered edge to edge across the whole plane in stone tones. Two extra misgeneration modes push it further — Moiré interference beats a high-frequency grid against itself into shimmering pink fringes, and Edge warping pinches and tears the field near its borders with hard high-contrast overfitted rings, like a neural net hallucinating detail. Mode, speed and fold scale are live; the beat nudges the speed.",
+  "tags": ["shader", "glsl", "procedural", "moire", "generative", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-08-07"
+}
