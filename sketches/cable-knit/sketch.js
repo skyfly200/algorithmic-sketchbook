@@ -13,9 +13,9 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
 const params = rt.params({
-  gauge: { value: 22, min: 10, max: 44, step: 1, label: 'Stitch gauge' },
+  gauge: { value: 30, min: 10, max: 52, step: 1, label: 'Stitch gauge' },
   ground: { value: 'Stockinette', type: 'select', options: ['Stockinette', 'Ribbing'], label: 'Ground' },
-  cableEvery: { value: 12, min: 4, max: 20, step: 1, label: 'Cable spacing' },
+  cableEvery: { value: 8, min: 4, max: 20, step: 1, label: 'Cable spacing' },
   cableWidth: { value: 4, min: 2, max: 8, step: 1, label: 'Cable width' },
   twist: { value: 5, min: 2, max: 12, step: 0.5, label: 'Cable twist' },
   speed: { value: 0.5, min: -2, max: 2, step: 0.05, label: 'Knit speed' },

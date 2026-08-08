@@ -36,7 +36,10 @@ const bctx = buf.getContext('2d', { willReadFrequently: true })
 
 // per-channel control points, x & y in 0..1, sorted by x; identity by default
 const curves = { rgb: [[0, 0], [1, 1]], r: [[0, 0], [1, 1]], g: [[0, 0], [1, 1]], b: [[0, 0], [1, 1]] }
-rt.onAction('reset', () => { for (const k of Object.keys(curves)) curves[k] = [[0, 0], [1, 1]] })
+// publish the curve so it saves with scenes/patches; restore it when one loads
+function commitCurves() { rt.setState({ curves: JSON.parse(JSON.stringify(curves)) }) }
+rt.onState((s) => { if (s && s.curves) for (const k of Object.keys(curves)) if (s.curves[k]) curves[k] = s.curves[k].map((p) => p.slice()) })
+rt.onAction('reset', () => { for (const k of Object.keys(curves)) curves[k] = [[0, 0], [1, 1]]; commitCurves() })
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v)
 
@@ -196,11 +199,12 @@ function onUp() {
   const pts = curves[drag.key]
   if (drag.off && drag.i > 0 && drag.i < pts.length - 1) pts.splice(drag.i, 1)
   drag = null
+  commitCurves()
 }
 function onDbl(e) {
   if (!params.showEditor) return
   const [x, y] = evPos(e); const R = graphRect(); const pts = curves[KEY[params.channel]]
-  for (let i = 1; i < pts.length - 1; i++) { const [sx, sy] = toScreen(R, pts[i][0], pts[i][1]); if (Math.hypot(sx - x, sy - y) < 12 * PR) { pts.splice(i, 1); e.preventDefault(); return } }
+  for (let i = 1; i < pts.length - 1; i++) { const [sx, sy] = toScreen(R, pts[i][0], pts[i][1]); if (Math.hypot(sx - x, sy - y) < 12 * PR) { pts.splice(i, 1); commitCurves(); e.preventDefault(); return } }
 }
 canvas.addEventListener('pointerdown', onDown)
 window.addEventListener('pointermove', onMove)
@@ -233,4 +237,5 @@ function frame(now) {
 
 window.addEventListener('resize', resize)
 resize()
+commitCurves() // publish the initial curve so a host (Patch) knows to show its editor
 requestAnimationFrame(frame)

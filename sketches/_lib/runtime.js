@@ -313,6 +313,13 @@ export function createRuntime() {
   // until the user opts in (Auto-map button); the defaults are still remembered.
   const noDefaultMap = urlParams.get('nomap') === '1'
   let announced = false
+  // Arbitrary serializable sketch state (beyond scalar params) that rides along
+  // with scenes/patches — e.g. a curves editor's control points. The sketch
+  // registers a restore handler with rt.onState and pushes updates via
+  // rt.setState; the host captures it from ready/`sketch:state` and hands it
+  // back in `sketch:apply-scene`.
+  let sceneState = null
+  let onStateCb = null
 
   const mouse = { x: 0.5, y: 0.5 }
   window.addEventListener('pointermove', (e) => {
@@ -514,6 +521,7 @@ export function createRuntime() {
       type: 'sketch:ready', schema, values: { ...base },
       mappings: [...mappings], defaultMappings: [...defaultMappings],
       audio: { gain: audioGain, sens: audioSens, reactive: audioReactive },
+      state: sceneState,
     }
   }
   const isAudioSrc = (s) => s.startsWith('audio.') || s.startsWith('beat.')
@@ -559,7 +567,11 @@ export function createRuntime() {
       for (const [k, v] of Object.entries(msg.values ?? {})) if (k in base) base[k] = v
       setMappings(msg.mappings)
       if (msg.audio) applyAudio(msg.audio)
+      if (msg.state !== undefined) { sceneState = msg.state; onStateCb?.(msg.state) }
       applyModulation(performance.now())
+    } else if (msg.type === 'sketch:set-state') {
+      // host pushes serializable state (e.g. Patch's curve editor) into the sketch
+      sceneState = msg.state; onStateCb?.(msg.state)
     } else if (msg.type === 'sketch:beat') {
       // A host (Patch) wired an Input node to this effect's beat trigger — fire
       // a manual beat so beat-driven sketches pulse from any input source.
@@ -655,6 +667,16 @@ export function createRuntime() {
     // Register a handler for a `type:'action'` param — the controls panel shows
     // it as a button that fires this callback (e.g. "Load model…").
     onAction(name, cb) { actions[name] = cb },
+
+    // Arbitrary serializable state that saves/restores with scenes & patches,
+    // beyond the scalar params — e.g. a curve editor's control points.
+    // rt.setState(obj) publishes it to the host; rt.onState(cb) restores it.
+    setState(obj) {
+      sceneState = obj
+      if (announced) { try { window.parent?.postMessage({ type: 'sketch:state', state: obj }, '*') } catch {} }
+    },
+    onState(cb) { onStateCb = cb; if (sceneState != null) cb(sceneState) },
+    get state() { return sceneState },
 
     mapInput(source, param, amount = 0.5, smooth = defaultSmooth(source)) {
       // Default mappings used to run with no inertia (smooth 0), so the param

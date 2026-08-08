@@ -21,6 +21,7 @@ import { inputParams } from '../lib/inputParams'
 import TourOverlay from '../components/TourOverlay.vue'
 import NumSlider from '../components/NumSlider.vue'
 import ColorField from '../components/ColorField.vue'
+import CurveEditor from '../components/CurveEditor.vue'
 import perfScores from '../registry/perf.json'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
@@ -128,25 +129,25 @@ const HEAD_H = 30
 const THUMB_H = 107
 
 const TYPES = {
-  effect: { title: 'Effect', ins: 0, color: '#7c8cff' },
-  filter: { title: 'Filter', ins: 1, color: '#c98cff' },
-  media: { title: 'Media', ins: 0, color: '#4dd0c4' }, // camera / files / clips
-  text: { title: 'Text', ins: 0, color: '#ff9ec4' },
-  portal: { title: 'Portal', ins: 1, color: '#8ad0ff' }, // remap a region elsewhere
-  mask: { title: 'Mask', ins: 2, color: '#f2ad00' },
-  polygon: { title: 'Polygon', ins: 0, color: '#f2ad00' }, // a matte-shape source: white editable polygon → wire into a Mask
-  blend: { title: 'Blend', ins: 2, color: '#a0e060' },
+  effect: { title: 'Effect', ins: 0, color: '#7c8cff', icon: 'mdi-creation' },
+  filter: { title: 'Filter', ins: 1, color: '#c98cff', icon: 'mdi-image-filter-vintage' },
+  media: { title: 'Media', ins: 0, color: '#4dd0c4', icon: 'mdi-image-multiple' }, // camera / files / clips
+  text: { title: 'Text', ins: 0, color: '#ff9ec4', icon: 'mdi-format-text' },
+  portal: { title: 'Portal', ins: 1, color: '#8ad0ff', icon: 'mdi-shape-outline' }, // remap a region elsewhere
+  mask: { title: 'Mask', ins: 2, color: '#f2ad00', icon: 'mdi-vector-intersection' },
+  polygon: { title: 'Polygon', ins: 0, color: '#f2ad00', icon: 'mdi-vector-polygon' }, // a matte-shape source: white editable polygon → wire into a Mask
+  blend: { title: 'Blend', ins: 2, color: '#a0e060', icon: 'mdi-circle-half-full' },
   // Geometry space: a mesh source (its displacement stands in for a vertex
   // shader) and a virtual Camera that rasterizes connected geometry down to a
   // pixel frame the rest of the graph can composite.
-  geo: { title: 'Geometry', ins: 0, color: '#6ee7b7' },
-  vcam: { title: 'Camera', ins: 3, color: '#ffd166' },
-  output: { title: 'Output', ins: 1, color: '#ffffff' },
+  geo: { title: 'Geometry', ins: 0, color: '#6ee7b7', icon: 'mdi-cube-outline' },
+  vcam: { title: 'Camera', ins: 3, color: '#ffd166', icon: 'mdi-camera-control' },
+  output: { title: 'Output', ins: 1, color: '#ffffff', icon: 'mdi-monitor' },
   // Control emitters (0..1 values, not video): their output jacks wire into the
   // parameter jacks of other nodes to modulate them live.
-  input: { title: 'Input', ins: 0, color: '#e0a060' },
-  xy: { title: 'XY Pad', ins: 0, color: '#e0a060' },
-  tracker: { title: 'Tracker', ins: 1, color: '#e0a060' },
+  input: { title: 'Input', ins: 0, color: '#e0a060', icon: 'mdi-sine-wave' },
+  xy: { title: 'XY Pad', ins: 0, color: '#e0a060', icon: 'mdi-gesture-tap' },
+  tracker: { title: 'Tracker', ins: 1, color: '#e0a060', icon: 'mdi-target' },
 }
 // How many control/video outputs a node exposes (xy: x,y · tracker: x,y,size).
 function outCount(n) {
@@ -1637,17 +1638,26 @@ function toggleParams(id) {
   nextTick(() => layoutTick.value++)
 }
 function onEffectMessage(e) {
-  if (e.data?.type !== 'sketch:ready') return
+  const d = e.data
+  if (d?.type !== 'sketch:ready' && d?.type !== 'sketch:state') return
   for (const n of nodes) {
     if (n.type !== 'effect' && n.type !== 'filter') continue
     if (rtState.get(n.id)?.iframe?.contentWindow === e.source) {
-      effectControls.set(n.id, {
-        schema: e.data.schema ?? {},
-        values: { ...e.data.values },
-        mappings: (e.data.mappings ?? []).map((m) => ({ ...m })),
-      })
-      // A cue being applied may be waiting to push this effect's saved params.
-      if (pendingEffects) applyPendingEffects()
+      if (d.type === 'sketch:state') {
+        // the sketch pushed serializable editor state (e.g. curve points) — keep
+        // it so it saves with the patch/cue
+        const c = effectControls.get(n.id)
+        if (c) { c.state = d.state; persistSoon() }
+      } else {
+        effectControls.set(n.id, {
+          schema: d.schema ?? {},
+          values: { ...d.values },
+          mappings: (d.mappings ?? []).map((m) => ({ ...m })),
+          state: d.state ?? null,
+        })
+        // A cue being applied may be waiting to push this effect's saved params.
+        if (pendingEffects) applyPendingEffects()
+      }
       break
     }
   }
@@ -1663,6 +1673,14 @@ function setEffectParam(id, name, value) {
   effectControls.get(id).values[name] = value
   postToEffect(id, { type: 'sketch:set-param', name, value })
   persistSoon() // so the tweak survives a reload / autosave
+}
+// A curve editor (e.g. the Curves filter) edited the sketch's serializable state.
+function onCurveEdit(id, curves) {
+  const c = effectControls.get(id)
+  if (!c) return
+  c.state = { ...(c.state || {}), curves }
+  postToEffect(id, { type: 'sketch:set-state', state: c.state })
+  persistSoon()
 }
 function syncEffectMappings(id) {
   postToEffect(id, { type: 'sketch:set-mappings', mappings: effectControls.get(id).mappings })
@@ -2667,7 +2685,7 @@ function persistShow() { localStorage.setItem(SHOW_KEY, JSON.stringify(cues)) }
 
 function currentEffects() {
   const out = {}
-  for (const [id, c] of effectControls) out[id] = { values: { ...c.values }, mappings: c.mappings.map((m) => ({ ...m })) }
+  for (const [id, c] of effectControls) out[id] = { values: { ...c.values }, mappings: c.mappings.map((m) => ({ ...m })), state: c.state ?? null }
   return out
 }
 function captureCue() {
@@ -2699,9 +2717,9 @@ function applyPendingEffects() {
     const win = rtState.get(+idStr)?.iframe?.contentWindow
     if (!win) continue
     const pe = pendingEffects[idStr]
-    win.postMessage({ type: 'sketch:apply-scene', values: pe.values, mappings: pe.mappings }, '*')
+    win.postMessage({ type: 'sketch:apply-scene', values: pe.values, mappings: pe.mappings, state: pe.state ?? null }, '*')
     const ec = effectControls.get(+idStr)
-    if (ec) { ec.values = { ...pe.values }; ec.mappings = pe.mappings.map((m) => ({ ...m })) }
+    if (ec) { ec.values = { ...pe.values }; ec.mappings = pe.mappings.map((m) => ({ ...m })); ec.state = pe.state ?? null }
     delete pendingEffects[idStr]
   }
   if (!Object.keys(pendingEffects).length) pendingEffects = null
@@ -3876,6 +3894,7 @@ onBeforeUnmount(() => {
           @pointerdown="startDrag(n, $event)"
           @dblclick="!n.locked && startRename(n)"
         >
+          <v-icon :icon="TYPES[n.type].icon" size="14" class="node-type-ico" />
           <input
             v-if="editingName === n.id"
             class="node-name-edit"
@@ -3996,6 +4015,13 @@ onBeforeUnmount(() => {
 
             <!-- effect params + mappings (same protocol as the viewer/Mixer) -->
             <div v-if="showParams.get(n.id) && effectControls.get(n.id)" class="params" @pointerdown.stop>
+              <!-- curve editor for effects that expose curve state (e.g. Curves) -->
+              <CurveEditor
+                v-if="effectControls.get(n.id).state && effectControls.get(n.id).state.curves"
+                :model-value="effectControls.get(n.id).state.curves"
+                @update:model-value="onCurveEdit(n.id, $event)"
+                @commit="persist"
+              />
               <template v-for="(spec, name) in effectControls.get(n.id).schema" :key="name">
                 <label v-if="spec.type === 'bool'" class="chk">
                   <input type="checkbox" :checked="effectControls.get(n.id).values[name]" @change="setEffectParam(n.id, name, $event.target.checked)" /> {{ spec.label ?? name }}
@@ -4310,7 +4336,8 @@ onBeforeUnmount(() => {
   height: 30px; padding: 0 8px; border-radius: 8px 8px 0 0; cursor: grab;
   color: #06070a; font: 600 12px system-ui, sans-serif;
 }
-.node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-type-ico { flex: 0 0 auto; margin-right: 4px; opacity: 0.85; }
+.node-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-name-edit {
   flex: 1; min-width: 0; margin-right: 4px; background: rgba(255,255,255,0.7);
   border: 0; border-radius: 3px; padding: 1px 4px; font: 600 12px system-ui; color: #06070a;
