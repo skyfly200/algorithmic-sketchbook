@@ -1,0 +1,7 @@
+{
+  "title": "Cable Knit",
+  "description": "A panel of hand-knitted wool with Aran cable ropes, drawn strand by strand. Every bit of yarn is a rounded tube — a dark base with a bright core and a specular sheen — so it catches light like real wool. The ground is stockinette (rows of interlocking knit V's) or ribbing; each cable is a two-ply rope whose strands weave with a sine path, back ply then front ply, so they cross over and under like real cabling, with purl bump gutters framing them. The whole piece scrolls as if knitting off the needles. Stitch gauge, ground, cable spacing/width/twist, knit speed, yarn weight, wool sheen, hand-knit wobble and yarn colour are live; the beat lifts the sheen.",
+  "tags": ["knitting", "cable", "wool", "textile", "pattern", "generative"],
+  "tech": ["canvas2d"],
+  "created": "2026-08-08"
+}
