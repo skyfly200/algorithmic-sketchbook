@@ -1,0 +1,7 @@
+{
+  "title": "Curves",
+  "description": "A Photoshop-style curves colour corrector for a live source. Drag control points on the on-canvas graph to reshape the tone response, and pick the RGB master or an individual R / G / B channel with the tabs; a luminance histogram sits behind the curve. Click empty space to add a point, drag to move it, double-click or drag it off the top/bottom to delete it — the end points move up and down only. Each channel is fitted with a smooth monotone spline into a 256-entry lookup table, so the whole grade is one table read per channel. Contrast, brightness and amount are also live, mappable sliders that compose on top of the hand-drawn master curve. Grades the camera, a dropped photo or clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": ["filter", "curves", "colour", "grade", "correction", "tone"],
+  "tech": ["canvas2d"],
+  "created": "2026-08-08"
+}
