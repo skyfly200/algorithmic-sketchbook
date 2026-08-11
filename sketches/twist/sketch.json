@@ -1,0 +1,7 @@
+{
+  "title": "Twist",
+  "description": "Photoshop's Twirl for a live source: rotate the image around a placeable centre by an angle that falls off with radius, so the middle spins hard and the edges stay put. Positive and negative angles wind opposite ways; twist angle, radius, centre, falloff and a gentle live swirl are live. Warps the camera, a dropped photo or clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": ["filter", "twist", "twirl", "warp", "distort"],
+  "tech": ["canvas2d"],
+  "created": "2026-08-08"
+}

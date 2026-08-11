@@ -1,0 +1,7 @@
+{
+  "title": "Tiling",
+  "description": "Replicate a live source across an N×M grid where each tile drifts from its neighbours: a per-tile hue rotation walks across the grid and a per-tile time offset pulls each cell from a different moment of a rolling frame history, so the same gesture ripples across the wall a beat apart. Optional kaleidoscopic mirror weave flips alternate tiles, and hue/time can radiate from the centre. Columns, rows, hue-per-tile and time-per-tile are live. Tiles the camera, a dropped photo or clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": ["filter", "tiling", "grid", "kaleidoscope", "echo"],
+  "tech": ["canvas2d"],
+  "created": "2026-08-11"
+}

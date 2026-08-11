@@ -8,7 +8,7 @@ export const FILTER_SLUGS = [
   'nebula-gasses', 'strobe', 'color-filter', 'crt', 'uv-light', 'polarization', 'light-leaves',
   'warp', 'rolling-shutter', 'feedback', 'interlace', 'painterly', 'film-tone',
   'blur', 'brightness-contrast', 'shaky-film', 'fps-limiter', 'funhouse-mirror', 'stained-glass',
-  'birefringence', 'curves',
+  'birefringence', 'curves', 'twist', 'wind', 'liquid-metal', 'tiling',
 ]
 export const FILTER_SLUG_SET = new Set(FILTER_SLUGS)
 export function isFilterSketch(sketch) {

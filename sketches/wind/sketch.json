@@ -1,0 +1,7 @@
+{
+  "title": "Wind",
+  "description": "Photoshop's Wind for a live source: catch the bright edges and smear them into fine horizontal streaks blown across the frame. Rising-brightness edges seed a coloured streak that decays as it travels downwind, broken up with grain so it reads as wind-blown lines rather than motion blur. Direction, gust length, edge sensitivity, grain and amount are live. Blows the camera, a dropped photo or clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": ["filter", "wind", "streak", "stylize", "distort"],
+  "tech": ["canvas2d"],
+  "created": "2026-08-08"
+}

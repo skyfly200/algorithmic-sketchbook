@@ -1,0 +1,7 @@
+{
+  "title": "Noise Field",
+  "description": "An animated procedural noise generator — a source, not a filter. Choose fractal value noise (fBm), ridged, turbulence, plain value or white noise, scrolling through time so it churns, with a domain-warp control that folds it into organic marbling. Colour it mono (hue-tinted), RGB from three offset noises, or through warm, cool and spectral palettes. Scale, octaves, speed, warp, contrast and hue are live; the mic drives contrast.",
+  "tags": ["noise", "fbm", "procedural", "texture", "generative", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-08-08"
+}
