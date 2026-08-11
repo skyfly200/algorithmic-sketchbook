@@ -133,6 +133,9 @@ const TYPES = {
   filter: { title: 'Filter', ins: 1, color: '#c98cff', icon: 'mdi-image-filter-vintage' },
   media: { title: 'Media', ins: 0, color: '#4dd0c4', icon: 'mdi-image-multiple' }, // camera / files / clips
   text: { title: 'Text', ins: 0, color: '#ff9ec4', icon: 'mdi-format-text' },
+  // A loaded image (or sprite-sheet) positioned in the frame, animated over time
+  // by a motion preset and/or control-mapped x/y/scale/rotate/opacity.
+  sprite: { title: 'Sprite', ins: 0, color: '#7fe3a1', icon: 'mdi-image-move' },
   portal: { title: 'Portal', ins: 1, color: '#8ad0ff', icon: 'mdi-shape-outline' }, // remap a region elsewhere
   mask: { title: 'Mask', ins: 2, color: '#f2ad00', icon: 'mdi-vector-intersection' },
   polygon: { title: 'Polygon', ins: 0, color: '#f2ad00', icon: 'mdi-vector-polygon' }, // a matte-shape source: white editable polygon → wire into a Mask
@@ -170,7 +173,11 @@ const PARAM_RANGES = {
   // Polygon: only the edge softness is a scalar worth modulating; the
   // vertices are edited by dragging on the output.
   polygon: { feather: [0, 0.5] },
+  // Sprite: position, size, rotation and opacity are all control-mappable, so a
+  // sprite can be flown around and keyframed through space over time.
+  sprite: { x: [0, 1], y: [0, 1], scale: [0.02, 2], rotate: [-180, 180], opacity: [0, 1] },
 }
+const SPRITE_MOTIONS = ['None', 'Drift', 'Orbit', 'Bounce', 'Float', 'Spin']
 // Fallback font list (generic families + common web-safe faces) used until the
 // user loads their real installed fonts via the Local Font Access API.
 const TEXT_FONTS = [
@@ -409,6 +416,8 @@ function addNode(type) {
                     ? { mode: 'camera', mediaId: null }
                     : type === 'text'
                       ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false }
+                      : type === 'sprite'
+                        ? { src: null, name: '', x: 0.5, y: 0.5, scale: 0.4, rotate: 0, opacity: 1, spin: 0, motion: 'None', speed: 0.5, amp: 0.2, cols: 1, rows: 1, fps: 12 }
                       : type === 'portal'
                         ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }
                         : type === 'polygon'
@@ -1688,6 +1697,30 @@ function mediaEl(node) {
   return s.mediaEl
 }
 
+// Sprite image cache: reloads the <img> only when the node's data-URL changes.
+function spriteImg(node) {
+  const s = st(node.id)
+  const src = node.params.src
+  if (s.spriteSrc !== src) {
+    s.spriteSrc = src
+    if (src) { const img = new Image(); img.src = src; s.spriteImg = img }
+    else s.spriteImg = null
+  }
+  return s.spriteImg
+}
+function pickSpriteFile(node) {
+  const inp = document.createElement('input')
+  inp.type = 'file'; inp.accept = 'image/*'
+  inp.onchange = () => {
+    const f = inp.files?.[0]; if (!f) return
+    const reader = new FileReader()
+    reader.onload = () => { node.params.src = String(reader.result); node.params.name = f.name; persist() }
+    reader.onerror = () => showToast('Could not read the image')
+    reader.readAsDataURL(f)
+  }
+  inp.click()
+}
+
 function loadMediaFiles(node, e) {
   const files = [...(e.target.files ?? [])]
   let first = null
@@ -2317,6 +2350,40 @@ function evalNode(node) {
     })
     octx.restore()
     octx.shadowBlur = 0
+  } else if (node.type === 'sprite') {
+    // A loaded image / sprite-sheet placed in the frame. Transparent background
+    // so it composites over other layers; position/size/rotation/opacity read
+    // through pval() (control-mappable), plus a built-in motion preset over time.
+    octx.clearRect(0, 0, W, H)
+    const img = spriteImg(node)
+    if (img && img.complete && img.naturalWidth) {
+      const p = node.params
+      const t = performance.now() / 1000
+      let x = pval(node, 'x'), y = pval(node, 'y')
+      let scl = pval(node, 'scale'), rot = pval(node, 'rotate') ?? 0
+      const op = pval(node, 'opacity') ?? 1
+      const sp = p.speed ?? 0.5, amp = p.amp ?? 0.2
+      if (p.motion === 'Drift') { x += Math.sin(t * sp) * amp; y += Math.cos(t * sp * 0.7) * amp }
+      else if (p.motion === 'Orbit') { x += Math.cos(t * sp) * amp; y += Math.sin(t * sp) * amp }
+      else if (p.motion === 'Bounce') { y += (Math.abs(Math.sin(t * sp * 2)) - 0.5) * amp * 2 }
+      else if (p.motion === 'Float') { y += Math.sin(t * sp) * amp; rot += Math.sin(t * sp * 0.6) * 10 }
+      else if (p.motion === 'Spin') { rot += t * sp * 90 }
+      rot += (p.spin ?? 0) * t * 90
+      const cols = Math.max(1, Math.round(p.cols || 1)), rows = Math.max(1, Math.round(p.rows || 1))
+      const frames = cols * rows
+      const fw = img.naturalWidth / cols, fh = img.naturalHeight / rows
+      const fi = frames > 1 ? Math.floor(t * (p.fps || 12)) % frames : 0
+      const sx = (fi % cols) * fw, sy = Math.floor(fi / cols) * fh
+      const drawH = Math.max(1, scl * H), drawW = drawH * (fw / fh)
+      octx.save()
+      octx.globalAlpha = Math.max(0, Math.min(1, op))
+      octx.translate(x * W, y * H)
+      octx.rotate((rot * Math.PI) / 180)
+      octx.imageSmoothingEnabled = true
+      octx.drawImage(img, sx, sy, fw, fh, -drawW / 2, -drawH / 2, drawW, drawH)
+      octx.restore()
+      octx.globalAlpha = 1
+    }
   } else if (node.type === 'portal') {
     const input = inputCanvas(node, 0)
     if (input) octx.drawImage(input, 0, 0, W, H)
@@ -3624,6 +3691,7 @@ onBeforeUnmount(() => {
           </v-list>
         </v-menu>
         <v-btn icon="mdi-format-text" variant="tonal" size="small" title="Add Text (mappable font)" :style="{ color: TYPES.text.color }" @click="addNode('text')" />
+        <v-btn icon="mdi-image-move" variant="tonal" size="small" title="Add Sprite (an image/sprite-sheet placed &amp; animated in space)" :style="{ color: TYPES.sprite.color }" @click="addNode('sprite')" />
         <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
         <v-spacer />
         <v-menu v-model="nlOpen" :close-on-content-click="false" location="bottom">
@@ -4499,6 +4567,49 @@ onBeforeUnmount(() => {
             <div class="shape-hint">
               <template v-if="n.params.svg">Showing an imported SVG (holes preserved). “clear SVG” returns to the editable polygon.</template>
               <template v-else>Turn on “edit points”, then drag the corners on the output. Double-click an edge to add a point, a point to remove it. Or “import SVG” to use a vector file as the matte.</template>
+            </div>
+          </template>
+
+          <template v-if="n.type === 'sprite'">
+            <div class="media-hint">A loaded image or sprite-sheet placed in the frame. Position, size, rotation &amp; opacity have control jacks (▣) — wire an Input / XY&nbsp;Pad / Tracker into them to fly it around and keyframe it through time. Wire this node into a <b>Blend</b> to overlay it.</div>
+            <div class="shape-row">
+              <button class="shape-btn" @pointerdown.stop @click="pickSpriteFile(n)">{{ n.params.src ? 'change image' : 'load image' }}</button>
+              <button v-if="n.params.src" class="shape-btn" @pointerdown.stop @click="n.params.src = null; n.params.name = ''; persist()">clear</button>
+            </div>
+            <div v-if="n.params.name" class="shape-hint">{{ n.params.name }}</div>
+            <label>
+              <span class="pjack" :ref="(el) => bindJack(n.id, 'x', el)" :data-jack-node="n.id" data-jack-param="x" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'x')" />
+              x <NumSlider :min="0" :max="1" :step="0.01" :model-value="n.params.x" @update:model-value="n.params.x = $event" @commit="persist" />
+            </label>
+            <label>
+              <span class="pjack" :ref="(el) => bindJack(n.id, 'y', el)" :data-jack-node="n.id" data-jack-param="y" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'y')" />
+              y <NumSlider :min="0" :max="1" :step="0.01" :model-value="n.params.y" @update:model-value="n.params.y = $event" @commit="persist" />
+            </label>
+            <label>
+              <span class="pjack" :ref="(el) => bindJack(n.id, 'scale', el)" :data-jack-node="n.id" data-jack-param="scale" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'scale')" />
+              scale <NumSlider :min="0.02" :max="2" :step="0.01" :model-value="n.params.scale" @update:model-value="n.params.scale = $event" @commit="persist" />
+            </label>
+            <label>
+              <span class="pjack" :ref="(el) => bindJack(n.id, 'rotate', el)" :data-jack-node="n.id" data-jack-param="rotate" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'rotate')" />
+              rotate <NumSlider :min="-180" :max="180" :step="1" :model-value="n.params.rotate" @update:model-value="n.params.rotate = $event" @commit="persist" />
+            </label>
+            <label>
+              <span class="pjack" :ref="(el) => bindJack(n.id, 'opacity', el)" :data-jack-node="n.id" data-jack-param="opacity" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'opacity')" />
+              opacity <NumSlider :min="0" :max="1" :step="0.02" :model-value="n.params.opacity" @update:model-value="n.params.opacity = $event" @commit="persist" />
+            </label>
+            <label>motion
+              <select :value="n.params.motion" @change="n.params.motion = $event.target.value; persist()" @pointerdown.stop>
+                <option v-for="m in SPRITE_MOTIONS" :key="m" :value="m">{{ m }}</option>
+              </select>
+            </label>
+            <label v-if="n.params.motion !== 'None'">speed <NumSlider :min="0" :max="3" :step="0.05" :model-value="n.params.speed" @update:model-value="n.params.speed = $event" @commit="persist" /></label>
+            <label v-if="n.params.motion !== 'None' && n.params.motion !== 'Spin'">amount <NumSlider :min="0" :max="0.5" :step="0.01" :model-value="n.params.amp" @update:model-value="n.params.amp = $event" @commit="persist" /></label>
+            <label>auto-spin <NumSlider :min="-2" :max="2" :step="0.05" :model-value="n.params.spin" @update:model-value="n.params.spin = $event" @commit="persist" /></label>
+            <div class="sprite-sheet">
+              <span class="portal-lbl">Sprite-sheet (frames)</span>
+              <label>cols <NumSlider :min="1" :max="16" :step="1" :model-value="n.params.cols" @update:model-value="n.params.cols = $event" @commit="persist" /></label>
+              <label>rows <NumSlider :min="1" :max="16" :step="1" :model-value="n.params.rows" @update:model-value="n.params.rows = $event" @commit="persist" /></label>
+              <label v-if="(n.params.cols || 1) * (n.params.rows || 1) > 1">fps <NumSlider :min="1" :max="30" :step="1" :model-value="n.params.fps" @update:model-value="n.params.fps = $event" @commit="persist" /></label>
             </div>
           </template>
 
