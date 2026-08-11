@@ -9,6 +9,7 @@ export const FILTER_SLUGS = [
   'warp', 'rolling-shutter', 'feedback', 'interlace', 'painterly', 'film-tone',
   'blur', 'brightness-contrast', 'shaky-film', 'fps-limiter', 'funhouse-mirror', 'stained-glass',
   'birefringence', 'curves', 'twist', 'wind', 'liquid-metal', 'tiling',
+  'polaroid', 'ink-bleed',
 ]
 export const FILTER_SLUG_SET = new Set(FILTER_SLUGS)
 export function isFilterSketch(sketch) {

@@ -1,0 +1,7 @@
+{
+  "title": "Ink Bleed",
+  "description": "Read a live source as ink on wet paper and let the water run it. A persistent ink field is re-inked from the source each frame, then the water advects it along a chosen direction, spreads it sideways by capillary blur and breaks the leading edge into feathered fingers — so darks bloom and drip while the drawing keeps redrawing itself underneath. Carries the source colour into the runs or bleeds mono black; water direction, flow speed, capillary spread, wetness, inkiness, edge feather and paper colour are live. Runs the camera, a dropped photo or clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": ["filter", "ink", "bleed", "watercolour", "distort"],
+  "tech": ["canvas2d"],
+  "created": "2026-08-11"
+}
