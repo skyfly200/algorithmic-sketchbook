@@ -178,6 +178,7 @@ const PARAM_RANGES = {
   sprite: { x: [0, 1], y: [0, 1], scale: [0.02, 2], rotate: [-180, 180], opacity: [0, 1] },
 }
 const SPRITE_MOTIONS = ['None', 'Drift', 'Orbit', 'Bounce', 'Float', 'Spin']
+const TEXT_TRANSITIONS = ['None', 'Fade', 'Slide L', 'Slide R', 'Rise', 'Drop', 'Zoom', 'Typewriter']
 // Fallback font list (generic families + common web-safe faces) used until the
 // user loads their real installed fonts via the Local Font Access API.
 const TEXT_FONTS = [
@@ -415,7 +416,7 @@ function addNode(type) {
                   : type === 'media'
                     ? { mode: 'camera', mediaId: null }
                     : type === 'text'
-                      ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false }
+                      ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false, seqMode: 'off', lyrics: '', lineDur: 3, loopSeq: true, transition: 'None', transDur: 0.4 }
                       : type === 'sprite'
                         ? { src: null, name: '', x: 0.5, y: 0.5, scale: 0.4, rotate: 0, opacity: 1, spin: 0, motion: 'None', speed: 0.5, amp: 0.2, cols: 1, rows: 1, fps: 12 }
                       : type === 'portal'
@@ -1708,6 +1709,69 @@ function spriteImg(node) {
   }
   return s.spriteImg
 }
+// --- text-over-time (lyrics) sequencing ------------------------------------
+// A Text node can march through a list of lines over time — plain lyrics or
+// `[mm:ss]`-timecoded — advancing on a fixed cadence or on each detected beat,
+// with an entrance/exit transition (fade / slide / rise / zoom / typewriter).
+let beatCounter = 0   // ++ on every detected beat (drives 'advance on beat')
+let lastBeatAt = 0    // seconds of the last beat, for the transition timing
+function parseLyrics(str, lineDur) {
+  const raw = String(str || '').split('\n').map((s) => s.trim()).filter(Boolean)
+  if (!raw.length) return []
+  let hasTC = false
+  const entries = raw.map((line) => {
+    const m = line.match(/^\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$/)
+    if (m) { hasTC = true; return { t: (+m[1]) * 60 + parseFloat(m[2]), text: m[3] } }
+    return { t: null, text: line }
+  })
+  if (hasTC) {
+    let last = 0
+    for (const e of entries) { if (e.t == null) e.t = last + lineDur; last = e.t }
+    entries.sort((a, b) => a.t - b.t)
+  } else {
+    entries.forEach((e, i) => { e.t = i * lineDur })
+  }
+  return entries
+}
+function textSequence(node) {
+  const p = node.params
+  if (!p.seqMode || p.seqMode === 'off') return null
+  const lineDur = p.lineDur ?? 3
+  const entries = parseLyrics(p.lyrics, lineDur)
+  if (!entries.length) return null
+  const trans = p.transition || 'None'
+  const td = Math.max(0.05, p.transDur ?? 0.4)
+  const now = performance.now() / 1000
+  let idx, tin, tout
+  if (p.seqMode === 'beat') {
+    idx = beatCounter % entries.length
+    tin = Math.min(1, (now - lastBeatAt) / td)
+    tout = 1
+  } else {
+    const total = entries[entries.length - 1].t + lineDur
+    let clock = now
+    if (p.loopSeq !== false && total > 0) clock %= total
+    idx = 0
+    for (let i = 0; i < entries.length; i++) { if (entries[i].t <= clock + 1e-4) idx = i; else break }
+    const next = entries[idx + 1]
+    const segEnd = next ? next.t : total
+    tin = Math.min(1, (clock - entries[idx].t) / td)
+    tout = Math.min(1, (segEnd - clock) / td)
+  }
+  const vis = Math.max(0, Math.min(tin, tout))
+  const eio = (v) => 1 - Math.pow(1 - Math.max(0, Math.min(1, v)), 2)
+  const inA = 1 - eio(tin), outA = 1 - eio(tout) // 1 while off-screen, 0 while settled
+  let text = entries[idx].text, dx = 0, dy = 0, scale = 1, alpha = 1
+  if (trans === 'Fade') alpha = vis
+  else if (trans === 'Slide L') { dx = inA * 0.6 - outA * 0.6; alpha = vis }
+  else if (trans === 'Slide R') { dx = -inA * 0.6 + outA * 0.6; alpha = vis }
+  else if (trans === 'Rise') { dy = inA * 0.4 - outA * 0.4; alpha = vis }
+  else if (trans === 'Drop') { dy = -inA * 0.4 + outA * 0.4; alpha = vis }
+  else if (trans === 'Zoom') { scale = 0.4 + 0.6 * Math.min(1, tin); alpha = vis }
+  else if (trans === 'Typewriter') { text = text.slice(0, Math.floor(text.length * Math.min(1, tin))); alpha = Math.min(1, tout) }
+  return { text, dx, dy, scale, alpha }
+}
+
 function pickSpriteFile(node) {
   const inp = document.createElement('input')
   inp.type = 'file'; inp.accept = 'image/*'
@@ -1912,7 +1976,7 @@ function numericParamsOfEffect(id) {
 const beat = createBeatDetector()
 const micOn = ref(false)
 let pendingBeat = false
-beat.onBeat(() => (pendingBeat = true))
+beat.onBeat(() => { pendingBeat = true; beatCounter++; lastBeatAt = performance.now() / 1000 })
 async function toggleMic() {
   if (micOn.value) {
     beat.stop()
@@ -2320,20 +2384,25 @@ function evalNode(node) {
     const p = node.params
     // numeric params read through pval() so wired inputs modulate them live
     const hue = pval(node, 'hue')
+    // lyrics/text-over-time sequencing (null when off): overrides the drawn
+    // string and adds an entrance/exit transform + alpha
+    const seq = textSequence(node)
     if (p.bg) { octx.fillStyle = '#000'; octx.fillRect(0, 0, W, H) }
     else octx.clearRect(0, 0, W, H)
     const px = Math.max(4, pval(node, 'size') * H)
     octx.save()
     octx.translate(pval(node, 'x') * W, pval(node, 'y') * H)
+    if (seq) { octx.translate(seq.dx * W, seq.dy * H); if (seq.scale !== 1) octx.scale(seq.scale, seq.scale) }
     octx.rotate(((pval(node, 'rotate') ?? 0) * Math.PI) / 180)
     octx.font = `${p.italic ? 'italic ' : ''}${Math.round(pval(node, 'weight'))} ${px}px "${p.font || 'sans-serif'}"`
     octx.textAlign = 'center'
     octx.textBaseline = 'middle'
+    octx.globalAlpha = seq ? Math.max(0, Math.min(1, seq.alpha)) : 1
     octx.fillStyle = hsvCss(hue, p.sat ?? 82, p.val ?? 96)
     if (p.glow > 0.01) { octx.shadowColor = hsvCss(hue, 100, 100); octx.shadowBlur = px * 0.4 * p.glow }
     // letter-spacing (tracking) drawn glyph-by-glyph; multiple lines stacked
     const track = (pval(node, 'tracking') ?? 0) * px
-    const lines = String(p.text ?? '').split('\n')
+    const lines = String((seq ? seq.text : p.text) ?? '').split('\n')
     const lineH = px * 1.18
     const top = -(lineH * (lines.length - 1)) / 2
     lines.forEach((line, li) => {
@@ -4521,6 +4590,27 @@ onBeforeUnmount(() => {
             <label class="chk"><input type="checkbox" v-model="n.params.italic" @change="persist" @pointerdown.stop /> italic</label>
             <label class="chk"><input type="checkbox" v-model="n.params.bg" @change="persist" @pointerdown.stop /> black background</label>
             <label>glow <NumSlider :min="0" :max="1.5" :step="0.05" :model-value="n.params.glow" @update:model-value="n.params.glow = $event" @commit="persist" /></label>
+            <div class="seq-block">
+              <label>text over time
+                <select :value="n.params.seqMode || 'off'" @change="n.params.seqMode = $event.target.value; persist()" @pointerdown.stop>
+                  <option value="off">off (static)</option>
+                  <option value="timed">timed lyrics</option>
+                  <option value="beat">advance on beat</option>
+                </select>
+              </label>
+              <template v-if="n.params.seqMode && n.params.seqMode !== 'off'">
+                <textarea class="text-in" rows="3" :value="n.params.lyrics" placeholder="one line per lyric&#10;optional [mm:ss] timecodes" @input="n.params.lyrics = $event.target.value; persist()" @pointerdown.stop @keydown.stop></textarea>
+                <label v-if="n.params.seqMode === 'timed'">seconds/line <NumSlider :min="0.3" :max="12" :step="0.1" :model-value="n.params.lineDur ?? 3" @update:model-value="n.params.lineDur = $event" @commit="persist" /></label>
+                <label v-if="n.params.seqMode === 'timed'" class="chk"><input type="checkbox" :checked="n.params.loopSeq !== false" @change="n.params.loopSeq = $event.target.checked; persist()" @pointerdown.stop /> loop</label>
+                <label>transition
+                  <select :value="n.params.transition || 'None'" @change="n.params.transition = $event.target.value; persist()" @pointerdown.stop>
+                    <option v-for="tr in TEXT_TRANSITIONS" :key="tr" :value="tr">{{ tr }}</option>
+                  </select>
+                </label>
+                <label v-if="(n.params.transition || 'None') !== 'None'">transition time <NumSlider :min="0.05" :max="2" :step="0.05" :model-value="n.params.transDur ?? 0.4" @update:model-value="n.params.transDur = $event" @commit="persist" /></label>
+                <div class="shape-hint">One line per lyric. Prefix with <b>[mm:ss]</b> to pin a line to a time; “advance on beat” needs the mic on.</div>
+              </template>
+            </div>
           </template>
           <template v-if="n.type === 'portal'">
             <div class="portal-grid">
