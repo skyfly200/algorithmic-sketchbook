@@ -1,0 +1,7 @@
+{
+  "title": "Azulejos",
+  "description": "The blue-and-white glazed ceramic tiles of Spain and Portugal, generated procedurally. Each tile carries an 8-fold rosette with diagonal stems linking to corner buds so the motif runs continuously across the wall, framed by a painted border and set in grout. Cobalt on cream, polychrome Spanish (blue, ochre and terracotta) or manganese purple; a soft glaze sheen sweeps across the fired surface and the mic nudges its brightness. Tiles across, rosette points, ornament, grout and motif drift are live.",
+  "tags": ["pattern", "tiles", "azulejo", "ceramic", "generative"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-08-11"
+}

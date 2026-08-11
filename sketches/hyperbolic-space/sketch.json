@@ -1,0 +1,7 @@
+{
+  "title": "Hyperbolic Space",
+  "description": "An infinite {p,q} tiling drawn in the Poincaré disk — the conformal model of the hyperbolic plane, where straight lines bow into arcs and equal tiles shrink toward the rim. Each pixel is folded back into one fundamental triangle of the (2,p,q) reflection group by two mirror lines and a circle inversion, and the reflection count paints the tiles and their geodesic net. A drifting SU(1,1) Möbius transform glides the camera endlessly through the negatively-curved space. Polygon sides, meeting order, glide, turn, edge ink and depth glow are live; the mic drives the glow.",
+  "tags": ["hyperbolic", "geometry", "tiling", "poincare", "generative"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-08-11"
+}
