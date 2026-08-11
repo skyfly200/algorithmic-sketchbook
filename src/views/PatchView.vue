@@ -658,6 +658,177 @@ function randomizeLook() {
   showToast('Randomized the patch')
 }
 
+// --- natural-language patch designer -------------------------------------
+// Turn a plain-English (or spoken) description into a wired patch. This is a
+// local, deterministic parser — no network, no model call — that scans the
+// text for known effect/filter names (plus a handful of synonyms), a source
+// (camera / text), a blend word and control cues, then lays the graph out as
+// sources → blends → filter chain → (mask) → Output. Locked/kept nodes survive.
+const nlOpen = ref(false)
+const nlText = ref('')
+const nlListening = ref(false)
+const nlLast = ref('')
+const NL_EXAMPLES = [
+  'kaleidoscope of a plasma with bloom, react to the beat',
+  'my camera through vhs and chromatic aberration',
+  'liquid metal over noise, screen blend',
+  'the text "BRIGHT WAVES" masked through a slime mold',
+]
+// slug → extra spoken/written phrases that don't appear in the title or slug
+const NL_SYN = {
+  glow: ['bloom', 'halo', 'soft glow'], 'vhs-defects': ['vhs', 'tape', 'video tape'],
+  'rain-window': ['rain', 'rainy', 'raindrops', 'window rain'],
+  kaleidoscope: ['kaleidoscopic', 'mirror'], 'channel-offset': ['rgb split', 'chromatic', 'chromatic aberration', 'colour split', 'color split'],
+  'motion-extraction': ['motion', 'motion extraction', 'echo trails'], pointillism: ['dots', 'stipple', 'pointillist'],
+  halftone: ['comic', 'newspaper', 'print dots'], 'brightness-contrast': ['brightness', 'contrast'],
+  'liquid-metal': ['chrome', 'mercury', 'molten'], 'ink-bleed': ['ink', 'watercolor', 'watercolour', 'bleeding ink'],
+  polaroid: ['old photo', 'vintage photo', 'aged photo'], twist: ['twirl', 'swirl'],
+  'hyperbolic-space': ['hyperbolic', 'poincare'], azulejos: ['azulejo', 'spanish tiles', 'portuguese tiles', 'ceramic tiles'],
+  noise: ['static', 'fractal noise', 'tv snow'], feedback: ['trails', 'feedback loop'],
+  crt: ['old tv', 'scanlines'],
+}
+// word-boundary-ish search; returns match position or -1
+function nlHas(text, phrase) {
+  const p = (phrase || '').trim().toLowerCase()
+  if (p.length < 2) return -1
+  const esc = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const m = new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`, 'i').exec(text)
+  return m ? m.index : -1
+}
+// find catalog options named in the text, earliest mention first, de-duped.
+// Matches on the sketch's title, slug and a small synonym list only — tags are
+// deliberately ignored, since single-word tags ("beat", "metal", "light") match
+// far too eagerly and pull in effects the description never asked for.
+function nlMatch(opts, text) {
+  const found = []
+  for (const s of opts) {
+    const phrases = [s.title.toLowerCase(), s.slug.replace(/-/g, ' '), ...(NL_SYN[s.slug] || [])]
+    let pos = -1
+    for (const ph of phrases) { const i = nlHas(text, ph); if (i >= 0 && (pos < 0 || i < pos)) pos = i }
+    if (pos >= 0) found.push({ s, pos })
+  }
+  found.sort((a, b) => a.pos - b.pos)
+  const seen = new Set()
+  return found.filter((m) => !seen.has(m.s.slug) && seen.add(m.s.slug))
+}
+const NL_BLENDS = [['soft light', 'soft-light'], ['hard light', 'hard-light'], ['color dodge', 'color-dodge'], ['dodge', 'color-dodge'], ['burn', 'color-burn'], ['screen', 'screen'], ['additive', 'add'], ['add', 'add'], ['multiply', 'multiply'], ['overlay', 'overlay'], ['difference', 'difference'], ['lighten', 'lighten'], ['darken', 'darken']]
+const NL_TEXT_DEFAULTS = { font: 'sans-serif', size: 0.2, weight: 800, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false }
+
+function designFromText(raw) {
+  const prompt = (raw ?? nlText.value ?? '').trim()
+  if (!prompt) { showToast('Describe the look you want'); return }
+  const text = prompt.toLowerCase()
+
+  // parse intent
+  const effMatches = nlMatch(effectOptions.value, text)
+  const filtMatches = nlMatch(filterOptions.value, text)
+  let blendMode = 'screen'
+  for (const [w, m] of NL_BLENDS) if (nlHas(text, w) >= 0) { blendMode = m; break }
+  const wantCam = /\b(camera|webcam|selfie|my face|live video|myself|my cam)\b/.test(text)
+  const wantMask = /\b(mask|masked|through the (text|shape|word)|inside the (text|shape)|cut ?out|silhouette|stencil|clipped)\b/.test(text)
+  let quote = raw.match(/["“”'‘’]([^"“”'‘’]{1,60})["“”'‘’]/)
+  let textContent = quote ? quote[1] : null
+  if (!textContent) { const m = text.match(/\b(?:saying|text|title|word[s]?|says|caption)\s+([a-z0-9 ,'!?-]{2,40})/); if (m) textContent = m[1].replace(/\b(over|on|onto|with|through|and|then|masked|blend).*$/, '').trim() }
+  const wantText = !!textContent || /\b(text|title|lyrics|typography|caption|words)\b/.test(text)
+  const wantAudio = /\b(audio|music|beat|bass|mic|sound|react|pulse|rhythm)\b/.test(text)
+  const wantMouse = /\b(mouse|cursor|pointer)\b/.test(text)
+
+  // clear everything except locked / kept nodes (undoable via persist())
+  const keptIds = new Set(nodes.filter((n) => n.locked || n.keep).map((n) => n.id))
+  for (let k = edges.length - 1; k >= 0; k--) if (!keptIds.has(edges[k].from) || !keptIds.has(edges[k].to)) edges.splice(k, 1)
+  for (let k = links.length - 1; k >= 0; k--) if (!keptIds.has(links[k].from) || !keptIds.has(links[k].node)) links.splice(k, 1)
+  for (let k = nodes.length - 1; k >= 0; k--) if (!keptIds.has(nodes[k].id)) { const id = nodes[k].id; nodes.splice(k, 1); disposeRuntime(id); rtState.delete(id) }
+  if (keptIds.size) nextId = Math.max(nextId, ...keptIds) + 1
+
+  const COL = (c) => 60 + c * 240
+  const add = (type, params, c, y) => { const n = reactive({ id: nextId++, type, x: COL(c), y, params }); nodes.push(n); st(n.id); return n }
+  const summary = []
+
+  // sources (col 0, stacked)
+  const sources = []
+  let sy = 80
+  if (wantCam) { sources.push(add('media', { mode: 'camera', mediaId: null }, 0, sy)); summary.push('Camera'); sy += 210 }
+  for (const m of effMatches.slice(0, Math.max(1, 3 - (wantCam ? 1 : 0)))) { sources.push(add('effect', { slug: m.s.slug, seed: randSeed() }, 0, sy)); summary.push(m.s.title); sy += 210 }
+  if (wantText && !wantMask) { sources.push(add('text', { ...NL_TEXT_DEFAULTS, text: (textContent || 'BRIGHT WAVES').toUpperCase() }, 0, sy)); summary.push('Text'); sy += 210 }
+  if (!sources.length) { const def = effectOptions.value[0]; if (def) { sources.push(add('effect', { slug: def.slug, seed: randSeed() }, 0, 80)); summary.push(def.title) } }
+  if (!sources.length) { showToast('No sources available'); return }
+
+  // fold sources together with blends
+  let col = 1, head = sources[0]
+  for (let i = 1; i < sources.length; i++) {
+    const b = add('blend', { mode: blendMode, mix: 0.6 }, col, (head.y + sources[i].y) / 2)
+    edges.push({ from: head.id, to: b.id, port: 0 })
+    edges.push({ from: sources[i].id, to: b.id, port: 1 })
+    head = b; col++
+  }
+  if (sources.length > 1) summary.push(`${blendMode} blend`)
+
+  // filter chain in mention order
+  for (const m of filtMatches.slice(0, 4)) {
+    const f = add('filter', { slug: m.s.slug, seed: randSeed() }, col, head.y)
+    edges.push({ from: head.id, to: f.id, port: 0 })
+    head = f; col++; summary.push(m.s.title)
+  }
+
+  // optional mask: cut the mix through a text or polygon matte
+  if (wantMask) {
+    let matte
+    if (textContent || wantText) matte = add('text', { ...NL_TEXT_DEFAULTS, text: (textContent || 'BRIGHT').toUpperCase(), hue: 0, sat: 0, val: 100, glow: 0 }, col - 1, head.y + 190)
+    else { matte = add('polygon', { points: [[0.3, 0.15], [0.72, 0.28], [0.82, 0.7], [0.4, 0.85], [0.18, 0.5]], feather: 0.12 }, col - 1, head.y + 190); matte.locked = true }
+    const mnode = add('mask', { mode: 'multiply', strength: 1, invert: false }, col, head.y)
+    edges.push({ from: head.id, to: mnode.id, port: 0 })
+    edges.push({ from: matte.id, to: mnode.id, port: 1 })
+    head = mnode; col++; summary.push('Mask')
+  }
+
+  // control node driving the last blend's mix, when there is a blend to drive
+  const blendNodes = nodes.filter((n) => n.type === 'blend' && !keptIds.has(n.id))
+  const ctlTarget = blendNodes[blendNodes.length - 1]
+  if (ctlTarget && wantMouse) {
+    const xy = add('xy', { x: 0.5, y: 0.5, recenter: false, xMin: 0, xMax: 1, yMin: 0, yMax: 1, curve: 'linear', padW: NODE_W, padH: THUMB_H }, 0, head.y + 250)
+    links.push({ from: xy.id, srcPort: 0, node: ctlTarget.id, param: 'mix' }); summary.push('XY→mix')
+  } else if (ctlTarget && wantAudio) {
+    const inp = add('input', { source: 'audio.pulse', scale: 1, offset: 0, invert: false, curve: 'linear' }, 0, head.y + 250)
+    links.push({ from: inp.id, srcPort: 0, node: ctlTarget.id, param: 'mix' }); summary.push('Audio→mix')
+  }
+
+  // Output (reuse a kept one)
+  const out = nodes.find((n) => n.type === 'output' && keptIds.has(n.id)) || add('output', {}, col, head.y)
+  for (let k = edges.length - 1; k >= 0; k--) if (edges[k].to === out.id) edges.splice(k, 1)
+  edges.push({ from: head.id, to: out.id, port: 0 })
+
+  selected.value = null
+  nlLast.value = summary.join(' → ') + ' → Output'
+  persist()
+  showToast('Built: ' + nlLast.value)
+  nextTick(() => layoutTick.value++)
+  nlOpen.value = false
+}
+
+// spoken input via the Web Speech API (Chromium); falls back with a toast
+let nlRecog = null
+function nlVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+  if (!SR) { showToast('Voice input needs a Chromium browser'); return }
+  if (nlListening.value) { nlRecog?.stop(); return }
+  nlRecog = new SR()
+  nlRecog.lang = 'en-US'; nlRecog.interimResults = true; nlRecog.continuous = false
+  let finalTxt = ''
+  nlRecog.onresult = (e) => {
+    let interim = ''
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i]
+      if (r.isFinal) finalTxt += r[0].transcript
+      else interim += r[0].transcript
+    }
+    nlText.value = (finalTxt + ' ' + interim).trim()
+  }
+  nlRecog.onerror = () => { nlListening.value = false }
+  nlRecog.onend = () => { nlListening.value = false }
+  nlListening.value = true
+  try { nlRecog.start() } catch { nlListening.value = false }
+}
+
 // All nodes that feed (directly or transitively) into `id` via video edges.
 function ancestorsOf(id) {
   const anc = new Set()
@@ -3379,6 +3550,35 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-format-text" variant="tonal" size="small" title="Add Text (mappable font)" :style="{ color: TYPES.text.color }" @click="addNode('text')" />
         <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
         <v-spacer />
+        <v-menu v-model="nlOpen" :close-on-content-click="false" location="bottom">
+          <template #activator="{ props }">
+            <v-btn v-bind="props" icon="mdi-message-text-outline" variant="text" size="small" title="Describe a patch in words (or speak it) and wire it up" />
+          </template>
+          <v-card width="360" class="nl-card">
+            <div class="nl-title">Describe a patch</div>
+            <v-textarea
+              v-model="nlText"
+              rows="3" auto-grow variant="outlined" density="compact" hide-details autofocus
+              placeholder="e.g. kaleidoscope of a plasma with bloom, react to the beat"
+              @keydown.enter.exact.prevent="designFromText(nlText)"
+            />
+            <div class="nl-row">
+              <v-btn
+                :icon="nlListening ? 'mdi-microphone' : 'mdi-microphone-outline'"
+                :color="nlListening ? 'primary' : undefined"
+                variant="text" size="small" :title="nlListening ? 'Stop listening' : 'Speak your description'"
+                @click="nlVoice"
+              />
+              <div class="nl-spacer" />
+              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-auto-fix" @click="designFromText(nlText)">Build</v-btn>
+            </div>
+            <div class="nl-examples">
+              <span class="nl-ex-label">Try:</span>
+              <button v-for="ex in NL_EXAMPLES" :key="ex" class="nl-ex" @click="nlText = ex; designFromText(ex)">{{ ex }}</button>
+            </div>
+            <div v-if="nlLast" class="nl-last">Last: {{ nlLast }}</div>
+          </v-card>
+        </v-menu>
         <v-btn data-tour="patch-random" icon="mdi-dice-multiple" variant="text" size="small" title="New random patch — deal out a whole new graph (undoable)" @click="randomPatch" />
         <v-btn icon="mdi-shuffle-variant" variant="text" size="small" title="Randomize the look — reseed & shuffle every node's params, keep the wiring (undoable)" @click="randomizeLook" />
         <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
@@ -4282,6 +4482,18 @@ onBeforeUnmount(() => {
 .stage { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
 .sources { position: absolute; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none; }
 .sources iframe, .sources video { width: 384px; height: 216px; border: 0; }
+.nl-card { padding: 12px; background: #14161e; }
+.nl-title { font-size: 0.82rem; font-weight: 600; color: #cdd3e6; margin-bottom: 8px; }
+.nl-row { display: flex; align-items: center; margin-top: 8px; }
+.nl-spacer { flex: 1; }
+.nl-examples { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.nl-ex-label { font-size: 0.68rem; color: #7f879c; }
+.nl-ex {
+  text-align: left; font-size: 0.72rem; color: #9db0ff; background: rgba(124,140,255,0.08);
+  border: 1px solid rgba(124,140,255,0.18); border-radius: 6px; padding: 4px 7px; cursor: pointer;
+}
+.nl-ex:hover { background: rgba(124,140,255,0.16); }
+.nl-last { margin-top: 10px; font-size: 0.7rem; color: #7f879c; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px; }
 .toolbar {
   position: absolute; top: 0; left: 0; right: 0; z-index: 30;
   display: flex; flex-direction: column; gap: 2px; padding: 6px 12px 8px;
