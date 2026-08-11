@@ -57,6 +57,10 @@ function seedAgents() {
   agents = new Float32Array(nAgents * 3)
   srcX = W / 2; srcY = H / 2
   for (let i = 0; i < nAgents; i++) respawn(i * 3)
+  // Break the perfect central symmetry so the colony fans out organically
+  // instead of collapsing onto the four grid axes (the classic "cross"): scatter
+  // a few faint trail specks for the first agents to chase in random directions.
+  if (trail) { trail.fill(0); for (let i = 0; i < W * H; i++) if (rt.rng() < 0.03) trail[i] = rt.rng() * rt.rng() * 0.5 }
 }
 // (Re)seat an agent at the inoculation point, facing outward — used to launch
 // the colony and to recycle explorers that reach the dish edge, so a steady
@@ -66,7 +70,9 @@ function respawn(o) {
   const r = Math.sqrt(rt.rng()) * Math.min(W, H) * 0.06
   agents[o] = srcX + Math.cos(a) * r
   agents[o + 1] = srcY + Math.sin(a) * r
-  agents[o + 2] = a // face outward
+  // face roughly outward but with a wide spread, so they don't all march along
+  // the radial axes and lock into a cross
+  agents[o + 2] = a + (rt.rng() - 0.5) * 1.8
 }
 function resize() {
   canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
@@ -180,10 +186,12 @@ function diffuse() {
     const y0 = ((y - 1 + H) % H) * W, y1 = y * W, y2 = ((y + 1) % H) * W
     for (let x = 0; x < W; x++) {
       const x0 = (x - 1 + W) % W, x2 = (x + 1) % W
-      const s = trail[y0 + x0] + trail[y0 + x] + trail[y0 + x2] +
-        trail[y1 + x0] + trail[y1 + x] + trail[y1 + x2] +
-        trail[y2 + x0] + trail[y2 + x] + trail[y2 + x2]
-      tmp[y1 + x] = (s / 9) * dk
+      // Gaussian 3x3 (1 2 1 / 2 4 2 / 1 2 1) — far more isotropic than a flat box
+      // blur, so a point source no longer spreads into an axis-aligned cross.
+      const s = trail[y0 + x0] + 2 * trail[y0 + x] + trail[y0 + x2] +
+        2 * trail[y1 + x0] + 4 * trail[y1 + x] + 2 * trail[y1 + x2] +
+        trail[y2 + x0] + 2 * trail[y2 + x] + trail[y2 + x2]
+      tmp[y1 + x] = (s / 16) * dk
     }
   }
   trail.set(tmp)
