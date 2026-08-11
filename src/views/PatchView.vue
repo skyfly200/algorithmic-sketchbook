@@ -2383,15 +2383,24 @@ function evalNode(node) {
     // node.params.points (normalized [x,y]); drag them on the output. Wire this
     // node's output into a Mask node's matte input to cut a picture to the
     // shape (the Mask node's own "invert matte" flips it — projection mapping).
-    const pts = node.params.points || []
-    if (pts.length >= 3) {
-      const feather = pval(node, 'feather') || 0
-      octx.fillStyle = '#fff'
-      if (feather > 0.001) octx.filter = `blur(${feather * 0.12 * Math.min(W, H)}px)`
-      polyPath(octx, pts, false)
-      octx.fill('nonzero')
-      octx.filter = 'none'
+    const feather = pval(node, 'feather') || 0
+    octx.fillStyle = '#fff'
+    if (feather > 0.001) octx.filter = `blur(${feather * 0.12 * Math.min(W, H)}px)`
+    if (node.params.svg?.d) {
+      // an imported SVG matte: fit its bbox into the frame (even-odd for holes)
+      const { d, bbox } = node.params.svg
+      const scale = 0.9 * Math.min(W / bbox.w, H / bbox.h)
+      const dx = (W - bbox.w * scale) / 2 - bbox.x * scale
+      const dy = (H - bbox.h * scale) / 2 - bbox.y * scale
+      octx.save()
+      octx.setTransform(scale, 0, 0, scale, dx, dy)
+      try { octx.fill(new Path2D(d), 'evenodd') } catch { /* malformed path */ }
+      octx.restore()
+    } else {
+      const pts = node.params.points || []
+      if (pts.length >= 3) { polyPath(octx, pts, false); octx.fill('nonzero') }
     }
+    octx.filter = 'none'
   } else if (node.type === 'blend') {
     // "swap" flips which input is the base and which is composited on top.
     const a = inputCanvas(node, node.params.swap ? 1 : 0)
@@ -2831,6 +2840,73 @@ function resetShape(id) {
   const n = nodes.find((x) => x.id === id)
   if (!n) return
   n.params.points = [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]
+  delete n.params.svg
+  persist()
+}
+
+// --- SVG import for the Polygon (matte-shape) node -------------------------
+// An imported SVG becomes a filled matte: all of its shapes are flattened into
+// one path (holes preserved via even-odd fill) and stored as { d, bbox }. The
+// render path fits it into the frame; feather still applies. Clearing it drops
+// back to the editable polygon points.
+function svgElToPath(el) {
+  const t = el.tagName.toLowerCase()
+  const f = (a) => parseFloat(el.getAttribute(a) || '0')
+  if (t === 'path') return el.getAttribute('d') || ''
+  if (t === 'rect') { const x = f('x'), y = f('y'), w = f('width'), h = f('height'); return w && h ? `M${x} ${y}h${w}v${h}h${-w}Z` : '' }
+  if (t === 'circle') { const cx = f('cx'), cy = f('cy'), r = f('r'); return r ? `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0Z` : '' }
+  if (t === 'ellipse') { const cx = f('cx'), cy = f('cy'), rx = f('rx'), ry = f('ry'); return rx && ry ? `M${cx - rx} ${cy}a${rx} ${ry} 0 1 0 ${2 * rx} 0a${rx} ${ry} 0 1 0 ${-2 * rx} 0Z` : '' }
+  if (t === 'line') return `M${f('x1')} ${f('y1')}L${f('x2')} ${f('y2')}`
+  if (t === 'polyline' || t === 'polygon') {
+    const nums = (el.getAttribute('points') || '').trim().split(/[\s,]+/).map(Number)
+    if (nums.length < 4) return ''
+    let d = `M${nums[0]} ${nums[1]}`
+    for (let i = 2; i < nums.length - 1; i += 2) d += `L${nums[i]} ${nums[i + 1]}`
+    return t === 'polygon' ? d + 'Z' : d
+  }
+  return ''
+}
+function svgToPathData(text) {
+  const doc = new DOMParser().parseFromString(text, 'image/svg+xml')
+  if (doc.querySelector('parsererror')) return null
+  const els = doc.querySelectorAll('path,rect,circle,ellipse,line,polyline,polygon')
+  const parts = []
+  for (const el of els) { const d = svgElToPath(el); if (d) parts.push(d) }
+  if (!parts.length) return null
+  const combined = parts.join(' ')
+  // measure the combined path's bounding box via a throwaway offscreen SVG
+  const NS = 'http://www.w3.org/2000/svg'
+  const tmp = document.createElementNS(NS, 'svg')
+  tmp.setAttribute('style', 'position:absolute;left:-99999px;top:0;width:10px;height:10px;overflow:hidden')
+  const pth = document.createElementNS(NS, 'path'); pth.setAttribute('d', combined); tmp.appendChild(pth)
+  document.body.appendChild(tmp)
+  let bb; try { bb = pth.getBBox() } catch { bb = null } finally { document.body.removeChild(tmp) }
+  if (!bb || !bb.width || !bb.height) return null
+  return { d: combined, bbox: { x: bb.x, y: bb.y, w: bb.width, h: bb.height } }
+}
+function importSvgToShape(id) {
+  const n = nodes.find((x) => x.id === id)
+  if (!n) return
+  const inp = document.createElement('input')
+  inp.type = 'file'; inp.accept = '.svg,image/svg+xml'
+  inp.onchange = () => {
+    const file = inp.files?.[0]; if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const svg = svgToPathData(String(reader.result))
+      if (!svg) { showToast('No usable shapes in that SVG'); return }
+      n.params.svg = svg
+      persist(); showToast('Imported SVG shape')
+    }
+    reader.onerror = () => showToast('Could not read the file')
+    reader.readAsText(file)
+  }
+  inp.click()
+}
+function clearSvgShape(id) {
+  const n = nodes.find((x) => x.id === id)
+  if (!n) return
+  delete n.params.svg
   persist()
 }
 
@@ -4415,10 +4491,15 @@ onBeforeUnmount(() => {
               feather <NumSlider :min="0" :max="0.5" :step="0.01" :model-value="n.params.feather" @update:model-value="n.params.feather = $event" @commit="persist" />
             </label>
             <div class="shape-row">
-              <button class="shape-btn" :class="{ on: maskEdit }" @pointerdown.stop @click="maskEdit = !maskEdit">{{ maskEdit ? 'editing points' : 'edit points' }}</button>
+              <button v-if="!n.params.svg" class="shape-btn" :class="{ on: maskEdit }" @pointerdown.stop @click="maskEdit = !maskEdit">{{ maskEdit ? 'editing points' : 'edit points' }}</button>
+              <button class="shape-btn" @pointerdown.stop @click="importSvgToShape(n.id)">import SVG</button>
+              <button v-if="n.params.svg" class="shape-btn" @pointerdown.stop @click="clearSvgShape(n.id)">clear SVG</button>
               <button class="shape-btn" @pointerdown.stop @click="resetShape(n.id)">reset</button>
             </div>
-            <div class="shape-hint">Turn on “edit points”, then drag the corners on the output. Double-click an edge to add a point, a point to remove it.</div>
+            <div class="shape-hint">
+              <template v-if="n.params.svg">Showing an imported SVG (holes preserved). “clear SVG” returns to the editable polygon.</template>
+              <template v-else>Turn on “edit points”, then drag the corners on the output. Double-click an edge to add a point, a point to remove it. Or “import SVG” to use a vector file as the matte.</template>
+            </div>
           </template>
 
           <template v-if="n.type === 'mask'">
