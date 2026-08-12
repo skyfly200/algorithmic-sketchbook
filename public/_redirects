@@ -1,6 +1,16 @@
-# Netlify SPA fallback. Real files (the built app shell, /assets/*, and every
-# /sketches/<slug>/ page) are served directly; any other path — a bookmarked or
-# shared deep link like /present or /present/<slug> that lost its "#/" — is
-# served the app shell (200, no redirect) instead of Netlify's branded 404. A
-# tiny shim in index.html then moves that path into the hash route.
-/*  /index.html  200
+# Netlify redirect rules (evaluated top-down; real files are always served
+# first, so these only fire for paths with no matching file).
+#
+# 1) Asset guard: a MISSING file under /assets/ (e.g. a stale hashed chunk
+#    referenced by a cached shell, or an asset still propagating right after a
+#    deploy) must return a real 404 — NOT the HTML shell. Returning HTML for a
+#    module script triggers "Failed to load module script … MIME type text/html"
+#    and a blank screen. This rule keeps such requests honest.
+/assets/*   /assets/:splat   404
+/sw.js      /sw.js           404
+
+# 2) SPA fallback: any other non-file path — a bookmarked/shared deep link like
+#    /present or /present/<slug> that lost its "#/" — is served the app shell
+#    (200, no redirect) instead of Netlify's branded 404. The shim in index.html
+#    then moves that path into the hash route.
+/*          /index.html      200

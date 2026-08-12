@@ -8,10 +8,8 @@
 [build.environment]
   NODE_VERSION = "22"
 
-# SPA fallback: serve the app shell for any path that isn't a real file (so a
-# deep link like /present/<slug> that lost its "#/" doesn't hit Netlify's 404).
-# Mirrors public/_redirects; the shim in index.html moves the path into the hash.
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
+# SPA fallback + asset guard live in public/_redirects (copied to the publish
+# root), where the ordered rules are evaluated top-down. We keep them there
+# rather than here so the asset-guard rule reliably precedes the catch-all —
+# netlify.toml redirects are processed before _redirects, so splitting them
+# across both files would let the catch-all shadow the guard.
