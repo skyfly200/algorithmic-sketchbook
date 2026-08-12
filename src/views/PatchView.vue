@@ -4460,10 +4460,10 @@ onBeforeUnmount(() => {
                 v-if="effectControls.has(n.id)"
                 class="knob-btn"
                 :class="{ on: showParams.get(n.id) }"
-                title="Parameters & input mappings"
+                :title="showParams.get(n.id) ? 'Hide parameters & input mappings' : 'Show parameters & input mappings'"
                 @pointerdown.stop
                 @click="toggleParams(n.id)"
-              >⚙</button>
+              ><v-icon :icon="showParams.get(n.id) ? 'mdi-eye-outline' : 'mdi-eye-off-outline'" size="14" /></button>
             </div>
             <!-- beat trigger: drop an Input wire here to fire beats on this
                  effect from any source (rising edge of the signal) -->
@@ -5022,6 +5022,7 @@ onBeforeUnmount(() => {
 .knob-btn {
   flex: 0 0 auto; width: 22px; height: 22px; border-radius: 4px; cursor: pointer;
   background: #12141c; color: #cdd3e0; border: 1px solid #333; font-size: 12px;
+  display: flex; align-items: center; justify-content: center;
 }
 .knob-btn.on { border-color: #7c8cff; color: #7c8cff; }
 .params { margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 4px; display: flex; flex-direction: column; gap: 3px; }
