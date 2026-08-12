@@ -3071,11 +3071,13 @@ function currentEffects() {
   for (const [id, c] of effectControls) out[id] = { values: { ...c.values }, mappings: c.mappings.map((m) => ({ ...m })), state: c.state ?? null }
   return out
 }
-function captureCue() {
-  const t = cues.length ? Math.max(...cues.map((c) => c.time || 0)) + 8 : 0
-  cues.push({ id: Date.now().toString(36), name: `Cue ${cues.length + 1}`, time: t, fade: 1, snap: JSON.parse(snapshot()), effects: currentEffects() })
+function captureCueAt(t) {
+  cues.push({ id: Date.now().toString(36), name: `Cue ${cues.length + 1}`, time: +Math.max(0, t).toFixed(1), fade: 1, snap: JSON.parse(snapshot()), effects: currentEffects() })
   activeCue.value = cues.length - 1
   persistShow()
+}
+function captureCue() {
+  captureCueAt(cues.length ? Math.max(...cues.map((c) => c.time || 0)) + 8 : 0)
 }
 function updateCue(i) { cues[i].snap = JSON.parse(snapshot()); cues[i].effects = currentEffects(); persistShow() }
 function deleteCue(i) {
@@ -3222,11 +3224,30 @@ function processTimeline() {
   }
 }
 // Timeline strip: a little headroom past the last cue so its marker is draggable.
-const tlSpan = computed(() => Math.max(showLength(), 20))
+const tlSpan = computed(() => Math.max(showLength() + 4, 20))
 function pct(t) { return (t / tlSpan.value) * 100 }
+function fmtTime(t) {
+  t = Math.round(t)
+  return t >= 60 ? `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}` : `${t}s`
+}
+// Evenly spaced ruler ticks at a "nice" interval (~8 across the span).
+const tlTicks = computed(() => {
+  const span = tlSpan.value
+  const steps = [1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600]
+  const step = steps.find((s) => s >= span / 8) || 1200
+  const ticks = []
+  for (let t = 0; t <= span + 1e-6; t += step) ticks.push({ t, pct: (t / span) * 100 })
+  return ticks
+})
 function tlSeek(e) {
   const r = e.currentTarget.getBoundingClientRect()
   seekShow(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * tlSpan.value)
+}
+// Double-click an empty spot on the timeline to capture a cue (keyframe) there.
+function tlAddCueAt(e) {
+  const r = e.currentTarget.getBoundingClientRect()
+  const t = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * tlSpan.value
+  captureCueAt(t)
 }
 let tlDrag = null
 function tlCueMove(e) {
@@ -4165,20 +4186,32 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-skip-next" size="small" variant="text" :disabled="activeCue >= cues.length - 1" title="Next cue" @click="nextCue" />
         <span class="show-hint">Click a cue to jump to it. GO steps through in order.</span>
       </div>
-      <div v-else class="show-transport">
-        <v-btn :icon="showPlaying ? 'mdi-pause' : 'mdi-play'" size="small" variant="text" @click="showPlaying ? pauseShow() : playShow()" />
-        <v-btn icon="mdi-stop" size="small" variant="text" title="Stop and rewind" @click="stopShow" />
-        <v-btn :icon="showLoop ? 'mdi-repeat' : 'mdi-repeat-off'" size="small" variant="text" :color="showLoop ? 'primary' : undefined" title="Loop the show" @click="showLoop = !showLoop" />
-        <span class="show-clock">{{ playhead.toFixed(1) }}s / {{ showLength().toFixed(1) }}s</span>
-        <div class="tl-track" @pointerdown="tlSeek($event)">
-          <div class="tl-fill" :style="{ width: pct(playhead) + '%' }" />
-          <div
-            v-for="(c, i) in cues" :key="c.id"
-            class="tl-cue" :class="{ on: activeCue === i }"
-            :style="{ left: pct(c.time) + '%' }"
-            :title="c.name + ' @ ' + c.time + 's'"
-            @pointerdown.stop="tlCueDown(i, $event)"
-          />
+      <div v-else class="show-transport show-transport--tl">
+        <div class="tl-controls">
+          <v-btn :icon="showPlaying ? 'mdi-pause' : 'mdi-play'" size="small" variant="text" @click="showPlaying ? pauseShow() : playShow()" />
+          <v-btn icon="mdi-stop" size="small" variant="text" title="Stop and rewind" @click="stopShow" />
+          <v-btn :icon="showLoop ? 'mdi-repeat' : 'mdi-repeat-off'" size="small" variant="text" :color="showLoop ? 'primary' : undefined" title="Loop the show" @click="showLoop = !showLoop" />
+          <span class="show-clock">{{ playhead.toFixed(1) }}s / {{ showLength().toFixed(1) }}s</span>
+          <span class="tl-hint">double-click the timeline to drop a keyframe cue · drag a marker to retime it</span>
+        </div>
+        <!-- ruler + keyframe lane: cues are keyframes; params ramp between them -->
+        <div class="tl-timeline">
+          <div class="tl-ruler">
+            <div v-for="tk in tlTicks" :key="tk.t" class="tl-tick" :style="{ left: tk.pct + '%' }"><span>{{ fmtTime(tk.t) }}</span></div>
+          </div>
+          <div class="tl-track tl-track--tall" @pointerdown="tlSeek($event)" @dblclick="tlAddCueAt($event)">
+            <div v-for="tk in tlTicks" :key="'g' + tk.t" class="tl-grid" :style="{ left: tk.pct + '%' }" />
+            <div class="tl-fill" :style="{ width: pct(playhead) + '%' }" />
+            <div class="tl-playhead" :style="{ left: pct(playhead) + '%' }" />
+            <div
+              v-for="(c, i) in cues" :key="c.id"
+              class="tl-cue tl-cue--tall" :class="{ on: activeCue === i }"
+              :style="{ left: pct(c.time) + '%' }"
+              :title="c.name + ' @ ' + c.time + 's — drag to retime'"
+              @pointerdown.stop="tlCueDown(i, $event)"
+              @dblclick.stop="goCue(i)"
+            ><span class="tl-cue-lbl">{{ i + 1 }}</span></div>
+          </div>
         </div>
       </div>
 
@@ -4927,6 +4960,20 @@ onBeforeUnmount(() => {
 .tl-fill { position: absolute; top: 0; bottom: 0; left: 0; background: rgba(124,140,255,0.22); }
 .tl-cue { position: absolute; top: -1px; bottom: -1px; width: 3px; margin-left: -1.5px; background: #a0e060; cursor: ew-resize; }
 .tl-cue.on { background: #fff; box-shadow: 0 0 6px rgba(255,255,255,0.7); }
+/* Expanded timeline view: a labelled ruler over a taller keyframe lane. */
+.show-transport--tl { flex-direction: column; align-items: stretch; gap: 6px; }
+.tl-controls { display: flex; align-items: center; gap: 6px; }
+.tl-hint { font: 10px system-ui; color: #737b93; margin-left: auto; }
+.tl-timeline { position: relative; padding-top: 14px; }
+.tl-ruler { position: absolute; top: 0; left: 6px; right: 0; height: 12px; }
+.tl-tick { position: absolute; top: 0; transform: translateX(-50%); font: 9px ui-monospace, monospace; color: #808aa6; white-space: nowrap; }
+.tl-tick::after { content: ''; position: absolute; left: 50%; top: 11px; width: 1px; height: 4px; background: #3a4055; }
+.tl-track--tall { height: 40px; }
+.tl-grid { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.05); }
+.tl-playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: #ffd166; box-shadow: 0 0 4px rgba(255,209,102,0.8); }
+.tl-cue--tall { width: 4px; margin-left: -2px; border-radius: 2px; }
+.tl-cue-lbl { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); font: 9px ui-monospace, monospace; color: #0a0b0f; background: #a0e060; border-radius: 3px; padding: 0 3px; pointer-events: none; }
+.tl-cue--tall.on .tl-cue-lbl { background: #fff; }
 .cue-list { overflow-y: auto; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; }
 .show-empty { color: #8a90a0; font: 11px system-ui; padding: 10px 4px; line-height: 1.5; }
 .cue { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; background: #14171f; border: 1px solid transparent; cursor: pointer; }
