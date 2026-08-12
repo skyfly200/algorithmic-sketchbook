@@ -2,6 +2,25 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Static-host deep-link recovery. This app uses hash routing, but a
+      // bookmarked or shared link to a real path (e.g. /present/<slug>) is
+      // served this shell by the host's SPA fallback. Before anything else
+      // loads, move a known app-route path into the hash and reload from the
+      // deployment root, so both the router and the relative asset paths
+      // resolve. Base-aware, so it also works under a subpath (GitHub Pages).
+      (function () {
+        if (location.hash) return
+        var routes = ['present', 'patch', 'mix', 'sketch', 'auto', 'library', 'settings', 'docs']
+        var segs = location.pathname.split('/')
+        var i = 0
+        for (; i < segs.length; i++) { if (routes.indexOf(segs[i]) !== -1) break }
+        if (i >= segs.length) return // no app-route segment — a normal load
+        var base = segs.slice(0, i).join('/') + '/'
+        var route = segs.slice(i).join('/')
+        location.replace(base + '#/' + route + location.search)
+      })()
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bright Waves — Algorithmic Sketchbook</title>
     <meta name="description" content="A curated gallery of interactive computer-graphics experiments — installable and works fully offline." />

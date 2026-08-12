@@ -7,3 +7,11 @@
 
 [build.environment]
   NODE_VERSION = "22"
+
+# SPA fallback: serve the app shell for any path that isn't a real file (so a
+# deep link like /present/<slug> that lost its "#/" doesn't hit Netlify's 404).
+# Mirrors public/_redirects; the shim in index.html moves the path into the hash.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

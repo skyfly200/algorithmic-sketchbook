@@ -1,0 +1,6 @@
+# Netlify SPA fallback. Real files (the built app shell, /assets/*, and every
+# /sketches/<slug>/ page) are served directly; any other path — a bookmarked or
+# shared deep link like /present or /present/<slug> that lost its "#/" — is
+# served the app shell (200, no redirect) instead of Netlify's branded 404. A
+# tiny shim in index.html then moves that path into the hash route.
+/*  /index.html  200
