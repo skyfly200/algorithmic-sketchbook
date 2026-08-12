@@ -198,6 +198,37 @@ async function loadSystemFonts() {
     if (fams.length) { systemFonts.value = fams; showToast(`Loaded ${fams.length} system fonts`) }
   } catch { showToast('Font access was blocked') }
 }
+// Starter shapes for the Polygon (matte) node — normalized [x,y] point rings in
+// 0..1, so a shape can be dropped in and then its corners dragged. Built from a
+// couple of generators plus a few hand-tuned outlines.
+function regPoly(n, r = 0.4, rot = -Math.PI / 2) {
+  const pts = []
+  for (let i = 0; i < n; i++) { const a = rot + (i * 2 * Math.PI) / n; pts.push([+(0.5 + r * Math.cos(a)).toFixed(3), +(0.5 + r * Math.sin(a)).toFixed(3)]) }
+  return pts
+}
+function starPoly(points = 5, outer = 0.44, inner = 0.19) {
+  const pts = []
+  for (let i = 0; i < points * 2; i++) { const a = -Math.PI / 2 + (i * Math.PI) / points, r = i % 2 ? inner : outer; pts.push([+(0.5 + r * Math.cos(a)).toFixed(3), +(0.5 + r * Math.sin(a)).toFixed(3)]) }
+  return pts
+}
+function heartPoly() {
+  const pts = []
+  for (let i = 0; i < 40; i++) {
+    const t = (i / 40) * Math.PI * 2
+    const hx = 16 * Math.pow(Math.sin(t), 3)
+    const hy = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)
+    pts.push([+(0.5 + (hx / 34)).toFixed(3), +(0.5 - (hy / 34)).toFixed(3)])
+  }
+  return pts
+}
+const POLY_SHAPES = {
+  Triangle: regPoly(3), Square: [[0.15, 0.15], [0.85, 0.15], [0.85, 0.85], [0.15, 0.85]],
+  Pentagon: regPoly(5), Hexagon: regPoly(6), Octagon: regPoly(8),
+  Circle: regPoly(28), Diamond: [[0.5, 0.1], [0.9, 0.5], [0.5, 0.9], [0.1, 0.5]],
+  Star: starPoly(5), 'Star 6': starPoly(6), Heart: heartPoly(),
+  Arrow: [[0.1, 0.35], [0.55, 0.35], [0.55, 0.18], [0.9, 0.5], [0.55, 0.82], [0.55, 0.65], [0.1, 0.65]],
+  Cross: [[0.38, 0.1], [0.62, 0.1], [0.62, 0.38], [0.9, 0.38], [0.9, 0.62], [0.62, 0.62], [0.62, 0.9], [0.38, 0.9], [0.38, 0.62], [0.1, 0.62], [0.1, 0.38], [0.38, 0.38]],
+}
 // Portal destination shapes + aspect-ratio presets (for lock-proportions).
 const PORTAL_SHAPES = ['rectangle', 'ellipse', 'triangle', 'diamond', 'hexagon', 'star', 'heart']
 const MASK_MODES = ['multiply', 'screen', 'lighten', 'darken', 'overlay', 'add']
@@ -3007,6 +3038,15 @@ function resetShape(id) {
   delete n.params.svg
   persist()
 }
+// Drop a preset starter shape into a Polygon node (corners stay editable after).
+function applyPolyShape(id, name) {
+  const shape = POLY_SHAPES[name]
+  const n = nodes.find((x) => x.id === id)
+  if (!n || !shape) return
+  n.params.points = shape.map((p) => [...p])
+  delete n.params.svg
+  persist()
+}
 
 // --- SVG import for the Polygon (matte-shape) node -------------------------
 // An imported SVG becomes a filled matte: all of its shapes are flattened into
@@ -4708,6 +4748,12 @@ onBeforeUnmount(() => {
             <label>
               <span class="pjack" :ref="(el) => bindJack(n.id, 'feather', el)" :data-jack-node="n.id" data-jack-param="feather" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'feather')" />
               feather <NumSlider :min="0" :max="0.5" :step="0.01" :model-value="n.params.feather" @update:model-value="n.params.feather = $event" @commit="persist" />
+            </label>
+            <label>starter shape
+              <select value="" title="Load a basic shape to start from (corners stay editable)" @change="applyPolyShape(n.id, $event.target.value); $event.target.value = ''" @pointerdown.stop>
+                <option value="">choose a shape…</option>
+                <option v-for="s in Object.keys(POLY_SHAPES)" :key="s" :value="s">{{ s }}</option>
+              </select>
             </label>
             <div class="shape-row">
               <button v-if="!n.params.svg" class="shape-btn" :class="{ on: maskEdit }" @pointerdown.stop @click="maskEdit = !maskEdit">{{ maskEdit ? 'editing points' : 'edit points' }}</button>
