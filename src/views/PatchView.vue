@@ -696,11 +696,14 @@ const nlText = ref('')
 const nlListening = ref(false)
 const nlLast = ref('')
 const NL_EXAMPLES = [
-  'kaleidoscope of a plasma with bloom, react to the beat',
-  'my camera through vhs and chromatic aberration',
-  'liquid metal over noise, screen blend',
-  'the text "BRIGHT WAVES" masked through a slime mold',
+  'dreamy underwater scene, slow and deep blue',
+  'glitchy retro camera, punchy and fast',
+  'liquid metal over noise, intense, react to the beat',
+  'the text "BRIGHT WAVES" masked through a psychedelic swirl',
 ]
+const nlIntent = ref(null) // the editable parse result shown before building
+const nlModKeys = computed(() => Object.keys(nlIntent.value?.mods || {}))
+function nlDropMod(k) { if (nlIntent.value) delete nlIntent.value.mods[k] }
 // slug → extra spoken/written phrases that don't appear in the title or slug
 const NL_SYN = {
   glow: ['bloom', 'halo', 'soft glow'], 'vhs-defects': ['vhs', 'tape', 'video tape'],
@@ -714,6 +717,46 @@ const NL_SYN = {
   noise: ['static', 'fractal noise', 'tv snow'], feedback: ['trails', 'feedback loop'],
   crt: ['old tv', 'scanlines'],
 }
+// Mood/theme words → extra search keywords that get matched against the catalog,
+// so vibe-only descriptions ("dreamy underwater", "glitchy") still find sketches.
+const NL_MOODS = {
+  dreamy: ['glow', 'bloom', 'soft', 'mist', 'fog', 'nebula'], ethereal: ['glow', 'mist', 'nebula', 'aurora'],
+  glitch: ['vhs', 'channel', 'rgb split', 'crt', 'interlace', 'feedback'], glitchy: ['vhs', 'channel', 'rgb split', 'crt', 'interlace'],
+  underwater: ['caustics', 'water', 'ripple', 'liquid', 'ocean', 'wave'], aquatic: ['caustics', 'water', 'ripple', 'liquid'],
+  psychedelic: ['kaleidoscope', 'plasma', 'moire', 'swirl', 'liquid light'], trippy: ['kaleidoscope', 'moire', 'swirl', 'plasma'],
+  retro: ['vhs', 'crt', 'film', 'halftone'], vintage: ['film', 'polaroid', 'halftone', 'grain', 'crt'],
+  fiery: ['ember', 'flame', 'solar', 'lava', 'fire'], fire: ['ember', 'flame', 'solar', 'lava'],
+  cosmic: ['nebula', 'stars', 'galaxy', 'solar', 'aurora'], space: ['nebula', 'stars', 'galaxy', 'solar'],
+  organic: ['slime', 'coral', 'fungal', 'mycelium', 'flower', 'bloom'], natural: ['coral', 'flower', 'bloom', 'animal'],
+  geometric: ['tiling', 'hyperbolic', 'moire', 'grid', 'azulejo'], neon: ['glow', 'uv', 'strobe', 'laser'],
+  calm: ['fog', 'mist', 'glow', 'flow'], chaotic: ['feedback', 'strobe', 'shaky', 'noise'], energetic: ['strobe', 'feedback', 'kaleidoscope'],
+}
+// Adjectives that nudge parameters after building: [category, +1|-1, trigger words].
+const NL_MODS = [
+  ['speed', +1, ['fast', 'quick', 'rapid', 'energetic', 'frantic', 'hyper', 'racing']],
+  ['speed', -1, ['slow', 'calm', 'gentle', 'lazy', 'sluggish', 'relaxed', 'drifting']],
+  ['bright', +1, ['bright', 'glowing', 'vivid', 'luminous', 'radiant', 'brilliant']],
+  ['bright', -1, ['dark', 'dim', 'moody', 'shadowy', 'murky', 'gloomy', 'muted']],
+  ['contrast', +1, ['punchy', 'harsh', 'high contrast', 'high-contrast', 'stark', 'crisp', 'bold']],
+  ['contrast', -1, ['soft', 'flat', 'washed', 'faded', 'hazy', 'gentle']],
+  ['amount', +1, ['intense', 'strong', 'heavy', 'extreme', 'aggressive', 'wild', 'max', 'dramatic']],
+  ['amount', -1, ['subtle', 'light', 'faint', 'minimal', 'delicate', 'slight']],
+  ['scale', +1, ['big', 'large', 'huge', 'zoomed', 'macro', 'giant', 'coarse']],
+  ['scale', -1, ['small', 'tiny', 'fine', 'micro', 'dense', 'detailed']],
+]
+// category → which schema param names/labels it should drive
+const NL_MOD_PARAMS = {
+  speed: /speed|rate|flow|churn|drift|velocity|tempo|spin|swirl/i,
+  bright: /bright|expos|glow|lumin|value|gain|light/i,
+  contrast: /contrast|gamma|punch/i,
+  amount: /amount|intensity|strength|mix|power|depth|density|opacity|blur/i,
+  scale: /scale|zoom|size|radius|detail|freq|count/i,
+}
+const NL_COLORS = { red: 0, crimson: 350, scarlet: 5, orange: 30, amber: 40, yellow: 55, gold: 48, lime: 90, green: 130, emerald: 150, teal: 170, cyan: 185, aqua: 185, blue: 215, azure: 205, indigo: 250, purple: 275, violet: 270, magenta: 305, pink: 325, rose: 340, white: 0, black: 0 }
+const NL_STOP = new Set('the and with over into through onto a an of to in on for it its this that make makes look looks like live source filter effect them then as by from your you i me my is are be or so at not no all one two some more very really want give show turn put using use add just kinda sort feel feels bit little lot really really'.split(/\s+/))
+const NL_BLENDS = [['soft light', 'soft-light'], ['hard light', 'hard-light'], ['color dodge', 'color-dodge'], ['dodge', 'color-dodge'], ['burn', 'color-burn'], ['screen', 'screen'], ['additive', 'add'], ['add', 'add'], ['multiply', 'multiply'], ['overlay', 'overlay'], ['difference', 'difference'], ['lighten', 'lighten'], ['darken', 'darken']]
+const NL_TEXT_DEFAULTS = { font: 'sans-serif', size: 0.2, weight: 800, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false }
+
 // word-boundary-ish search; returns match position or -1
 function nlHas(text, phrase) {
   const p = (phrase || '').trim().toLowerCase()
@@ -722,104 +765,180 @@ function nlHas(text, phrase) {
   const m = new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`, 'i').exec(text)
   return m ? m.index : -1
 }
-// find catalog options named in the text, earliest mention first, de-duped.
-// Matches on the sketch's title, slug and a small synonym list only — tags are
-// deliberately ignored, since single-word tags ("beat", "metal", "light") match
-// far too eagerly and pull in effects the description never asked for.
-function nlMatch(opts, text) {
+// HSV(0-360,0-100,0-100) → #rrggbb, for setting an effect's colour params.
+function hueHex(h, s = 85, v = 95) {
+  h = ((h % 360) + 360) % 360; s /= 100; v /= 100
+  const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c
+  let r = 0, g = 0, b = 0
+  if (h < 60) [r, g, b] = [c, x, 0]; else if (h < 120) [r, g, b] = [x, c, 0]
+  else if (h < 180) [r, g, b] = [0, c, x]; else if (h < 240) [r, g, b] = [0, x, c]
+  else if (h < 300) [r, g, b] = [x, 0, c]; else [r, g, b] = [c, 0, x]
+  return '#' + [r, g, b].map((n) => Math.round((n + m) * 255).toString(16).padStart(2, '0')).join('')
+}
+// Words distinctive enough (appear in few descriptions) to be worth matching on.
+const nlDescIndex = computed(() => {
+  const idx = new Map()
+  for (const s of [...effectOptions.value, ...filterOptions.value]) {
+    for (const w of new Set(String(s.description || '').toLowerCase().match(/[a-z]{5,}/g) || [])) idx.set(w, (idx.get(w) || 0) + 1)
+  }
+  return idx
+})
+// Score each catalog option against the text: strong hits on title/slug/synonym,
+// weaker on tags, distinctive description words, and mood-derived keywords.
+function nlScore(opts, text, moodKW) {
+  const idx = nlDescIndex.value
   const found = []
   for (const s of opts) {
-    const phrases = [s.title.toLowerCase(), s.slug.replace(/-/g, ' '), ...(NL_SYN[s.slug] || [])]
-    let pos = -1
-    for (const ph of phrases) { const i = nlHas(text, ph); if (i >= 0 && (pos < 0 || i < pos)) pos = i }
-    if (pos >= 0) found.push({ s, pos })
+    let score = 0, pos = Infinity
+    const strong = [s.title.toLowerCase(), s.slug.replace(/-/g, ' '), ...(NL_SYN[s.slug] || [])]
+    for (const ph of strong) { const i = nlHas(text, ph); if (i >= 0) { score += 5; if (i < pos) pos = i } }
+    for (const t of (s.tags || [])) { if (t.length >= 4 && !t.includes('-')) { const i = nlHas(text, t); if (i >= 0) { score += 1.5; if (i < pos) pos = i } } }
+    for (const w of new Set(String(s.description || '').toLowerCase().match(/[a-z]{5,}/g) || [])) {
+      if ((idx.get(w) || 99) <= 5) { const i = nlHas(text, w); if (i >= 0) { score += 1; if (i < pos) pos = i } }
+    }
+    for (const kw of moodKW) { for (const ph of strong) if (ph.includes(kw)) { score += 2.5; break } }
+    if (score > 0) found.push({ s, score, pos: pos === Infinity ? 9999 : pos })
   }
-  found.sort((a, b) => a.pos - b.pos)
+  found.sort((a, b) => b.score - a.score || a.pos - b.pos)
   const seen = new Set()
   return found.filter((m) => !seen.has(m.s.slug) && seen.add(m.s.slug))
 }
-const NL_BLENDS = [['soft light', 'soft-light'], ['hard light', 'hard-light'], ['color dodge', 'color-dodge'], ['dodge', 'color-dodge'], ['burn', 'color-burn'], ['screen', 'screen'], ['additive', 'add'], ['add', 'add'], ['multiply', 'multiply'], ['overlay', 'overlay'], ['difference', 'difference'], ['lighten', 'lighten'], ['darken', 'darken']]
-const NL_TEXT_DEFAULTS = { font: 'sans-serif', size: 0.2, weight: 800, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false }
 
-function designFromText(raw) {
+// Parse the prompt into an editable intent (does NOT build yet). The preview
+// shows this so you can drop anything it got wrong before committing.
+function parseIntent(raw) {
   const prompt = (raw ?? nlText.value ?? '').trim()
-  if (!prompt) { showToast('Describe the look you want'); return }
+  if (!prompt) { nlIntent.value = null; showToast('Describe the look you want'); return }
+  nlText.value = prompt
   const text = prompt.toLowerCase()
+  const recognized = new Set()
+  const note = (phrase) => { for (const w of String(phrase).toLowerCase().split(/[^a-z0-9]+/)) if (w.length > 2) recognized.add(w) }
 
-  // parse intent
-  const effMatches = nlMatch(effectOptions.value, text)
-  const filtMatches = nlMatch(filterOptions.value, text)
-  let blendMode = 'screen'
-  for (const [w, m] of NL_BLENDS) if (nlHas(text, w) >= 0) { blendMode = m; break }
-  const wantCam = /\b(camera|webcam|selfie|my face|live video|myself|my cam)\b/.test(text)
-  const wantMask = /\b(mask|masked|through the (text|shape|word)|inside the (text|shape)|cut ?out|silhouette|stencil|clipped)\b/.test(text)
-  let quote = raw.match(/["“”'‘’]([^"“”'‘’]{1,60})["“”'‘’]/)
+  // Pull the literal text-content first (a quoted string, or "saying X"), then
+  // strip it from the matching text so words *inside* the caption (e.g. "BRIGHT
+  // WAVES") don't get read as effect names, moods, adjectives or colours.
+  let quote = prompt.match(/["“”'‘’]([^"“”'‘’]{1,60})["“”'‘’]/)
   let textContent = quote ? quote[1] : null
-  if (!textContent) { const m = text.match(/\b(?:saying|text|title|word[s]?|says|caption)\s+([a-z0-9 ,'!?-]{2,40})/); if (m) textContent = m[1].replace(/\b(over|on|onto|with|through|and|then|masked|blend).*$/, '').trim() }
-  const wantText = !!textContent || /\b(text|title|lyrics|typography|caption|words)\b/.test(text)
-  const wantAudio = /\b(audio|music|beat|bass|mic|sound|react|pulse|rhythm)\b/.test(text)
-  const wantMouse = /\b(mouse|cursor|pointer)\b/.test(text)
+  const textM = text.match(/\b(text|title|lyrics|typography|caption|words)\b/)
+  if (!textContent) { const m = text.match(/\b(?:saying|text|title|words?|says|caption)\s+([a-z0-9 ,'!?-]{2,40})/); if (m) { textContent = m[1].replace(/\b(over|on|onto|with|through|and|then|masked|blend).*$/, '').trim() } }
+  let search = text
+  if (quote) search = search.replace(quote[0].toLowerCase(), ' ')
+  if (textM) note(textM[0])
 
-  // clear everything except locked / kept nodes (undoable via persist())
+  const moodKW = []
+  for (const [mood, kws] of Object.entries(NL_MOODS)) if (nlHas(search, mood) >= 0) { moodKW.push(...kws); note(mood) }
+
+  const effM = nlScore(effectOptions.value, search, moodKW)
+  const filtM = nlScore(filterOptions.value, search, moodKW)
+  for (const m of [...effM, ...filtM]) {
+    note(m.s.title); note(m.s.slug.replace(/-/g, ' '))
+    for (const syn of (NL_SYN[m.s.slug] || [])) if (nlHas(search, syn) >= 0) note(syn)
+  }
+
+  let blend = 'screen'
+  for (const [w, mode] of NL_BLENDS) if (nlHas(search, w) >= 0) { blend = mode; note(w); break }
+
+  const camM = search.match(/\b(camera|webcam|selfie|my face|live video|myself|my cam)\b/); if (camM) note(camM[0])
+  const maskM = search.match(/\b(mask|masked|through the (?:text|shape|word)|inside the (?:text|shape)|cut ?out|silhouette|stencil|clipped)\b/); if (maskM) note(maskM[0])
+  if (textContent) note(textContent)
+  const audM = search.match(/\b(audio|music|beat|bass|mic|sound|react|pulse|rhythm)\b/); if (audM) note(audM[0])
+  const mouM = search.match(/\b(mouse|cursor|pointer)\b/); if (mouM) note(mouM[0])
+
+  const mods = {}
+  for (const [cat, dir, words] of NL_MODS) { if (mods[cat]) continue; for (const w of words) if (nlHas(search, w) >= 0) { mods[cat] = dir; note(w); break } }
+
+  let color = null
+  for (const [name, hue] of Object.entries(NL_COLORS)) if (nlHas(search, name) >= 0) { color = { name, hue, sat: name === 'white' ? 0 : 85, val: name === 'black' ? 10 : 95 }; note(name); break }
+
+  const ignored = [...new Set((search.match(/[a-z][a-z'-]{2,}/g) || []).filter((w) => !NL_STOP.has(w) && !recognized.has(w)))].slice(0, 12)
+
+  nlIntent.value = {
+    effects: effM.slice(0, 3).map((m) => ({ slug: m.s.slug, title: m.s.title })),
+    filters: filtM.slice(0, 4).map((m) => ({ slug: m.s.slug, title: m.s.title })),
+    camera: !!camM, text: { on: !!textContent || !!textM, content: textContent },
+    mask: !!maskM, audio: !!audM, mouse: !!mouM, blend, mods, color, ignored,
+  }
+}
+
+// Queue adjective/colour mods for an effect/filter node, applied once its sketch
+// announces its schema (via onEffectMessage), so we know which params exist.
+const nlPendingMods = new Map() // node id -> { mods, color }
+function queueNlMods(node, it) {
+  if (Object.keys(it.mods).length || it.color) nlPendingMods.set(node.id, { mods: it.mods, color: it.color })
+}
+function applyNlMods(id, { mods, color }) {
+  const c = effectControls.get(id)
+  if (!c?.schema) return
+  for (const [name, spec] of Object.entries(c.schema)) {
+    const label = (name + ' ' + (spec.label || '')).toLowerCase()
+    if (spec.type === 'color') { if (color) setEffectParam(id, name, hueHex(color.hue, color.sat, color.val)); continue }
+    if (typeof spec.min !== 'number') continue
+    const span = spec.max - spec.min || 1
+    let applied = false
+    for (const [cat, re] of Object.entries(NL_MOD_PARAMS)) {
+      if (mods[cat] && re.test(label)) { setEffectParam(id, name, +(spec.min + span * (mods[cat] > 0 ? 0.8 : 0.2)).toFixed(4)); applied = true; break }
+    }
+    if (!applied && color && /\bhue\b/.test(label)) setEffectParam(id, name, spec.max <= 361 ? color.hue : +(color.hue / 360).toFixed(3))
+  }
+}
+
+// Build the graph from the (possibly edited) intent.
+function buildFromIntent() {
+  const it = nlIntent.value
+  if (!it) { parseIntent(nlText.value); return }
+
   const keptIds = new Set(nodes.filter((n) => n.locked || n.keep).map((n) => n.id))
   for (let k = edges.length - 1; k >= 0; k--) if (!keptIds.has(edges[k].from) || !keptIds.has(edges[k].to)) edges.splice(k, 1)
   for (let k = links.length - 1; k >= 0; k--) if (!keptIds.has(links[k].from) || !keptIds.has(links[k].node)) links.splice(k, 1)
-  for (let k = nodes.length - 1; k >= 0; k--) if (!keptIds.has(nodes[k].id)) { const id = nodes[k].id; nodes.splice(k, 1); disposeRuntime(id); rtState.delete(id) }
+  for (let k = nodes.length - 1; k >= 0; k--) if (!keptIds.has(nodes[k].id)) { const id = nodes[k].id; nodes.splice(k, 1); disposeRuntime(id); rtState.delete(id); effectControls.delete(id); nlPendingMods.delete(id) }
   if (keptIds.size) nextId = Math.max(nextId, ...keptIds) + 1
 
   const COL = (c) => 60 + c * 240
   const add = (type, params, c, y) => { const n = reactive({ id: nextId++, type, x: COL(c), y, params }); nodes.push(n); st(n.id); return n }
   const summary = []
+  const colParams = it.color ? { hue: it.color.hue, sat: it.color.sat, val: it.color.val } : {}
 
-  // sources (col 0, stacked)
   const sources = []
   let sy = 80
-  if (wantCam) { sources.push(add('media', { mode: 'camera', mediaId: null }, 0, sy)); summary.push('Camera'); sy += 210 }
-  for (const m of effMatches.slice(0, Math.max(1, 3 - (wantCam ? 1 : 0)))) { sources.push(add('effect', { slug: m.s.slug, seed: randSeed() }, 0, sy)); summary.push(m.s.title); sy += 210 }
-  if (wantText && !wantMask) { sources.push(add('text', { ...NL_TEXT_DEFAULTS, text: (textContent || 'BRIGHT WAVES').toUpperCase() }, 0, sy)); summary.push('Text'); sy += 210 }
-  if (!sources.length) { const def = effectOptions.value[0]; if (def) { sources.push(add('effect', { slug: def.slug, seed: randSeed() }, 0, 80)); summary.push(def.title) } }
+  if (it.camera) { sources.push(add('media', { mode: 'camera', mediaId: null }, 0, sy)); summary.push('Camera'); sy += 210 }
+  for (const e of it.effects.slice(0, Math.max(1, 3 - (it.camera ? 1 : 0)))) { const n = add('effect', { slug: e.slug, seed: randSeed() }, 0, sy); sources.push(n); queueNlMods(n, it); summary.push(e.title); sy += 210 }
+  if (it.text.on && !it.mask) { sources.push(add('text', { ...NL_TEXT_DEFAULTS, ...colParams, text: (it.text.content || 'BRIGHT WAVES').toUpperCase() }, 0, sy)); summary.push('Text'); sy += 210 }
+  if (!sources.length) { const def = effectOptions.value[0]; if (def) { const n = add('effect', { slug: def.slug, seed: randSeed() }, 0, 80); sources.push(n); queueNlMods(n, it); summary.push(def.title) } }
   if (!sources.length) { showToast('No sources available'); return }
 
-  // fold sources together with blends
+  const mix = it.mods.amount > 0 ? 0.85 : it.mods.amount < 0 ? 0.35 : 0.6
   let col = 1, head = sources[0]
   for (let i = 1; i < sources.length; i++) {
-    const b = add('blend', { mode: blendMode, mix: 0.6 }, col, (head.y + sources[i].y) / 2)
-    edges.push({ from: head.id, to: b.id, port: 0 })
-    edges.push({ from: sources[i].id, to: b.id, port: 1 })
+    const b = add('blend', { mode: it.blend, mix }, col, (head.y + sources[i].y) / 2)
+    edges.push({ from: head.id, to: b.id, port: 0 }); edges.push({ from: sources[i].id, to: b.id, port: 1 })
     head = b; col++
   }
-  if (sources.length > 1) summary.push(`${blendMode} blend`)
+  if (sources.length > 1) summary.push(`${it.blend} blend`)
 
-  // filter chain in mention order
-  for (const m of filtMatches.slice(0, 4)) {
-    const f = add('filter', { slug: m.s.slug, seed: randSeed() }, col, head.y)
-    edges.push({ from: head.id, to: f.id, port: 0 })
-    head = f; col++; summary.push(m.s.title)
+  for (const f of it.filters.slice(0, 4)) {
+    const fn = add('filter', { slug: f.slug, seed: randSeed() }, col, head.y); queueNlMods(fn, it)
+    edges.push({ from: head.id, to: fn.id, port: 0 }); head = fn; col++; summary.push(f.title)
   }
 
-  // optional mask: cut the mix through a text or polygon matte
-  if (wantMask) {
+  if (it.mask) {
     let matte
-    if (textContent || wantText) matte = add('text', { ...NL_TEXT_DEFAULTS, text: (textContent || 'BRIGHT').toUpperCase(), hue: 0, sat: 0, val: 100, glow: 0 }, col - 1, head.y + 190)
-    else { matte = add('polygon', { points: [[0.3, 0.15], [0.72, 0.28], [0.82, 0.7], [0.4, 0.85], [0.18, 0.5]], feather: 0.12 }, col - 1, head.y + 190); matte.locked = true }
+    if (it.text.content || it.text.on) matte = add('text', { ...NL_TEXT_DEFAULTS, text: (it.text.content || 'BRIGHT').toUpperCase(), hue: 0, sat: 0, val: 100, glow: 0 }, col - 1, head.y + 190)
+    else { matte = add('polygon', { points: [[0.3, 0.15], [0.72, 0.28], [0.82, 0.7], [0.4, 0.85], [0.18, 0.5]], feather: 0.12 }, col - 1, head.y + 190) }
     const mnode = add('mask', { mode: 'multiply', strength: 1, invert: false }, col, head.y)
-    edges.push({ from: head.id, to: mnode.id, port: 0 })
-    edges.push({ from: matte.id, to: mnode.id, port: 1 })
+    edges.push({ from: head.id, to: mnode.id, port: 0 }); edges.push({ from: matte.id, to: mnode.id, port: 1 })
     head = mnode; col++; summary.push('Mask')
   }
 
-  // control node driving the last blend's mix, when there is a blend to drive
   const blendNodes = nodes.filter((n) => n.type === 'blend' && !keptIds.has(n.id))
   const ctlTarget = blendNodes[blendNodes.length - 1]
-  if (ctlTarget && wantMouse) {
+  if (ctlTarget && it.mouse) {
     const xy = add('xy', { x: 0.5, y: 0.5, recenter: false, xMin: 0, xMax: 1, yMin: 0, yMax: 1, curve: 'linear', padW: NODE_W, padH: THUMB_H }, 0, head.y + 250)
     links.push({ from: xy.id, srcPort: 0, node: ctlTarget.id, param: 'mix' }); summary.push('XY→mix')
-  } else if (ctlTarget && wantAudio) {
+  } else if (ctlTarget && it.audio) {
     const inp = add('input', { source: 'audio.pulse', scale: 1, offset: 0, invert: false, curve: 'linear' }, 0, head.y + 250)
     links.push({ from: inp.id, srcPort: 0, node: ctlTarget.id, param: 'mix' }); summary.push('Audio→mix')
   }
 
-  // Output (reuse a kept one)
   const out = nodes.find((n) => n.type === 'output' && keptIds.has(n.id)) || add('output', {}, col, head.y)
   for (let k = edges.length - 1; k >= 0; k--) if (edges[k].to === out.id) edges.splice(k, 1)
   edges.push({ from: head.id, to: out.id, port: 0 })
@@ -829,7 +948,7 @@ function designFromText(raw) {
   persist()
   showToast('Built: ' + nlLast.value)
   nextTick(() => layoutTick.value++)
-  nlOpen.value = false
+  nlOpen.value = false; nlIntent.value = null
 }
 
 // spoken input via the Web Speech API (Chromium); falls back with a toast
@@ -1994,6 +2113,8 @@ function onEffectMessage(e) {
         })
         // A cue being applied may be waiting to push this effect's saved params.
         if (pendingEffects) applyPendingEffects()
+        // Natural-language adjective/colour mods waiting on this sketch's schema.
+        if (nlPendingMods.has(n.id)) { applyNlMods(n.id, nlPendingMods.get(n.id)); nlPendingMods.delete(n.id) }
       }
       break
     }
@@ -3871,8 +3992,8 @@ onBeforeUnmount(() => {
             <v-textarea
               v-model="nlText"
               rows="3" auto-grow variant="outlined" density="compact" hide-details autofocus
-              placeholder="e.g. kaleidoscope of a plasma with bloom, react to the beat"
-              @keydown.enter.exact.prevent="designFromText(nlText)"
+              placeholder="e.g. dreamy underwater scene, slow, deep blue"
+              @keydown.enter.exact.prevent="parseIntent(nlText)"
             />
             <div class="nl-row">
               <v-btn
@@ -3882,11 +4003,38 @@ onBeforeUnmount(() => {
                 @click="nlVoice"
               />
               <div class="nl-spacer" />
-              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-auto-fix" @click="designFromText(nlText)">Build</v-btn>
+              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-text-search-variant" @click="parseIntent(nlText)">Interpret</v-btn>
             </div>
+
+            <!-- editable interpretation: drop anything it got wrong, then build -->
+            <div v-if="nlIntent" class="nl-preview">
+              <div class="nl-pv-hint">Here's what I understood — click a chip to drop it, then build:</div>
+              <div v-if="nlIntent.camera || nlIntent.effects.length || (nlIntent.text.on && !nlIntent.mask)" class="nl-pv-row">
+                <span class="nl-pv-key">sources</span>
+                <button v-if="nlIntent.camera" class="nl-chip" @click="nlIntent.camera = false">📷 Camera ✕</button>
+                <button v-for="(e, i) in nlIntent.effects" :key="e.slug" class="nl-chip" @click="nlIntent.effects.splice(i, 1)">{{ e.title }} ✕</button>
+                <button v-if="nlIntent.text.on && !nlIntent.mask" class="nl-chip" @click="nlIntent.text.on = false">T {{ nlIntent.text.content ? ('“' + nlIntent.text.content + '”') : 'Text' }} ✕</button>
+              </div>
+              <div v-if="nlIntent.filters.length" class="nl-pv-row">
+                <span class="nl-pv-key">filters</span>
+                <button v-for="(f, i) in nlIntent.filters" :key="f.slug" class="nl-chip nl-chip--f" @click="nlIntent.filters.splice(i, 1)">{{ f.title }} ✕</button>
+              </div>
+              <div v-if="nlIntent.mask || nlIntent.audio || nlIntent.mouse || nlModKeys.length || nlIntent.color || (nlIntent.effects.length + (nlIntent.camera ? 1 : 0) + (nlIntent.text.on && !nlIntent.mask ? 1 : 0)) > 1" class="nl-pv-row">
+                <span class="nl-pv-key">also</span>
+                <button v-if="(nlIntent.effects.length + (nlIntent.camera ? 1 : 0) + (nlIntent.text.on && !nlIntent.mask ? 1 : 0)) > 1" class="nl-chip nl-chip--dim">{{ nlIntent.blend }} blend</button>
+                <button v-if="nlIntent.mask" class="nl-chip" @click="nlIntent.mask = false">mask ✕</button>
+                <button v-if="nlIntent.audio" class="nl-chip" @click="nlIntent.audio = false">audio→mix ✕</button>
+                <button v-if="nlIntent.mouse" class="nl-chip" @click="nlIntent.mouse = false">mouse→mix ✕</button>
+                <button v-for="k in nlModKeys" :key="k" class="nl-chip nl-chip--dim" @click="nlDropMod(k)">{{ k }} {{ nlIntent.mods[k] > 0 ? '▲' : '▼' }} ✕</button>
+                <button v-if="nlIntent.color" class="nl-chip nl-chip--dim" @click="nlIntent.color = null">colour: {{ nlIntent.color.name }} ✕</button>
+              </div>
+              <div v-if="nlIntent.ignored.length" class="nl-ignored" title="Words I couldn't map to anything — try renaming them to an effect/filter or a mood word">didn't use: {{ nlIntent.ignored.join(', ') }}</div>
+              <v-btn size="small" variant="flat" color="primary" block prepend-icon="mdi-auto-fix" class="mt-2" @click="buildFromIntent">Build this patch</v-btn>
+            </div>
+
             <div class="nl-examples">
               <span class="nl-ex-label">Try:</span>
-              <button v-for="ex in NL_EXAMPLES" :key="ex" class="nl-ex" @click="nlText = ex; designFromText(ex)">{{ ex }}</button>
+              <button v-for="ex in NL_EXAMPLES" :key="ex" class="nl-ex" @click="nlText = ex; parseIntent(ex)">{{ ex }}</button>
             </div>
             <div v-if="nlLast" class="nl-last">Last: {{ nlLast }}</div>
           </v-card>
@@ -4893,6 +5041,19 @@ onBeforeUnmount(() => {
 .nl-title { font-size: 0.82rem; font-weight: 600; color: #cdd3e6; margin-bottom: 8px; }
 .nl-row { display: flex; align-items: center; margin-top: 8px; }
 .nl-spacer { flex: 1; }
+.nl-preview { margin-top: 10px; padding: 8px; border: 1px solid rgba(124,140,255,0.2); border-radius: 8px; background: rgba(124,140,255,0.05); }
+.nl-pv-hint { font-size: 0.68rem; color: #9aa4c0; margin-bottom: 6px; }
+.nl-pv-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 5px; }
+.nl-pv-key { font-size: 0.6rem; color: #737b93; flex: 0 0 auto; min-width: 46px; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.02em; }
+.nl-chip {
+  font-size: 0.7rem; color: #cdd3e6; background: #2a2f42; border: 1px solid #3a4055;
+  border-radius: 10px; padding: 2px 8px; cursor: pointer;
+}
+.nl-chip:hover { border-color: #ff8a8a; color: #fff; }
+.nl-chip--f { background: rgba(201,140,255,0.16); }
+.nl-chip--dim { background: #1c1f2b; color: #9aa4c0; cursor: default; }
+.nl-chip--dim:hover { border-color: #3a4055; color: #cdd3e6; }
+.nl-ignored { font-size: 0.66rem; color: #b08a5a; margin-top: 4px; }
 .nl-examples { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
 .nl-ex-label { font-size: 0.68rem; color: #7f879c; }
 .nl-ex {
