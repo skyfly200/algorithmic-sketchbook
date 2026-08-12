@@ -71,6 +71,7 @@ export const usePaletteStore = defineStore('palette', {
     },
     addColor(id, hex) { const p = this.palettes.find((p) => p.id === id); if (p) { p.colors.push(hex); this.persist() } },
     removeColor(id, idx) { const p = this.palettes.find((p) => p.id === id); if (p) { p.colors.splice(idx, 1); this.persist() } },
+    updateColor(id, idx, hex) { const p = this.palettes.find((p) => p.id === id); if (p && p.colors[idx] != null) { p.colors[idx] = hex; this.persist() } },
     addGradient(name, colors) {
       this.gradients.unshift({ id: uid(), name: name || 'Gradient', stops: gradientStops(colors) }); this.persist()
     },
