@@ -431,9 +431,6 @@ function addNode(type) {
                                 ? { mode: 'multiply', strength: 1, invert: false }
                                 : {},
   })
-  // Polygon nodes lock by default so a mapped matte isn't nudged or
-  // randomized by accident — its corners are still editable via "Edit points".
-  if (type === 'polygon') n.locked = true
   nodes.push(n)
   st(n.id) // create runtime state
   persist()
@@ -638,23 +635,12 @@ function randomPatch() {
 // effect/filter and shuffles all node params within their ranges; locked and
 // pinned nodes are left alone.
 function randomizeLook() {
-  const stepQuant = (lo, hi) => { const step = (hi - lo) / 100 || 0.01; return +(lo + Math.round((Math.random() * (hi - lo)) / step) * step).toFixed(6) }
-  const randHex = () => '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0')
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
   for (const n of nodes) {
     if (n.locked || n.keep) continue
     if (n.type === 'effect' || n.type === 'filter') {
       n.params.seed = randSeed() // fresh generative content
-      const c = effectControls.get(n.id)
-      if (c?.schema) {
-        for (const [name, spec] of Object.entries(c.schema)) {
-          if (spec.type === 'action') continue
-          if (spec.type === 'bool') setEffectParam(n.id, name, Math.random() < 0.5)
-          else if (spec.type === 'color') setEffectParam(n.id, name, randHex())
-          else if (spec.type === 'select' && spec.options?.length) setEffectParam(n.id, name, pick(spec.options))
-          else if (typeof spec.min === 'number') setEffectParam(n.id, name, stepQuant(spec.min, spec.max))
-        }
-      }
+      rollEffectParams(n)        // roll params + survive the reseed reload
     } else {
       const rng = PARAM_RANGES[n.type]
       if (rng) for (const [name, r] of Object.entries(rng)) n.params[name] = stepQuant(r[0], r[1])
@@ -1622,7 +1608,36 @@ function effectSrc(n) {
   return s ? `${s.url}?capture=1&preview=1&quality=high&nomap=1${seed}${inputParams(settings)}` : ''
 }
 function randSeed() { return Math.floor(Math.random() * 1e9).toString(36) }
-function reseedNode(n) { n.params.seed = randSeed(); persist() } // new generative look
+function randHex() { return '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0') }
+function stepQuant(lo, hi) { const step = (hi - lo) / 100 || 0.01; return +(lo + Math.round((Math.random() * (hi - lo)) / step) * step).toFixed(6) }
+// Roll every exposed parameter of an effect/filter to a fresh value. Because
+// changing the seed reloads the iframe (which re-announces its *default* values
+// on ready), we can't just post the new values now — they'd be overwritten. So
+// we also queue them through the same pendingEffects channel cues use, which
+// re-applies them once the reloaded sketch announces ready.
+function rollEffectParams(n) {
+  const c = effectControls.get(n.id)
+  if (!c?.schema || !Object.keys(c.schema).length) return
+  const values = { ...c.values }
+  for (const [name, spec] of Object.entries(c.schema)) {
+    if (spec.type === 'action') continue
+    if (spec.type === 'bool') values[name] = Math.random() < 0.5
+    else if (spec.type === 'color') values[name] = randHex()
+    else if (spec.type === 'select' && spec.options?.length) values[name] = spec.options[Math.floor(Math.random() * spec.options.length)]
+    else if (typeof spec.min === 'number') values[name] = stepQuant(spec.min, spec.max)
+  }
+  effectControls.set(n.id, { ...c, values })
+  for (const [k, v] of Object.entries(values)) postToEffect(n.id, { type: 'sketch:set-param', name: k, value: v })
+  pendingEffects = { ...(pendingEffects || {}), [n.id]: { values, mappings: (c.mappings || []).map((m) => ({ ...m })), state: c.state ?? null } }
+}
+// The dice: reseed the generative content AND roll every exposed parameter to a
+// fresh value, so one click gives a genuinely different look (not just a new RNG
+// seed behind the same slider settings).
+function reseedNode(n) {
+  n.params.seed = randSeed()
+  if (n.type === 'effect' || n.type === 'filter') rollEffectParams(n)
+  persist()
+}
 function autoMap(n) {
   rtState.get(n.id)?.iframe?.contentWindow?.postMessage({ type: 'sketch:auto-map' }, '*')
 }
@@ -3450,7 +3465,7 @@ function insertPreset(p) {
     if (mn.type === 'blend' && !params.mode) { params.mode = pk(BLENDS); params.mix = +(0.5 + Math.random() * 0.5).toFixed(2) }
     if (mn.type === 'portal' && !params.srcW) Object.assign(params, { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' })
     if (mn.type === 'polygon' && !params.points) Object.assign(params, { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0 })
-    return { id: i, type: mn.type, x: mn.x, y: mn.y, params, locked: mn.type === 'polygon' }
+    return { id: i, type: mn.type, x: mn.x, y: mn.y, params, locked: !!mn.locked }
   })
   insertBlock({ nodes: bn, edges: (p.edges || []).map((e) => ({ ...e })), links: (p.links || []).map((l) => ({ ...l })) })
   showToast(`Added “${p.name}”`)
@@ -4452,7 +4467,7 @@ onBeforeUnmount(() => {
               </select>
               <button
                 class="knob-btn"
-                title="Reseed — a fresh generative variation of this effect"
+                title="Randomize — reseed and roll every parameter for a fresh look"
                 @pointerdown.stop
                 @click="reseedNode(n)"
               >🎲</button>

@@ -107,43 +107,31 @@ const pos = gl.getAttribLocation(prog, 'position'); gl.enableVertexAttribArray(p
 const U = (n) => gl.getUniformLocation(prog, n)
 const u = { res: U('u_res'), A: U('u_A'), B: U('u_B'), p: U('u_p'), q: U('u_q'), edges: U('u_edges'), glow: U('u_glow'), pal: U('u_pal') }
 
-// accumulated SU(1,1) camera transform M = [[A, B],[conj B, conj A]]
-let A = [1, 0], B = [0, 0]
-const cmul = (a, b) => [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]]
-const cconj = (a) => [a[0], -a[1]]
-function compose(dA, dB) { // M_step ∘ M
-  const nA = [dA[0] * A[0] - dA[1] * A[1] + dB[0] * B[0] + dB[1] * B[1],
-              dA[0] * A[1] + dA[1] * A[0] + dB[0] * B[1] - dB[1] * B[0]]
-  // nA = dA*A + dB*conj(B)
-  const nB = [dA[0] * B[0] - dA[1] * B[1] + dB[0] * A[0] + dB[1] * A[1],
-              dA[0] * B[1] + dA[1] * B[0] + dB[0] * A[1] - dB[1] * A[0]]
-  // nB = dA*B + dB*conj(A)
-  A = nA; B = nB
-  const n = Math.sqrt(Math.max(1e-6, A[0] * A[0] + A[1] * A[1] - B[0] * B[0] - B[1] * B[1]))
-  A = [A[0] / n, A[1] / n]; B = [B[0] / n, B[1] / n]
-}
-
+// Camera as a bounded wander instead of an accumulating glide. The earlier
+// version composed a hyperbolic translation every frame, so the net transform
+// grew without bound and the viewpoint ran off toward the ideal boundary —
+// where the tiles shrink to nothing and the whole disk washes out to one tone.
+// Here the origin is translated to a point that orbits on a breathing circle
+// kept well inside the disk (|a| ≤ ~0.73), plus a slow world spin. Motion stays
+// continuous but never approaches the rim, so the tiling never collapses.
 function resize() { canvas.width = window.innerWidth * rt.pixelRatio; canvas.height = window.innerHeight * rt.pixelRatio; gl.viewport(0, 0, canvas.width, canvas.height) }
-let last = 0, heading = 0
+let last = 0, phase = 0, breath = 0, spin = 0
 function frame(now) {
   rt.tick(now)
   const dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016; last = now
-  // heading drifts so the path curves through the space
-  heading += params.turn * dt * 0.6
-  const delta = params.glide * dt * 0.9              // hyperbolic step length
-  const half = delta * 0.5
-  const ch = Math.cosh(half), sh2 = Math.sinh(half)
-  // translation of magnitude delta along the current heading:
-  // rotate to heading, translate along x, rotate back  ->  A=cosh, B=sinh*e^{i·heading}
-  const dA = [ch, 0]
-  const dB = [sh2 * Math.cos(heading), sh2 * Math.sin(heading)]
-  // small continuous rotation for extra flow
-  const rot = params.turn * dt * 0.4
-  compose([Math.cos(rot), Math.sin(rot)], [0, 0])
-  compose(dA, dB)
+  phase += params.glide * dt * 0.35   // travel around the wander circle
+  breath += params.glide * dt * 0.21  // circle radius breathes in and out
+  spin += params.turn * dt * 0.5       // world rotation
+  const R = 0.45 + 0.28 * Math.sin(breath + 1.3)   // 0.17 .. 0.73, always interior
+  const ax = R * Math.cos(phase), ay = R * Math.sin(phase)
+  const nrm = 1 / Math.sqrt(Math.max(1e-3, 1 - (ax * ax + ay * ay)))
+  const cr = Math.cos(spin * 0.5), sr = Math.sin(spin * 0.5)
+  // M = Translate(a) ∘ Rotate(spin):  A = n·e^{i spin/2},  B = n·a·e^{-i spin/2}
+  const A0 = nrm * cr, A1 = nrm * sr
+  const B0 = nrm * (ax * cr + ay * sr), B1 = nrm * (ay * cr - ax * sr)
 
   gl.uniform2f(u.res, canvas.width, canvas.height)
-  gl.uniform2f(u.A, A[0], A[1]); gl.uniform2f(u.B, B[0], B[1])
+  gl.uniform2f(u.A, A0, A1); gl.uniform2f(u.B, B0, B1)
   gl.uniform1f(u.p, Math.round(params.p)); gl.uniform1f(u.q, Math.round(params.q))
   gl.uniform1f(u.edges, params.edges); gl.uniform1f(u.glow, params.glow)
   gl.uniform1i(u.pal, Math.max(0, PALS.indexOf(params.palette)))
