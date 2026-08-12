@@ -418,7 +418,7 @@ function addNode(type) {
                     : type === 'text'
                       ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false, seqMode: 'off', lyrics: '', lineDur: 3, loopSeq: true, transition: 'None', transDur: 0.4 }
                       : type === 'sprite'
-                        ? { src: null, name: '', x: 0.5, y: 0.5, scale: 0.4, rotate: 0, opacity: 1, spin: 0, motion: 'None', speed: 0.5, amp: 0.2, cols: 1, rows: 1, fps: 12 }
+                        ? { mediaId: null, x: 0.5, y: 0.5, scale: 0.4, rotate: 0, opacity: 1, spin: 0, motion: 'None', speed: 0.5, amp: 0.2, cols: 1, rows: 1, fps: 12 }
                       : type === 'portal'
                         ? { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }
                         : type === 'polygon'
@@ -1698,13 +1698,26 @@ function mediaEl(node) {
   return s.mediaEl
 }
 
-// Sprite image cache: reloads the <img> only when the node's data-URL changes.
+// Sprite image cache. The image lives in the shared media library (referenced
+// by a small id) so cue snapshots and saved patches carry only the id, not a
+// duplicated data-URL. A legacy inline `src` (from older saves) is still honored
+// as a fallback. Reloads the <img> only when the resolved URL changes.
+function spriteUrl(node) {
+  const id = node.params.mediaId
+  if (id != null) { const item = mediaById(id); if (item && item.kind === 'image') return item.url }
+  return node.params.src || null // legacy inline data-URL
+}
+function spriteName(node) {
+  const id = node.params.mediaId
+  if (id != null) return mediaById(id)?.name || '(missing — reload the image)'
+  return node.params.src ? 'embedded image' : ''
+}
 function spriteImg(node) {
   const s = st(node.id)
-  const src = node.params.src
-  if (s.spriteSrc !== src) {
-    s.spriteSrc = src
-    if (src) { const img = new Image(); img.src = src; s.spriteImg = img }
+  const url = spriteUrl(node)
+  if (s.spriteUrl !== url) {
+    s.spriteUrl = url
+    if (url) { const img = new Image(); img.src = url; s.spriteImg = img }
     else s.spriteImg = null
   }
   return s.spriteImg
@@ -1777,10 +1790,10 @@ function pickSpriteFile(node) {
   inp.type = 'file'; inp.accept = 'image/*'
   inp.onchange = () => {
     const f = inp.files?.[0]; if (!f) return
-    const reader = new FileReader()
-    reader.onload = () => { node.params.src = String(reader.result); node.params.name = f.name; persist() }
-    reader.onerror = () => showToast('Could not read the image')
-    reader.readAsDataURL(f)
+    const item = addMediaFile(f) // stored once in the shared media library
+    node.params.mediaId = item.id
+    delete node.params.src // drop any legacy inline data
+    persist()
   }
   inp.click()
 }
@@ -4696,10 +4709,16 @@ onBeforeUnmount(() => {
           <template v-if="n.type === 'sprite'">
             <div class="media-hint">A loaded image or sprite-sheet placed in the frame. Position, size, rotation &amp; opacity have control jacks (▣) — wire an Input / XY&nbsp;Pad / Tracker into them to fly it around and keyframe it through time. Wire this node into a <b>Blend</b> to overlay it.</div>
             <div class="shape-row">
-              <button class="shape-btn" @pointerdown.stop @click="pickSpriteFile(n)">{{ n.params.src ? 'change image' : 'load image' }}</button>
-              <button v-if="n.params.src" class="shape-btn" @pointerdown.stop @click="n.params.src = null; n.params.name = ''; persist()">clear</button>
+              <button class="shape-btn" @pointerdown.stop @click="pickSpriteFile(n)">{{ spriteName(n) ? 'change image' : 'load image' }}</button>
+              <button v-if="n.params.mediaId != null || n.params.src" class="shape-btn" @pointerdown.stop @click="n.params.mediaId = null; delete n.params.src; persist()">clear</button>
             </div>
-            <div v-if="n.params.name" class="shape-hint">{{ n.params.name }}</div>
+            <label v-if="mediaLibrary.some((m) => m.kind === 'image')">from library
+              <select :value="n.params.mediaId ?? ''" @change="n.params.mediaId = $event.target.value === '' ? null : +$event.target.value; delete n.params.src; persist()" @pointerdown.stop>
+                <option value="">—</option>
+                <option v-for="m in mediaLibrary.filter((x) => x.kind === 'image')" :key="m.id" :value="m.id">🖼 {{ m.name }}</option>
+              </select>
+            </label>
+            <div v-if="spriteName(n)" class="shape-hint">{{ spriteName(n) }}</div>
             <label>
               <span class="pjack" :ref="(el) => bindJack(n.id, 'x', el)" :data-jack-node="n.id" data-jack-param="x" title="control input" @pointerdown.stop @pointerup.stop="endLink(n, 'x')" />
               x <NumSlider :min="0" :max="1" :step="0.01" :model-value="n.params.x" @update:model-value="n.params.x = $event" @commit="persist" />
