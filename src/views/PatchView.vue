@@ -1353,6 +1353,16 @@ function applyLinks(now) {
         // post the live value only — never write it back into the knob's value
         postToEffect(tgt.id, { type: 'sketch:set-param', name: l.param, value: live })
       }
+    } else if (tgt.type === 'text' && l.param === 'font') {
+      // Categorical param: map the 0..1 control signal across the font list so an
+      // input can flip/scan through typefaces live.
+      const list = fontList.value
+      if (list.length) {
+        const idx = Math.max(0, Math.min(list.length - 1, Math.floor(clamp(v * depth, 0, 0.99999) * list.length)))
+        let m = liveParams.get(tgt.id)
+        if (!m) { m = {}; liveParams.set(tgt.id, m) }
+        m.font = list[idx]
+      }
     } else {
       const rng = PARAM_RANGES[tgt.type]?.[l.param]
       if (rng) {
@@ -2453,7 +2463,7 @@ function evalNode(node) {
     octx.translate(pval(node, 'x') * W, pval(node, 'y') * H)
     if (seq) { octx.translate(seq.dx * W, seq.dy * H); if (seq.scale !== 1) octx.scale(seq.scale, seq.scale) }
     octx.rotate(((pval(node, 'rotate') ?? 0) * Math.PI) / 180)
-    octx.font = `${p.italic ? 'italic ' : ''}${Math.round(pval(node, 'weight'))} ${px}px "${p.font || 'sans-serif'}"`
+    octx.font = `${p.italic ? 'italic ' : ''}${Math.round(pval(node, 'weight'))} ${px}px "${pval(node, 'font') || 'sans-serif'}"`
     octx.textAlign = 'center'
     octx.textBaseline = 'middle'
     octx.globalAlpha = seq ? Math.max(0, Math.min(1, seq.alpha)) : 1
@@ -4673,7 +4683,9 @@ onBeforeUnmount(() => {
           </template>
           <template v-if="n.type === 'text'">
             <textarea class="text-in" rows="2" :value="n.params.text" placeholder="type…&#10;(enter for a new line)" @input="n.params.text = $event.target.value; persist()" @pointerdown.stop @keydown.stop></textarea>
-            <label>font
+            <label>
+              <span class="pjack" :ref="(el) => bindJack(n.id, 'font', el)" :data-jack-node="n.id" data-jack-param="font" title="control input — map an Input / XY / Tracker here to scan through fonts" @pointerdown.stop @pointerup.stop="endLink(n, 'font')" />
+              font
               <select v-model="n.params.font" @change="persist" @pointerdown.stop>
                 <option v-for="f in fontList" :key="f" :value="f">{{ f }}</option>
               </select>
