@@ -951,6 +951,175 @@ function buildFromIntent() {
   nlOpen.value = false; nlIntent.value = null
 }
 
+// --- AI smart mode (opt-in) -----------------------------------------------
+// With the user's own Claude API key (Settings), send the description + the
+// catalog to the Anthropic API and build the structured graph it returns. This
+// understands relational/free-form language the offline parser can't. The key
+// stays in the browser and the request goes straight to Anthropic.
+const nlSmart = ref(settings.aiSmart)
+const nlBusy = ref(false)
+const nlAiSpec = ref(null) // the model's returned plan, shown before building
+watch(nlSmart, (v) => settings.setAiSmart(v))
+
+const NL_SYS = `You are the patch designer for "Bright Waves", a live-visuals node-graph compositor. Turn the user's description into a graph as a JSON object and nothing else.
+
+Node types (field "type"):
+- effect: a generative source. Needs "slug" from the effects list.
+- filter: processes ONE video input (port 0). Needs "slug" from the filters list.
+- media: a camera source. Use {"type":"media","mode":"camera"}.
+- text: on-screen text. Fields: text, and optional x,y (0..1), size (0.03..0.6), weight (100..900), hue (0..360), sat (0..100), val (0..100), rotate.
+- sprite: a placed image. Optional x,y,scale.
+- polygon: a white matte shape source. Optional "shape": one of triangle,square,pentagon,hexagon,octagon,circle,diamond,star,heart,arrow,cross.
+- mask: cuts a picture to a matte. Input port 0 = picture (content), port 1 = matte (a polygon/text). Optional "invert".
+- blend: composites TWO inputs. Port 0 = base, port 1 = top. Fields: mode (screen,add,multiply,overlay,difference,lighten,darken,soft-light,normal), mix (0..1).
+- portal: remaps a region. geo/vcam: 3D geometry + camera (geo feeds vcam).
+- input: emits a 0..1 control signal. Field "source" from the input-sources list. xy: an XY pad control. tracker: video motion tracker.
+- output: the final image. Exactly one; wire the last picture node into it.
+
+Rules:
+- "edges" are VIDEO/geometry connections: {"from": id, "to": id, "port": inputIndex}. port is 0-based.
+- "links" are CONTROL connections from an input/xy/tracker OUTPUT to a target node's numeric PARAM: {"from": id, "to": id, "param": "mix"}. Controllable params include blend "mix", text "x"/"y"/"hue"/"rotate"/"size", portal edges, polygon "feather".
+- Every graph must end in exactly one output node fed by the final picture.
+- Only use slugs that appear in the provided lists. Prefer few nodes (2–7) unless the description clearly needs more.
+- ids are short strings you choose.
+
+Return ONLY a JSON object: {"nodes":[...],"edges":[...],"links":[...],"notes":"one short sentence"}. No markdown, no prose.`
+
+async function nlCallClaude(prompt) {
+  const key = settings.aiKey
+  const eff = effectOptions.value.map((s) => `${s.slug}: ${s.title}`).join('\n')
+  const filt = filterOptions.value.map((s) => `${s.slug}: ${s.title}`).join('\n')
+  const user = `EFFECTS (sources), slug: title —\n${eff}\n\nFILTERS (process video), slug: title —\n${filt}\n\nINPUT SOURCES for input nodes: ${INPUT_SOURCES.join(', ')}\n\nDESCRIPTION: "${prompt}"\n\nReturn ONLY the JSON patch.`
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({ model: settings.aiModel, max_tokens: 1600, system: NL_SYS, messages: [{ role: 'user', content: user }] }),
+  })
+  if (!res.ok) {
+    let msg = res.status + ''
+    try { const j = await res.json(); msg = j.error?.message || JSON.stringify(j).slice(0, 140) } catch { /* non-json */ }
+    throw new Error(msg)
+  }
+  const data = await res.json()
+  const text = (data.content || []).map((c) => c.text || '').join('')
+  const a = text.indexOf('{'), b = text.lastIndexOf('}')
+  if (a < 0 || b < a) throw new Error('no JSON in response')
+  return JSON.parse(text.slice(a, b + 1))
+}
+
+async function smartInterpret() {
+  const prompt = (nlText.value || '').trim()
+  if (!prompt) { showToast('Describe the look you want'); return }
+  if (!settings.aiKey) { showToast('Add a Claude API key in Settings for smart mode'); return }
+  nlBusy.value = true; nlAiSpec.value = null; nlIntent.value = null
+  try {
+    const spec = await nlCallClaude(prompt)
+    if (!spec || !Array.isArray(spec.nodes) || !spec.nodes.length) throw new Error('empty patch')
+    nlAiSpec.value = spec
+  } catch (e) {
+    showToast('Smart mode failed: ' + (e.message || e))
+  } finally {
+    nlBusy.value = false
+  }
+}
+
+const nlNum = (v, d, lo = -Infinity, hi = Infinity) => (typeof v === 'number' && isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d)
+// Lay the graph out left-to-right by dependency depth (longest path from a source).
+function layoutByDepth(newIds) {
+  const set = new Set(newIds)
+  const depth = new Map(newIds.map((id) => [id, 0]))
+  for (let iter = 0; iter <= newIds.length; iter++) {
+    for (const e of edges) {
+      if (!set.has(e.from) || !set.has(e.to)) continue
+      const d = (depth.get(e.from) ?? 0) + 1
+      if (d > (depth.get(e.to) ?? 0)) depth.set(e.to, d)
+    }
+  }
+  const byCol = new Map()
+  for (const id of newIds) { const c = depth.get(id) ?? 0; if (!byCol.has(c)) byCol.set(c, []); byCol.get(c).push(id) }
+  for (const [c, list] of byCol) list.forEach((id, i) => { const n = nodeById(id); if (n) { n.x = 60 + c * 240; n.y = 70 + i * 200 } })
+}
+
+function buildFromSpec(spec) {
+  if (!spec || !Array.isArray(spec.nodes)) { showToast('AI returned no usable patch'); return }
+  const effSet = new Set(effectOptions.value.map((s) => s.slug))
+  const filtSet = new Set(filterOptions.value.map((s) => s.slug))
+  const inputSet = new Set(INPUT_SOURCES)
+  const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s)
+
+  // clear everything except locked / kept nodes
+  const keptIds = new Set(nodes.filter((n) => n.locked || n.keep).map((n) => n.id))
+  for (let k = edges.length - 1; k >= 0; k--) if (!keptIds.has(edges[k].from) || !keptIds.has(edges[k].to)) edges.splice(k, 1)
+  for (let k = links.length - 1; k >= 0; k--) if (!keptIds.has(links[k].from) || !keptIds.has(links[k].node)) links.splice(k, 1)
+  for (let k = nodes.length - 1; k >= 0; k--) if (!keptIds.has(nodes[k].id)) { const id = nodes[k].id; nodes.splice(k, 1); disposeRuntime(id); rtState.delete(id); effectControls.delete(id); nlPendingMods.delete(id) }
+  if (keptIds.size) nextId = Math.max(nextId, ...keptIds) + 1
+
+  const idMap = new Map()
+  const newIds = []
+  for (const n of spec.nodes) {
+    if (!n || !TYPES[n.type]) continue
+    let params
+    switch (n.type) {
+      case 'effect': params = { slug: effSet.has(n.slug) ? n.slug : (effectOptions.value[0]?.slug ?? ''), seed: randSeed() }; break
+      case 'filter': params = { slug: filtSet.has(n.slug) ? n.slug : (filterOptions.value[0]?.slug ?? ''), seed: randSeed() }; break
+      case 'blend': params = { mode: BLENDS.includes(n.mode) ? n.mode : 'screen', mix: nlNum(n.mix, 0.6, 0, 1) }; break
+      case 'text': params = { ...NL_TEXT_DEFAULTS, text: String(n.text ?? 'BRIGHT WAVES'), x: nlNum(n.x, 0.5, 0, 1), y: nlNum(n.y, 0.5, 0, 1), size: nlNum(n.size, 0.2, 0.03, 0.6), weight: nlNum(n.weight, 800, 100, 900), hue: nlNum(n.hue, 200, 0, 360), sat: nlNum(n.sat, 82, 0, 100), val: nlNum(n.val, 96, 0, 100), rotate: nlNum(n.rotate, 0, -180, 180) }; break
+      case 'input': params = { source: inputSet.has(n.source) ? n.source : 'audio.pulse', scale: 1, offset: 0, invert: false, curve: 'linear' }; break
+      case 'xy': params = { x: 0.5, y: 0.5, recenter: false, xMin: 0, xMax: 1, yMin: 0, yMax: 1, curve: 'linear', padW: NODE_W, padH: THUMB_H }; break
+      case 'tracker': params = { thresh: 0.5, smooth: 0.7 }; break
+      case 'media': params = { mode: 'camera', mediaId: null }; break
+      case 'sprite': params = { mediaId: null, x: nlNum(n.x, 0.5, 0, 1), y: nlNum(n.y, 0.5, 0, 1), scale: nlNum(n.scale, 0.4, 0.02, 2), rotate: 0, opacity: 1, spin: 0, motion: 'None', speed: 0.5, amp: 0.2, cols: 1, rows: 1, fps: 12 }; break
+      case 'polygon': { const shp = POLY_SHAPES[capitalize(n.shape)]; params = { points: (shp || [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]).map((p) => [...p]), feather: nlNum(n.feather, 0, 0, 0.5) }; break }
+      case 'mask': params = { mode: 'multiply', strength: 1, invert: !!n.invert }; break
+      case 'portal': params = { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }; break
+      case 'geo': params = { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28 }; break
+      case 'vcam': params = { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, lightSat: 34, lightVal: 86, spin: true }; break
+      default: params = {}
+    }
+    const rn = reactive({ id: nextId++, type: n.type, x: 0, y: 0, params })
+    nodes.push(rn); st(rn.id); idMap.set(n.id, rn.id); newIds.push(rn.id)
+  }
+  if (!newIds.length) { showToast('AI returned no usable nodes'); return }
+
+  for (const e of (spec.edges || [])) {
+    const from = idMap.get(e.from), to = idMap.get(e.to)
+    if (from == null || to == null) continue
+    const toNode = nodeById(to); const ins = TYPES[toNode?.type]?.ins ?? 0
+    if (ins <= 0) continue
+    edges.push({ from, to, port: Math.max(0, Math.min(ins - 1, (e.port | 0))) })
+  }
+  for (const l of (spec.links || [])) {
+    const from = idMap.get(l.from), node = idMap.get(l.to ?? l.node) // model uses "to"; our schema calls it "node"
+    if (from == null || node == null || !l.param) continue
+    if (outKind(nodeById(from)) !== 'control') continue
+    links.push({ from, srcPort: (l.srcPort | 0), node, param: String(l.param) })
+  }
+
+  // ensure exactly one fed output
+  let out = nodes.find((n) => n.type === 'output')
+  if (!out) { out = reactive({ id: nextId++, type: 'output', x: 0, y: 0, params: {} }); nodes.push(out); st(out.id); newIds.push(out.id) }
+  if (!edges.some((e) => e.to === out.id)) {
+    const PROD = new Set(['effect', 'filter', 'media', 'text', 'sprite', 'blend', 'mask', 'portal', 'vcam'])
+    const feeders = new Set(edges.map((e) => e.from))
+    const cand = [...nodes].reverse().find((n) => PROD.has(n.type) && n.id !== out.id && !feeders.has(n.id)) || [...nodes].reverse().find((n) => PROD.has(n.type) && n.id !== out.id)
+    if (cand) edges.push({ from: cand.id, to: out.id, port: 0 })
+  }
+  pruneOrphans()
+  layoutByDepth(newIds)
+
+  selected.value = null
+  nlLast.value = (spec.notes || 'AI patch') + ` · ${newIds.length} nodes`
+  persist()
+  showToast('Built: ' + (spec.notes || 'AI patch'))
+  nextTick(() => layoutTick.value++)
+  nlOpen.value = false; nlAiSpec.value = null
+}
+
 // spoken input via the Web Speech API (Chromium); falls back with a toast
 let nlRecog = null
 function nlVoice() {
@@ -3988,12 +4157,20 @@ onBeforeUnmount(() => {
             <v-btn v-bind="props" icon="mdi-message-text-outline" variant="text" size="small" title="Describe a patch in words (or speak it) and wire it up" />
           </template>
           <v-card width="360" class="nl-card">
-            <div class="nl-title">Describe a patch</div>
+            <div class="nl-title">
+              Describe a patch
+              <span class="nl-spacer" />
+              <button
+                class="nl-smart-toggle" :class="{ on: nlSmart }"
+                :title="settings.aiKey ? (nlSmart ? 'Smart mode on (Claude API) — click for the offline parser' : 'Use Claude to build free-form descriptions') : 'Add a Claude API key in Settings to enable smart mode'"
+                @click="settings.aiKey ? (nlSmart = !nlSmart) : router.push({ name: 'settings' })"
+              >✨ Smart</button>
+            </div>
             <v-textarea
               v-model="nlText"
               rows="3" auto-grow variant="outlined" density="compact" hide-details autofocus
-              placeholder="e.g. dreamy underwater scene, slow, deep blue"
-              @keydown.enter.exact.prevent="parseIntent(nlText)"
+              :placeholder="nlSmart ? 'e.g. my camera inside a spinning heart, over a slow plasma, glitchy' : 'e.g. dreamy underwater scene, slow, deep blue'"
+              @keydown.enter.exact.prevent="nlSmart ? smartInterpret() : parseIntent(nlText)"
             />
             <div class="nl-row">
               <v-btn
@@ -4003,7 +4180,19 @@ onBeforeUnmount(() => {
                 @click="nlVoice"
               />
               <div class="nl-spacer" />
-              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-text-search-variant" @click="parseIntent(nlText)">Interpret</v-btn>
+              <v-btn v-if="nlSmart" size="small" variant="tonal" color="primary" :loading="nlBusy" prepend-icon="mdi-creation" @click="smartInterpret">Smart build</v-btn>
+              <v-btn v-else size="small" variant="tonal" color="primary" prepend-icon="mdi-text-search-variant" @click="parseIntent(nlText)">Interpret</v-btn>
+            </div>
+
+            <!-- AI plan preview (smart mode) -->
+            <div v-if="nlAiSpec" class="nl-preview">
+              <div class="nl-pv-hint">✨ Claude's plan:</div>
+              <div class="nl-ai-notes">{{ nlAiSpec.notes || 'A patch' }}</div>
+              <div class="nl-pv-row">
+                <span class="nl-pv-key">nodes</span>
+                <span v-for="(n, i) in nlAiSpec.nodes" :key="i" class="nl-chip nl-chip--dim">{{ TYPES[n.type] ? (n.slug || TYPES[n.type].title) : ('?' + n.type) }}</span>
+              </div>
+              <v-btn size="small" variant="flat" color="primary" block prepend-icon="mdi-auto-fix" class="mt-2" @click="buildFromSpec(nlAiSpec)">Build this patch</v-btn>
             </div>
 
             <!-- editable interpretation: drop anything it got wrong, then build -->
@@ -5038,7 +5227,13 @@ onBeforeUnmount(() => {
 .sources { position: absolute; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none; }
 .sources iframe, .sources video { width: 384px; height: 216px; border: 0; }
 .nl-card { padding: 12px; background: #14161e; }
-.nl-title { font-size: 0.82rem; font-weight: 600; color: #cdd3e6; margin-bottom: 8px; }
+.nl-title { font-size: 0.82rem; font-weight: 600; color: #cdd3e6; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.nl-smart-toggle {
+  font-size: 0.66rem; color: #9aa4c0; background: #1c1f2b; border: 1px solid #333;
+  border-radius: 10px; padding: 2px 9px; cursor: pointer;
+}
+.nl-smart-toggle.on { background: rgba(124,140,255,0.18); border-color: #7c8cff; color: #b7c1ff; }
+.nl-ai-notes { font-size: 0.74rem; color: #cdd3e6; margin: 2px 0 8px; font-style: italic; }
 .nl-row { display: flex; align-items: center; margin-top: 8px; }
 .nl-spacer { flex: 1; }
 .nl-preview { margin-top: 10px; padding: 8px; border: 1px solid rgba(124,140,255,0.2); border-radius: 8px; background: rgba(124,140,255,0.05); }

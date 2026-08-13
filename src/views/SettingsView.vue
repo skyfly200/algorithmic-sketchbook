@@ -15,6 +15,14 @@ const store = useSketchStore()
 const settings = useSettingsStore()
 const palettes = usePaletteStore()
 
+// Models offered for AI smart mode (Patch designer). Sonnet is the balanced
+// default; Haiku is cheaper/faster; Opus is the most capable.
+const AI_MODELS = [
+  { title: 'Claude Sonnet 5 (balanced)', value: 'claude-sonnet-5' },
+  { title: 'Claude Haiku 4.5 (fast & cheap)', value: 'claude-haiku-4-5-20251001' },
+  { title: 'Claude Opus 5 (most capable)', value: 'claude-opus-5' },
+]
+
 // --- colour palettes ---------------------------------------------------------
 const paletteBase = ref('#ff6b35')
 const paletteHarmony = ref('Triadic')
@@ -173,6 +181,47 @@ async function onPickFile(e) {
           Asks the browser to render WebGL sketches on the dedicated graphics card rather than the
           integrated one — smoother, at the cost of more power. On laptops this can spin up the discrete
           GPU and drain the battery faster. Takes effect the next time a sketch loads.
+        </p>
+      </v-card-text>
+    </v-card>
+
+    <!-- AI smart mode for the natural-language patch designer -->
+    <v-card class="mb-6" variant="tonal">
+      <v-card-title class="text-subtitle-1">
+        <v-icon icon="mdi-creation" size="small" class="mr-2" />AI smart mode (Patch designer)
+      </v-card-title>
+      <v-card-text>
+        <p class="text-caption text-medium-emphasis mt-0 mb-3">
+          The Patch “Describe a patch” tool works fully offline by default. With your own Claude API key you
+          can turn on <strong>smart mode</strong>, which sends your description (plus the list of available
+          effects/filters) to the Anthropic API and builds the whole graph it returns — better at free-form,
+          relational descriptions. The key is stored only in this browser and sent directly to Anthropic from
+          your machine; nothing goes through this site’s server.
+        </p>
+        <v-text-field
+          :model-value="settings.aiKey"
+          type="password"
+          autocomplete="off"
+          label="Claude API key (sk-ant-…)"
+          density="comfortable"
+          hide-details
+          prepend-inner-icon="mdi-key-variant"
+          class="mb-3"
+          @update:model-value="settings.setAiKey($event)"
+        />
+        <v-select
+          :model-value="settings.aiModel"
+          :items="AI_MODELS"
+          label="Model"
+          density="comfortable"
+          hide-details
+          class="mb-1"
+          style="max-width: 320px"
+          @update:model-value="settings.setAiModel($event)"
+        />
+        <p class="text-caption text-medium-emphasis mt-2 mb-0">
+          Get a key at <span class="text-primary">console.anthropic.com</span>. Each smart build is one API
+          request billed to your account. Leave the key blank to keep using the offline parser.
         </p>
       </v-card-text>
     </v-card>

@@ -40,6 +40,12 @@ export const useSettingsStore = defineStore('settings', {
       midiEnabled: s.midiEnabled ?? false, // has the user set MIDI up? (hides it in input lists until then)
       midiChannel: s.midiChannel ?? 0, // 0 = all channels, 1..16 = a specific channel
       highPerformance: s.highPerformance ?? false, // hint WebGL toward the dedicated GPU
+      // Opt-in AI "smart mode" for the natural-language patch designer. The key
+      // is the user's own Claude API key, kept only in their browser's
+      // localStorage and sent directly to the Anthropic API from their machine.
+      aiKey: s.aiKey ?? '',
+      aiModel: s.aiModel ?? 'claude-sonnet-5',
+      aiSmart: s.aiSmart ?? false, // whether the designer defaults to smart mode
     }
   },
   getters: {
@@ -53,6 +59,7 @@ export const useSettingsStore = defineStore('settings', {
         tutorials: this.tutorials, seen: this.seen, favorites: this.favorites, persistEditors: this.persistEditors,
         audioDeviceId: this.audioDeviceId, midiEnabled: this.midiEnabled, midiChannel: this.midiChannel,
         highPerformance: this.highPerformance,
+        aiKey: this.aiKey, aiModel: this.aiModel, aiSmart: this.aiSmart,
       }
       if (this.effectOff !== null) data.effectOff = this.effectOff
       else if (this.legacyIn) data.effectPool = this.legacyIn // keep legacy until migrated
@@ -75,6 +82,11 @@ export const useSettingsStore = defineStore('settings', {
     // Ask the browser to run WebGL sketches on the dedicated GPU rather than the
     // integrated one. Threaded into sketches as ?gpu=high; takes effect on reload.
     setHighPerformance(on) { this.highPerformance = !!on; this.persist() },
+    // AI smart-mode config (Claude API key + model). The key never leaves the
+    // browser except in the direct request to the Anthropic API.
+    setAiKey(k) { this.aiKey = (k || '').trim(); this.persist() },
+    setAiModel(m) { this.aiModel = m || 'claude-sonnet-5'; this.persist() },
+    setAiSmart(on) { this.aiSmart = !!on; this.persist() },
     // Wipe the editors' working state (but not the saved library). The editors
     // read their state at mount, so a reload gives them a clean slate.
     clearSession() {
