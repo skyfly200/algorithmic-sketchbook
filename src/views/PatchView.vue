@@ -460,7 +460,7 @@ function addNode(type) {
                         : type === 'polygon'
                           ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0 }
                           : type === 'geo'
-                            ? { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28, source: 'Shape', cloud: 'Galaxy', voxel: 'Sphere', count: 12000, res: 18, pointSize: 0.03, dataVer: 0 }
+                            ? { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28, source: 'Shape', cloud: 'Galaxy', voxel: 'Sphere', count: 12000, res: 18, pointSize: 0.03, dataVer: 0, lat: 46.5, lon: 8.0, zoom: 11, terrainRes: 96, verticalScale: 0.6, drape: true }
                             : type === 'vcam'
                               ? { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, lightSat: 34, lightVal: 86, spin: true }
                               : type === 'mask'
@@ -1082,7 +1082,7 @@ function buildFromSpec(spec) {
       case 'polygon': { const shp = POLY_SHAPES[capitalize(n.shape)]; params = { points: (shp || [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]).map((p) => [...p]), feather: nlNum(n.feather, 0, 0, 0.5) }; break }
       case 'mask': params = { mode: 'multiply', strength: 1, invert: !!n.invert }; break
       case 'portal': params = { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }; break
-      case 'geo': params = { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28, source: 'Shape', cloud: 'Galaxy', voxel: 'Sphere', count: 12000, res: 18, pointSize: 0.03, dataVer: 0 }; break
+      case 'geo': params = { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28, source: 'Shape', cloud: 'Galaxy', voxel: 'Sphere', count: 12000, res: 18, pointSize: 0.03, dataVer: 0, lat: 46.5, lon: 8.0, zoom: 11, terrainRes: 96, verticalScale: 0.6, drape: true }; break
       case 'vcam': params = { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, lightSat: 34, lightVal: 86, spin: true }; break
       default: params = {}
     }
@@ -2514,7 +2514,7 @@ function buildObject(geo) {
 }
 
 // --- point cloud + voxel geometry sources ----------------------------------
-const GEO_SOURCES = ['Shape', 'Point cloud', 'Voxel']
+const GEO_SOURCES = ['Shape', 'Point cloud', 'Voxel', 'Terrain']
 const GEO_CLOUDS = ['Galaxy', 'Sphere', 'Torus', 'Terrain', 'Cube', 'Imported']
 const GEO_VOXELS = ['Sphere', 'Terrain', 'Gyroid', 'Shell']
 // Generate a procedural point cloud: {positions, colors} in unit-ish space,
@@ -2599,15 +2599,88 @@ function buildVoxelObject(geo) {
 // clouds and voxels bake their colours/size into the geometry, so those are part
 // of their signature; a plain Shape updates colour live and leaves them out.
 function geoSig(geo) {
-  const baked = geo.source === 'Shape' ? '' : `${geo.hue}/${geo.sat}/${geo.val}/${geo.pointSize}`
+  const baked = geo.source === 'Shape' ? '' : `${geo.hue}/${geo.sat}/${geo.val}/${geo.pointSize}/${geo.verticalScale}`
   return [geo.source, geo.shape, geo.material, geo.detail, geo.flutes, geo.twist, geo.groove, geo.cloud, geo.voxel, geo.count, geo.res, geo.dataVer, baked].join('|')
 }
 function buildGeoObject(geo) {
   let obj
   if (geo.source === 'Point cloud') obj = buildPointsObject(geo)
   else if (geo.source === 'Voxel') obj = buildVoxelObject(geo)
+  else if (geo.source === 'Terrain') obj = buildTerrainObject(geo)
   else obj = buildObject(geo)
   obj.userData.sig = geoSig(geo)
+  return obj
+}
+// --- 3D terrain from public elevation (DEM) tiles --------------------------
+function loadCorsImage(url) { return new Promise((res) => { const im = new Image(); im.crossOrigin = 'anonymous'; im.onload = () => res(im); im.onerror = () => res(null); im.src = url }) }
+function terrainTileUrl(z, x, y) {
+  const key = settings.mapKey, prov = settings.mapProvider
+  if (key && prov === 'mapbox') return `https://api.mapbox.com/v4/mapbox.terrain-rgb/${z}/${x}/${y}.pngraw?access_token=${key}`
+  if (key && prov === 'maptiler') return `https://api.maptiler.com/tiles/terrain-rgb-v2/${z}/${x}/${y}.webp?key=${key}`
+  return `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png` // free, CORS-enabled
+}
+function decodeElev(r, g, b) {
+  if (settings.mapKey && (settings.mapProvider === 'mapbox' || settings.mapProvider === 'maptiler')) return -10000 + (r * 65536 + g * 256 + b) * 0.1 // terrain-RGB
+  return (r * 256 + g + b / 256) - 32768 // Terrarium
+}
+function sampleTile(img, N) {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256
+  const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0, 256, 256)
+  try { return cx.getImageData(0, 0, 256, 256).data } catch { return null }
+}
+// Fetch one DEM tile for the node's lat/lon/zoom, decode a heightfield, and
+// (optionally) drape the matching satellite tile as vertex colours.
+async function fetchTerrain(node, sig) {
+  const p = node.params
+  const z = Math.max(1, Math.min(14, Math.round(p.zoom ?? 11)))
+  const x = Math.floor(lonToTileX(p.lon ?? 8, z)), y = Math.floor(latToTileY(p.lat ?? 46.5, z))
+  const dem = await loadCorsImage(terrainTileUrl(z, x, y))
+  if (!dem) { st(node.id).terrainErr = true; return }
+  const demData = sampleTile(dem); if (!demData) { st(node.id).terrainErr = true; return }
+  const N = Math.max(16, Math.min(180, Math.round(p.terrainRes ?? 96)))
+  const heights = new Float32Array(N * N)
+  let minH = Infinity, maxH = -Infinity
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const px = Math.round(i / (N - 1) * 255), py = Math.round(j / (N - 1) * 255), o = (py * 256 + px) * 4
+    const h = decodeElev(demData[o], demData[o + 1], demData[o + 2]); heights[j * N + i] = h
+    if (h < minH) minH = h; if (h > maxH) maxH = h
+  }
+  let colors = null
+  if (p.drape) {
+    const sat = await loadCorsImage(mapTileUrl('Satellite', z, x, y))
+    const sd = sat && sampleTile(sat)
+    if (sd) { colors = new Float32Array(N * N * 3); for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const px = Math.round(i / (N - 1) * 255), py = Math.round(j / (N - 1) * 255), o = (py * 256 + px) * 4, k = (j * N + i) * 3; colors[k] = sd[o] / 255; colors[k + 1] = sd[o + 1] / 255; colors[k + 2] = sd[o + 2] / 255 } }
+  }
+  st(node.id).terrain = { ready: true, N, heights, minH, maxH, colors, sig }
+  node.params.dataVer = (node.params.dataVer || 0) + 1
+  persist()
+}
+function buildTerrainObject(geo) {
+  const T = geo.terrainData
+  const N = T?.ready ? T.N : 24
+  const g = new THREE.PlaneGeometry(2.6, 2.6, N - 1, N - 1)
+  g.rotateX(-Math.PI / 2)
+  const pos = g.attributes.position
+  const vscale = geo.verticalScale ?? 0.6
+  const base = hsvToHsl(geo.hue, geo.sat, geo.val), c = new THREE.Color()
+  const col = new Float32Array(pos.count * 3)
+  if (T?.ready) {
+    const range = (T.maxH - T.minH) || 1
+    for (let i = 0; i < pos.count; i++) {
+      const nh = (T.heights[i] - T.minH) / range
+      pos.setY(i, (nh - 0.4) * vscale * 1.4)
+      if (T.colors) { col[i * 3] = T.colors[i * 3]; col[i * 3 + 1] = T.colors[i * 3 + 1]; col[i * 3 + 2] = T.colors[i * 3 + 2] }
+      else { c.setHSL(base.h, base.s, 0.22 + nh * 0.62); col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b }
+    }
+    pos.needsUpdate = true
+  } else {
+    for (let i = 0; i < pos.count; i++) { c.setHSL(base.h, base.s, 0.35); col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b }
+  }
+  g.computeVertexNormals()
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.95 })
+  const obj = new THREE.Mesh(g, mat)
+  obj.userData = { source: 'Terrain', base: Float32Array.from(pos.array), nrm: Float32Array.from(g.attributes.normal.array), warped: false }
   return obj
 }
 // Parse an imported .ply (ASCII) or .xyz point file → {positions, colors},
@@ -2798,10 +2871,17 @@ function drawGeoGlyph(ctx, ang, hue, warp, shape, sat, val) {
 function evalGeo(node, octx) {
   const p = node.params
   const rs = st(node.id)
+  // Terrain: (re)fetch the DEM (+ optional satellite drape) when the place or
+  // settings change; the heightfield mesh rebuilds once dataVer bumps.
+  if (p.source === 'Terrain') {
+    const tsig = [p.lat, p.lon, p.zoom, p.terrainRes, p.drape ? 1 : 0, settings.mapKey ? settings.mapProvider : 'free'].join(',')
+    if (rs.terrainSig !== tsig) { rs.terrainSig = tsig; rs.terrainErr = false; fetchTerrain(node, tsig) }
+  }
   rs.geo = {
     shape: p.shape, material: p.material, hue: p.hue, sat: p.sat, val: p.val, displace: p.displace, freq: p.freq, spin: p.spin, detail: p.detail, flutes: p.flutes, twist: p.twist, groove: p.groove,
-    source: p.source ?? 'Shape', cloud: p.cloud, voxel: p.voxel, count: p.count, res: p.res, pointSize: p.pointSize, dataVer: p.dataVer,
+    source: p.source ?? 'Shape', cloud: p.cloud, voxel: p.voxel, count: p.count, res: p.res, pointSize: p.pointSize, dataVer: p.dataVer, verticalScale: p.verticalScale,
     cloudData: (p.source === 'Point cloud' && p.cloud === 'Imported') ? rs.cloudData : null,
+    terrainData: (p.source === 'Terrain') ? rs.terrain : null,
   }
   const t = performance.now() * 0.001
   octx.fillStyle = '#0a0e14'
@@ -5250,13 +5330,26 @@ onBeforeUnmount(() => {
               <label>point size <NumSlider :min="0.005" :max="0.12" :step="0.005" :model-value="n.params.pointSize ?? 0.03" @update:model-value="n.params.pointSize = $event" @commit="persist" /></label>
               <div class="shape-row"><button class="shape-btn" @pointerdown.stop @click="importGeoPointFile(n)">import .ply / .xyz</button></div>
             </template>
-            <template v-else>
+            <template v-else-if="n.params.source === 'Voxel'">
               <label>voxels
                 <select v-model="n.params.voxel" @change="persist" @pointerdown.stop>
                   <option v-for="vx in GEO_VOXELS" :key="vx" :value="vx">{{ vx }}</option>
                 </select>
               </label>
               <label>resolution <NumSlider :min="6" :max="46" :step="1" :model-value="n.params.res ?? 18" @update:model-value="n.params.res = $event" @commit="persist" /></label>
+            </template>
+            <template v-else>
+              <div class="media-hint">Real-world 3D terrain from public elevation tiles, draped with satellite imagery. {{ settings.mapKey ? '' : 'Free Terrarium DEM by default.' }}</div>
+              <label>latitude <NumSlider :min="-85" :max="85" :step="0.01" :model-value="n.params.lat ?? 46.5" @update:model-value="n.params.lat = $event" @commit="persist" /></label>
+              <label>longitude <NumSlider :min="-180" :max="180" :step="0.01" :model-value="n.params.lon ?? 8" @update:model-value="n.params.lon = $event" @commit="persist" /></label>
+              <label>zoom <NumSlider :min="6" :max="14" :step="1" :model-value="n.params.zoom ?? 11" @update:model-value="n.params.zoom = $event" @commit="persist" /></label>
+              <label>resolution <NumSlider :min="16" :max="180" :step="4" :model-value="n.params.terrainRes ?? 96" @update:model-value="n.params.terrainRes = $event" @commit="persist" /></label>
+              <label>height <NumSlider :min="0.1" :max="2" :step="0.05" :model-value="n.params.verticalScale ?? 0.6" @update:model-value="n.params.verticalScale = $event" @commit="persist" /></label>
+              <label class="chk"><input type="checkbox" :checked="n.params.drape !== false" @change="n.params.drape = $event.target.checked; persist()" @pointerdown.stop /> drape satellite</label>
+              <div class="shape-row">
+                <button class="shape-btn" @pointerdown.stop @click="geoGoto(n, 'grand')">Grand Canyon</button>
+                <button class="shape-btn" @pointerdown.stop @click="geoGoto(n, 'alps')">Alps</button>
+              </div>
             </template>
             <label>color <ColorField v-model:h="n.params.hue" v-model:s="n.params.sat" v-model:v="n.params.val" @change="persist" /></label>
             <label v-if="(n.params.source || 'Shape') !== 'Voxel'">displace <NumSlider :min="0" :max="1" :step="0.01" :model-value="n.params.displace" @update:model-value="n.params.displace = $event" @commit="persist" /></label>
