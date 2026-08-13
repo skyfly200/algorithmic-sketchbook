@@ -132,6 +132,9 @@ const TYPES = {
   effect: { title: 'Effect', ins: 0, color: '#7c8cff', icon: 'mdi-creation' },
   filter: { title: 'Filter', ins: 1, color: '#c98cff', icon: 'mdi-image-filter-vintage' },
   media: { title: 'Media', ins: 0, color: '#4dd0c4', icon: 'mdi-image-multiple' }, // camera / files / clips
+  // Live map / satellite imagery for a place — a 2D image source you can pipe,
+  // filter and composite. Public tiles by default; a key upgrades the provider.
+  geodata: { title: 'Geodata', ins: 0, color: '#5bd6a8', icon: 'mdi-earth' },
   text: { title: 'Text', ins: 0, color: '#ff9ec4', icon: 'mdi-format-text' },
   // A loaded image (or sprite-sheet) positioned in the frame, animated over time
   // by a motion preset and/or control-mapped x/y/scale/rotate/opacity.
@@ -446,6 +449,8 @@ function addNode(type) {
                   ? { thresh: 0.5, smooth: 0.7 }
                   : type === 'media'
                     ? { mode: 'camera', mediaId: null }
+                    : type === 'geodata'
+                      ? { layer: 'Satellite', lat: 36.06, lon: -112.14, zoom: 12, drift: 0.15 }
                     : type === 'text'
                       ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false, seqMode: 'off', lyrics: '', lineDur: 3, loopSeq: true, transition: 'None', transDur: 0.4 }
                       : type === 'sprite'
@@ -2864,6 +2869,85 @@ function evalCamera(node, octx) {
   cover(octx, renderer.domElement, renderer.domElement.width, renderer.domElement.height)
 }
 
+// --- Geodata: live slippy-map / satellite tiles as a 2D image source --------
+const GEO_LAYERS = ['Streets', 'Satellite', 'Topographic', 'Dark']
+const geoTileCache = new Map() // url -> { img, ok, err }
+function getMapTile(url) {
+  let e = geoTileCache.get(url)
+  if (!e) {
+    e = { img: new Image(), ok: false, err: false }
+    e.img.crossOrigin = 'anonymous'
+    e.img.onload = () => { e.ok = true }
+    e.img.onerror = () => { e.err = true }
+    e.img.src = url
+    geoTileCache.set(url, e)
+    if (geoTileCache.size > 500) { const k = geoTileCache.keys().next().value; geoTileCache.delete(k) }
+  }
+  return e
+}
+const lonToTileX = (lon, z) => (lon + 180) / 360 * (2 ** z)
+const latToTileY = (lat, z) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * (2 ** z) }
+// Tile URL: free no-key public sources by default; a MapTiler/Mapbox key
+// (Settings) upgrades the imagery. Note Esri uses {z}/{y}/{x} order.
+function mapTileUrl(layer, z, x, y) {
+  const key = settings.mapKey, prov = settings.mapProvider
+  if (key && prov === 'maptiler') {
+    const set = layer === 'Satellite' ? 'satellite-v2' : layer === 'Topographic' ? 'outdoor-v2' : layer === 'Dark' ? 'streets-v2-dark' : 'streets-v2'
+    const ext = layer === 'Satellite' ? 'jpg' : 'png'
+    return `https://api.maptiler.com/maps/${set}/${z}/${x}/${y}.${ext}?key=${key}`
+  }
+  if (key && prov === 'mapbox') {
+    const set = layer === 'Satellite' ? 'mapbox.satellite' : 'mapbox.mapbox-streets-v8'
+    if (layer === 'Satellite') return `https://api.mapbox.com/v4/mapbox.satellite/${z}/${x}/${y}@2x.jpg90?access_token=${key}`
+    const style = layer === 'Dark' ? 'dark-v11' : layer === 'Topographic' ? 'outdoors-v12' : 'streets-v12'
+    return `https://api.mapbox.com/styles/v1/mapbox/${style}/tiles/512/${z}/${x}/${y}@2x?access_token=${key}`
+  }
+  // free defaults
+  if (layer === 'Satellite') return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
+  if (layer === 'Topographic') return `https://a.tile.opentopomap.org/${z}/${x}/${y}.png`
+  if (layer === 'Dark') return `https://a.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}.png`
+  return `https://a.tile.openstreetmap.org/${z}/${x}/${y}.png`
+}
+function drawGeodata(node, octx) {
+  const p = node.params
+  const z = Math.max(1, Math.min(19, Math.round(p.zoom ?? 12)))
+  const n2 = 2 ** z
+  const now = performance.now()
+  const dt = node._geoLast ? Math.min(0.05, (now - node._geoLast) / 1000) : 0.016; node._geoLast = now
+  node._geoPan = (node._geoPan ?? 0) + (p.drift ?? 0) * dt * 0.12 // slow east/west drift, in tiles
+  const cxT = lonToTileX(p.lon ?? 0, z) + node._geoPan
+  const cyT = latToTileY(p.lat ?? 0, z)
+  const tile = Math.max(256, Math.round(Math.min(W, H) / 2)) // scale tiles to the compositor size
+  octx.fillStyle = '#0a0e14'; octx.fillRect(0, 0, W, H)
+  const halfCols = Math.ceil((W / tile) / 2) + 1
+  const halfRows = Math.ceil((H / tile) / 2) + 1
+  let loaded = 0, total = 0
+  octx.imageSmoothingEnabled = true
+  for (let dxi = -halfCols; dxi <= halfCols; dxi++) for (let dyi = -halfRows; dyi <= halfRows; dyi++) {
+    const ix = Math.floor(cxT) + dxi, iy = Math.floor(cyT) + dyi
+    if (iy < 0 || iy >= n2) continue
+    const wx = ((ix % n2) + n2) % n2
+    const sx = W / 2 + (ix - cxT) * tile, sy = H / 2 + (iy - cyT) * tile
+    total++
+    const e = getMapTile(mapTileUrl(p.layer || 'Satellite', z, wx, iy))
+    if (e.ok) { octx.drawImage(e.img, sx, sy, tile + 1, tile + 1); loaded++ }
+  }
+  // attribution + a hint while tiles stream in
+  octx.fillStyle = 'rgba(255,255,255,0.55)'
+  octx.font = `${Math.round(H * 0.028)}px system-ui, sans-serif`
+  octx.textAlign = 'right'
+  const attr = settings.mapKey ? (settings.mapProvider === 'mapbox' ? '© Mapbox © OSM' : '© MapTiler © OSM') : (p.layer === 'Satellite' ? 'Esri, Maxar' : p.layer === 'Topographic' ? '© OpenTopoMap' : '© OpenStreetMap')
+  octx.fillText(attr, W - Math.round(H * 0.02), H - Math.round(H * 0.02))
+  if (total && loaded < total) {
+    octx.textAlign = 'center'; octx.fillStyle = 'rgba(230,240,255,0.8)'
+    octx.font = `${Math.round(H * 0.05)}px system-ui, sans-serif`
+    octx.fillText('loading map…', W / 2, H / 2)
+  }
+}
+
+const GEO_PLACES = { grand: { lat: 36.06, lon: -112.14, zoom: 12 }, alps: { lat: 45.98, lon: 7.66, zoom: 12 }, tokyo: { lat: 35.68, lon: 139.76, zoom: 13 } }
+function geoGoto(node, key) { const g = GEO_PLACES[key]; if (g) { Object.assign(node.params, g); node._geoPan = 0; persist() } }
+
 function evalNode(node) {
   const s = st(node.id)
   const octx = s.octx
@@ -2875,6 +2959,7 @@ function evalNode(node) {
 
   if (node.type === 'geo') { evalGeo(node, octx); return }
   if (node.type === 'vcam') { evalCamera(node, octx); return }
+  if (node.type === 'geodata') { drawGeodata(node, octx); return }
 
   if (node.type === 'effect') {
     try {
@@ -4302,6 +4387,7 @@ onBeforeUnmount(() => {
         <v-btn data-tour="patch-add" icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
         <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
         <v-btn icon="mdi-image-multiple" variant="tonal" size="small" title="Add Media (camera · files · clips)" :style="{ color: TYPES.media.color }" @click="addNode('media')" />
+        <v-btn icon="mdi-earth" variant="tonal" size="small" title="Add Geodata (live map / satellite imagery)" :style="{ color: TYPES.geodata.color }" @click="addNode('geodata')" />
         <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
         <v-btn icon="mdi-vector-polygon" variant="tonal" size="small" title="Add Polygon (an editable matte shape — wire into a Mask)" :style="{ color: TYPES.polygon.color }" @click="addNode('polygon')" />
         <v-btn icon="mdi-shape-outline" variant="tonal" size="small" title="Add Portal (remap a region elsewhere)" :style="{ color: TYPES.portal.color }" @click="addNode('portal')" />
@@ -5213,6 +5299,23 @@ onBeforeUnmount(() => {
             <button class="load-btn" title="Import photos or videos from Google Photos" @pointerdown.stop @click="importGooglePhotos(n)">🖼 Google Photos</button>
             <div v-if="n.params.mode === 'camera' && !cameraOn" class="media-hint">Camera is off — enable it with the webcam button in the toolbar.</div>
             <button v-if="n.params.mode === 'camera' && cameraOn" class="load-btn" title="Flip between the front and back camera" @pointerdown.stop @click="flipCamera">🔄 Flip camera</button>
+          </template>
+          <template v-if="n.type === 'geodata'">
+            <div class="media-hint">Live map / satellite imagery for a place — a 2D image source. {{ settings.mapKey ? 'Using your ' + settings.mapProvider + ' key.' : 'Free public tiles (add a key in Settings for higher quality).' }}</div>
+            <label>layer
+              <select v-model="n.params.layer" @change="persist" @pointerdown.stop>
+                <option v-for="l in GEO_LAYERS" :key="l" :value="l">{{ l }}</option>
+              </select>
+            </label>
+            <label>latitude <NumSlider :min="-85" :max="85" :step="0.01" :model-value="n.params.lat" @update:model-value="n.params.lat = $event" @commit="persist" /></label>
+            <label>longitude <NumSlider :min="-180" :max="180" :step="0.01" :model-value="n.params.lon" @update:model-value="n.params.lon = $event" @commit="persist" /></label>
+            <label>zoom <NumSlider :min="1" :max="19" :step="1" :model-value="n.params.zoom" @update:model-value="n.params.zoom = $event" @commit="persist" /></label>
+            <label>drift <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.drift" @update:model-value="n.params.drift = $event" @commit="persist" /></label>
+            <div class="shape-row">
+              <button class="shape-btn" title="Jump to a preset place" @pointerdown.stop @click="geoGoto(n, 'grand')">Grand Canyon</button>
+              <button class="shape-btn" @pointerdown.stop @click="geoGoto(n, 'alps')">Alps</button>
+              <button class="shape-btn" @pointerdown.stop @click="geoGoto(n, 'tokyo')">Tokyo</button>
+            </div>
           </template>
           <template v-if="n.type === 'text'">
             <textarea class="text-in" rows="2" :value="n.params.text" placeholder="type…&#10;(enter for a new line)" @input="n.params.text = $event.target.value; persist()" @pointerdown.stop @keydown.stop></textarea>

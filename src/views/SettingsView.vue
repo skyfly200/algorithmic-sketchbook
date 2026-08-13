@@ -226,6 +226,39 @@ async function onPickFile(e) {
       </v-card-text>
     </v-card>
 
+    <!-- Geodata / map provider -->
+    <v-card class="mb-6" variant="tonal">
+      <v-card-title class="text-subtitle-1">
+        <v-icon icon="mdi-earth" size="small" class="mr-2" />Geodata (maps &amp; terrain)
+      </v-card-title>
+      <v-card-text>
+        <p class="text-caption text-medium-emphasis mt-0 mb-3">
+          The Geodata node and the Geometry node's Terrain source pull map, satellite and elevation tiles.
+          They work out of the box with <strong>free public tiles</strong> (OpenStreetMap, Esri World Imagery,
+          AWS Terrarium elevation). Add a <strong>MapTiler</strong> or <strong>Mapbox</strong> key for
+          higher-quality imagery and terrain; the key is stored only in this browser.
+        </p>
+        <v-select
+          :model-value="settings.mapProvider"
+          :items="[{ title: 'MapTiler', value: 'maptiler' }, { title: 'Mapbox', value: 'mapbox' }]"
+          label="Provider (when a key is set)"
+          density="comfortable" hide-details style="max-width: 320px" class="mb-3"
+          @update:model-value="settings.setMapProvider($event)"
+        />
+        <v-text-field
+          :model-value="settings.mapKey"
+          type="password" autocomplete="off"
+          label="Map provider key (optional)"
+          density="comfortable" hide-details prepend-inner-icon="mdi-key-variant"
+          @update:model-value="settings.setMapKey($event)"
+        />
+        <p class="text-caption text-medium-emphasis mt-2 mb-0">
+          Free keys at <span class="text-primary">maptiler.com</span> or <span class="text-primary">mapbox.com</span>.
+          Leave blank to use the free public tiles. Please respect each provider's attribution and usage limits.
+        </p>
+      </v-card-text>
+    </v-card>
+
     <!-- Colour palettes -->
     <v-card class="mb-6" variant="tonal">
       <v-card-title class="text-subtitle-1">
