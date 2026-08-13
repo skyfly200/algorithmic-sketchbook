@@ -259,6 +259,28 @@ async function onPickFile(e) {
       </v-card-text>
     </v-card>
 
+    <!-- Google Photos -->
+    <v-card class="mb-6" variant="tonal">
+      <v-card-title class="text-subtitle-1">
+        <v-icon icon="mdi-google-photos" size="small" class="mr-2" />Google Photos import
+      </v-card-title>
+      <v-card-text>
+        <p class="text-caption text-medium-emphasis mt-0 mb-3">
+          Import photos and videos from your Google Photos library (via the official Photos Picker). Needs a
+          Google OAuth <strong>client ID</strong>: create one at <span class="text-primary">console.cloud.google.com</span>
+          (OAuth client, type “Web application”), enable the Photos Picker API, and add this site's origin to the
+          authorized JavaScript origins. Paste the client ID here — it's stored only in this browser.
+        </p>
+        <v-text-field
+          :model-value="settings.googleClientId"
+          type="password" autocomplete="off"
+          label="Google OAuth client ID (…apps.googleusercontent.com)"
+          density="comfortable" hide-details prepend-inner-icon="mdi-key-variant"
+          @update:model-value="settings.setGoogleClientId($event)"
+        />
+      </v-card-text>
+    </v-card>
+
     <!-- Colour palettes -->
     <v-card class="mb-6" variant="tonal">
       <v-card-title class="text-subtitle-1">

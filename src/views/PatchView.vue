@@ -27,7 +27,7 @@ import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
 import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, sharedCameraStream, flipSharedCamera } from '../stores/media.js'
-import { pickFromGooglePhotos } from '../lib/googlePhotos.js'
+import { pickFromGooglePhotos, setGooglePhotosClientId, googlePhotosConfigured } from '../lib/googlePhotos.js'
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
 // feed, so in the graph they live behind a dedicated Filter node type that
 // pipes its video input straight into them.
@@ -2160,6 +2160,53 @@ function pickMedia(node, id) {
   persist()
 }
 // Import from Google Photos via the Picker API (needs VITE_GOOGLE_CLIENT_ID).
+// --- media ingest wizard ---------------------------------------------------
+// One guided place to bring content in and drop the right node onto the graph:
+// images/video (Media/Sprite), a URL, screen capture, Google Photos, a point
+// cloud / LiDAR scan (Geometry), live map/satellite (Geodata) or 3D terrain.
+const wizOpen = ref(false)
+const wizHasGoogle = computed(() => googlePhotosConfigured())
+function wizNode(type) { addNode(type); return nodes[nodes.length - 1] }
+function wizUploadFiles() {
+  const inp = document.createElement('input')
+  inp.type = 'file'; inp.accept = 'image/*,video/*'; inp.multiple = true
+  inp.onchange = () => {
+    let first = null
+    for (const f of inp.files) { const it = addMediaFile(f); if (!first) first = it }
+    if (first) { const n = wizNode('media'); n.params.mode = 'library'; n.params.mediaId = first.id; persist(); showToast(`Added ${inp.files.length} file(s)`) }
+    wizOpen.value = false
+  }
+  inp.click()
+}
+async function wizFromUrl() {
+  const url = window.prompt('Paste an image or video URL:')
+  if (!url) return
+  try {
+    const r = await fetch(url); if (!r.ok) throw new Error(r.status)
+    const blob = await r.blob()
+    const name = (url.split('/').pop() || 'url-media').split('?')[0]
+    const it = addMediaFile(new File([blob], name, { type: blob.type || 'image/png' }))
+    const n = wizNode('media'); n.params.mode = 'library'; n.params.mediaId = it.id; persist()
+    showToast('Imported from URL'); wizOpen.value = false
+  } catch { showToast('URL import failed (the host may block cross-origin fetches)') }
+}
+async function wizScreenGrab() {
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
+    const v = document.createElement('video'); v.srcObject = stream; v.muted = true; await v.play()
+    await new Promise((r) => setTimeout(r, 350))
+    const cv = document.createElement('canvas'); cv.width = v.videoWidth || 1280; cv.height = v.videoHeight || 720
+    cv.getContext('2d').drawImage(v, 0, 0, cv.width, cv.height)
+    stream.getTracks().forEach((t) => t.stop())
+    cv.toBlob((bl) => { if (!bl) return; const it = addMediaFile(new File([bl], 'screen-grab.png', { type: 'image/png' })); const n = wizNode('media'); n.params.mode = 'library'; n.params.mediaId = it.id; persist(); showToast('Captured screen') })
+    wizOpen.value = false
+  } catch { showToast('Screen capture cancelled') }
+}
+function wizGoogle() { const n = wizNode('media'); n.params.mode = 'library'; importGooglePhotos(n); wizOpen.value = false }
+function wizPointCloud() { const n = wizNode('geo'); n.params.source = 'Point cloud'; n.params.cloud = 'Imported'; persist(); importGeoPointFile(n); wizOpen.value = false }
+function wizGeodata() { wizNode('geodata'); wizOpen.value = false }
+function wizTerrain() { const n = wizNode('geo'); n.params.source = 'Terrain'; persist(); wizOpen.value = false }
+
 async function importGooglePhotos(node) {
   try {
     const picks = await pickFromGooglePhotos((m) => { if (m) showToast(m + '…') })
@@ -4349,6 +4396,7 @@ function finishTour(payload) { settings.markSeen('patch'); if (payload?.disableA
 onMounted(async () => {
   document.addEventListener('fullscreenchange', onFsChange)
   document.addEventListener('webkitfullscreenchange', onFsChange)
+  setGooglePhotosClientId(settings.googleClientId) // enable Google Photos if a client id is set
   if (settings.shouldAutoTour('patch')) setTimeout(startTour, 600)
   // Handoff from the Mixer / Autopilot: a converted graph waiting to be edited.
   const handoff = localStorage.getItem(PATCH_HANDOFF_KEY)
@@ -4468,6 +4516,7 @@ onBeforeUnmount(() => {
         <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
         <v-btn icon="mdi-image-multiple" variant="tonal" size="small" title="Add Media (camera · files · clips)" :style="{ color: TYPES.media.color }" @click="addNode('media')" />
         <v-btn icon="mdi-earth" variant="tonal" size="small" title="Add Geodata (live map / satellite imagery)" :style="{ color: TYPES.geodata.color }" @click="addNode('geodata')" />
+        <v-btn icon="mdi-tray-arrow-down" variant="text" size="small" title="Import wizard — bring in media, URLs, screen, Google Photos, point clouds, maps &amp; terrain" @click="wizOpen = true" />
         <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
         <v-btn icon="mdi-vector-polygon" variant="tonal" size="small" title="Add Polygon (an editable matte shape — wire into a Mask)" :style="{ color: TYPES.polygon.color }" @click="addNode('polygon')" />
         <v-btn icon="mdi-shape-outline" variant="tonal" size="small" title="Add Portal (remap a region elsewhere)" :style="{ color: TYPES.portal.color }" @click="addNode('portal')" />
@@ -5385,11 +5434,12 @@ onBeforeUnmount(() => {
                 <option v-for="m in mediaLibrary" :key="m.id" :value="m.id">{{ m.kind === 'video' ? '▶' : '🖼' }} {{ m.name }}</option>
               </select>
             </label>
+            <button class="load-btn" title="Open the import wizard — files, URL, screen, Google Photos, point clouds, maps" @pointerdown.stop @click="wizOpen = true">🧭 Import wizard…</button>
             <label class="load-btn" title="Load images or videos into the library" @pointerdown.stop>
               ＋ Load files
               <input type="file" accept="image/*,video/*" multiple hidden @change="loadMediaFiles(n, $event)" />
             </label>
-            <button class="load-btn" title="Import photos or videos from Google Photos" @pointerdown.stop @click="importGooglePhotos(n)">🖼 Google Photos</button>
+            <button class="load-btn" :title="wizHasGoogle ? 'Import photos or videos from Google Photos' : 'Add a Google client ID in Settings first'" @pointerdown.stop @click="wizHasGoogle ? importGooglePhotos(n) : router.push({ name: 'settings' })">🖼 Google Photos{{ wizHasGoogle ? '' : ' (setup)' }}</button>
             <div v-if="n.params.mode === 'camera' && !cameraOn" class="media-hint">Camera is off — enable it with the webcam button in the toolbar.</div>
             <button v-if="n.params.mode === 'camera' && cameraOn" class="load-btn" title="Flip between the front and back camera" @pointerdown.stop @click="flipCamera">🔄 Flip camera</button>
           </template>
@@ -5605,6 +5655,42 @@ onBeforeUnmount(() => {
 
     <div v-show="!outputOnly" class="hint">Drag a node's right port to another node's left port to wire it. Drag an Input node's ▣ output to any param's ▣ jack to modulate it. Click a wire to remove it.</div>
 
+    <!-- media ingest wizard -->
+    <div v-if="wizOpen" class="wiz-backdrop" @pointerdown.self="wizOpen = false">
+      <div class="wiz" @pointerdown.stop>
+        <div class="wiz-head">
+          <v-icon icon="mdi-tray-arrow-down" size="18" class="mr-2" />
+          <span class="wiz-title">Import content</span>
+          <span class="show-spacer" />
+          <v-btn icon="mdi-close" size="x-small" variant="text" @click="wizOpen = false" />
+        </div>
+        <div class="wiz-grid">
+          <button class="wiz-card" @click="wizUploadFiles">
+            <v-icon icon="mdi-file-image-outline" size="26" /><span>Images / Video</span><small>Files → Media / Sprite</small>
+          </button>
+          <button class="wiz-card" @click="wizFromUrl">
+            <v-icon icon="mdi-link-variant" size="26" /><span>From URL</span><small>Paste an image/video link</small>
+          </button>
+          <button class="wiz-card" @click="wizScreenGrab">
+            <v-icon icon="mdi-monitor-screenshot" size="26" /><span>Screen grab</span><small>Snapshot a window/screen</small>
+          </button>
+          <button class="wiz-card" :class="{ 'wiz-card--dim': !wizHasGoogle }" @click="wizHasGoogle ? wizGoogle() : router.push({ name: 'settings' })">
+            <v-icon icon="mdi-google-photos" size="26" /><span>Google Photos</span><small>{{ wizHasGoogle ? 'Pick from your library' : 'Add a client ID in Settings' }}</small>
+          </button>
+          <button class="wiz-card" @click="wizPointCloud">
+            <v-icon icon="mdi-dots-hexagon" size="26" /><span>Point cloud / LiDAR</span><small>.ply / .xyz / .pts → Geometry</small>
+          </button>
+          <button class="wiz-card" @click="wizGeodata">
+            <v-icon icon="mdi-map" size="26" /><span>Map / Satellite</span><small>Live tiles → Geodata node</small>
+          </button>
+          <button class="wiz-card" @click="wizTerrain">
+            <v-icon icon="mdi-terrain" size="26" /><span>3D Terrain</span><small>Elevation → Geometry / Camera</small>
+          </button>
+        </div>
+        <div class="wiz-note">Point clouds accept common LiDAR exports (.ply/.xyz/.pts). Maps &amp; terrain use free public tiles; add a provider key in Settings for higher quality.</div>
+      </div>
+    </div>
+
     <transition name="toast-fade">
       <div v-if="toast" class="save-toast"><v-icon icon="mdi-check-circle" size="16" class="mr-1" />{{ toast }}</div>
     </transition>
@@ -5618,6 +5704,21 @@ onBeforeUnmount(() => {
 .stage { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
 .sources { position: absolute; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none; }
 .sources iframe, .sources video { width: 384px; height: 216px; border: 0; }
+.wiz-backdrop { position: fixed; inset: 0; z-index: 4000; background: rgba(5,6,10,0.6); display: flex; align-items: center; justify-content: center; }
+.wiz { width: min(560px, 92vw); background: #14161e; border: 1px solid #2a2f40; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.6); overflow: hidden; }
+.wiz-head { display: flex; align-items: center; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.07); color: #cdd3e6; }
+.wiz-title { font-weight: 600; font-size: 0.9rem; }
+.wiz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding: 12px; }
+.wiz-card {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center;
+  padding: 14px 8px; border-radius: 10px; cursor: pointer; color: #cdd3e6;
+  background: #1a1d28; border: 1px solid #2a2f40;
+}
+.wiz-card:hover { border-color: #7c8cff; background: rgba(124,140,255,0.1); }
+.wiz-card span { font-size: 0.78rem; font-weight: 600; margin-top: 4px; }
+.wiz-card small { font-size: 0.64rem; color: #8a90a0; }
+.wiz-card--dim { opacity: 0.7; }
+.wiz-note { font-size: 0.66rem; color: #737b93; padding: 0 12px 12px; }
 .nl-card { padding: 12px; background: #14161e; }
 .nl-title { font-size: 0.82rem; font-weight: 600; color: #cdd3e6; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
 .nl-smart-toggle {

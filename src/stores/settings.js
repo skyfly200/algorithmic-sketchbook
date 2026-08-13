@@ -51,6 +51,7 @@ export const useSettingsStore = defineStore('settings', {
       // MapTiler or Mapbox. Kept only in this browser.
       mapKey: s.mapKey ?? '',
       mapProvider: s.mapProvider ?? 'maptiler',
+      googleClientId: s.googleClientId ?? '', // OAuth client id for Google Photos import
     }
   },
   getters: {
@@ -65,7 +66,7 @@ export const useSettingsStore = defineStore('settings', {
         audioDeviceId: this.audioDeviceId, midiEnabled: this.midiEnabled, midiChannel: this.midiChannel,
         highPerformance: this.highPerformance,
         aiKey: this.aiKey, aiModel: this.aiModel, aiSmart: this.aiSmart,
-        mapKey: this.mapKey, mapProvider: this.mapProvider,
+        mapKey: this.mapKey, mapProvider: this.mapProvider, googleClientId: this.googleClientId,
       }
       if (this.effectOff !== null) data.effectOff = this.effectOff
       else if (this.legacyIn) data.effectPool = this.legacyIn // keep legacy until migrated
@@ -95,6 +96,7 @@ export const useSettingsStore = defineStore('settings', {
     setAiSmart(on) { this.aiSmart = !!on; this.persist() },
     setMapKey(k) { this.mapKey = (k || '').trim(); this.persist() },
     setMapProvider(p) { this.mapProvider = p || 'maptiler'; this.persist() },
+    setGoogleClientId(id) { this.googleClientId = (id || '').trim(); this.persist() },
     // Wipe the editors' working state (but not the saved library). The editors
     // read their state at mount, so a reload gives them a clean slate.
     clearSession() {

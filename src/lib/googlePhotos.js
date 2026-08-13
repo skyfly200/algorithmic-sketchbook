@@ -18,7 +18,12 @@ const SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly'
 const GIS_SRC = 'https://accounts.google.com/gsi/client'
 const API = 'https://photospicker.googleapis.com/v1'
 
-export function googlePhotosConfigured() { return !!CLIENT_ID }
+// The client id may come from a build-time env var or be set at runtime from
+// Settings (so a static deploy can enable Google Photos without a rebuild).
+let runtimeClientId = ''
+export function setGooglePhotosClientId(id) { runtimeClientId = (id || '').trim() }
+const cid = () => runtimeClientId || CLIENT_ID
+export function googlePhotosConfigured() { return !!cid() }
 
 let gisReady = null
 function loadGis() {
@@ -43,7 +48,7 @@ function getToken() {
       else { accessToken = resp.access_token; resolve(accessToken) }
     }
     if (!tokenClient) {
-      tokenClient = window.google.accounts.oauth2.initTokenClient({ client_id: CLIENT_ID, scope: SCOPE, callback: cb })
+      tokenClient = window.google.accounts.oauth2.initTokenClient({ client_id: cid(), scope: SCOPE, callback: cb })
     } else {
       tokenClient.callback = cb
     }
@@ -65,7 +70,7 @@ const secs = (s, fallback) => (s ? parseFloat(String(s).replace('s', '')) : 0) |
 // Sign in, open the picker, wait for the user, download the picks.
 // onStatus(msg) reports progress. Returns [{ blob, name, kind }].
 export async function pickFromGooglePhotos(onStatus = () => {}) {
-  if (!CLIENT_ID) throw new Error('Set VITE_GOOGLE_CLIENT_ID to enable Google Photos (see docs).')
+  if (!cid()) throw new Error('Add a Google client ID in Settings to enable Google Photos.')
   await loadGis()
   onStatus('Waiting for Google sign-in')
   await getToken()
