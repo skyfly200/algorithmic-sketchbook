@@ -21,7 +21,7 @@ const params = rt.params({
   rise: { value: 0.5, min: -0.4, max: 1, step: 0.02, label: 'Rise / settle' },
   wind: { value: -0.2, min: -1, max: 1, step: 0.02, label: 'Wind' },
   conks: { value: 1, min: 1, max: 4, step: 1, label: 'Conks' },
-  form: { value: 'Trunk', type: 'select', options: ['Trunk', 'Antler', 'Both'], label: 'Growth form' },
+  form: { value: 'Tree', type: 'select', options: ['Tree', 'Antler', 'Both'], label: 'Growth form' },
   iridescence: { value: 0.2, min: 0, max: 1, step: 0.02, label: 'Iridescent glimmer' },
   hue: { value: 32, min: 12, max: 48, step: 1, label: 'Spore tint' },
   glow: { value: 1, min: 0.4, max: 1.8, step: 0.05, label: 'Glow' },
@@ -54,8 +54,8 @@ let conkDefs = []
 let conks = []
 let defSig = ''
 function chooseForm(i) {
-  const f = params.form
-  if (f === 'Both') return (i % 2 === 0) ? 'Trunk' : 'Antler'
+  const f = params.form === 'Trunk' ? 'Tree' : params.form // legacy 'Trunk' → 'Tree'
+  if (f === 'Both') return (i % 2 === 0) ? 'Tree' : 'Antler'
   return f
 }
 // A branching antler in normalised coords (base at 0,0, growing up = -y).
@@ -94,25 +94,34 @@ function layoutConks() {
   const baseY = H * 0.99
   conks = conkDefs.map((d) => {
     const half = Math.min(W, H) * d.hf, thick = half * 0.5
-    // the shelf sits partway up a vertical trunk (raised off the ground)
-    const raise = d.form === 'Antler' ? 0 : half * (0.9 + (d.trunkH ?? 0) * 0.8)
+    const cx = W * d.fx
     const dir = d.dir ?? 1
-    const cx = W * d.fx, cy = baseY - thick * 1.2 - raise
-    // the trunk stands to one side; the shelf cantilevers out from it
-    const trunkX = cx - dir * half * 0.82
-    const c = { cx, cy, half, thick, baseY, phase: d.phase, form: d.form, dir, trunkX }
+    const c = { cx, half, thick, baseY, phase: d.phase, form: d.form, dir }
     if (d.form === 'Antler') {
+      // the branching antler is the substrate; a central stipe rises from a
+      // high, CENTRAL tip (not a random side branch) and carries the cap on top
       const S = Math.min(W, H) * 0.62
       c.segs = d.segs.map((s) => ({ x0: cx + s.x0 * S, y0: baseY + s.y0 * S, x1: cx + s.x1 * S, y1: baseY + s.y1 * S, w0: s.w0 * S, w1: s.w1 * S }))
       c.tips = d.tips.map((p) => ({ x: cx + p.x * S, y: baseY + p.y * S }))
-      // the conch shelf grows off the top of the antler stem (highest tip)
-      let top = c.tips[0] || { x: cx, y: cy }
-      for (const tp of c.tips) if (tp.y < top.y) top = tp
-      c.capCx = top.x; c.capCy = top.y; c.capHalf = half * 0.6; c.capThick = thick * 0.6
+      let best = c.tips[0] || { x: cx, y: baseY - half }
+      let bestScore = Infinity
+      for (const tp of c.tips) { const sc = tp.y + Math.abs(tp.x - cx) * 0.9; if (sc < bestScore) { bestScore = sc; best = tp } }
+      const capHalf = half * 0.64, capThick = thick * 0.64
+      const stLen = half * (0.5 + (d.trunkH ?? 0) * 0.4)
+      c.capHalf = capHalf; c.capThick = capThick
+      c.capCx = best.x; c.capCy = best.y - stLen - capThick * 0.45
+      c.stipe = { x0: best.x, y0: best.y, x1: c.capCx, y1: c.capCy + capThick * 0.5, w: half * 0.13 }
     } else {
-      // on a trunk the cap is the whole growth
-      c.capCx = cx; c.capCy = cy; c.capHalf = half; c.capThick = thick
+      // Tree: a woody stump on the ground, a central lacquered stipe, and the
+      // cap sitting centred on top of the stipe
+      const stipeH = half * (1.15 + (d.trunkH ?? 0) * 0.9)
+      c.capHalf = half; c.capThick = thick
+      c.capCx = cx; c.capCy = baseY - stipeH
+      c.stumpTopY = baseY - half * 0.45
+      c.stipe = { x0: cx, y0: c.stumpTopY, x1: cx, y1: c.capCy + thick * 0.5, w: half * 0.2 }
     }
+    // beam + depth-sort anchor follow the centred cap
+    c.cx = c.capCx; c.cy = c.capCy
     return c
   })
 }
@@ -168,32 +177,55 @@ function capPath(g, sc, c) {
   }
   g.closePath()
 }
-// the woody trunk the shelf grows from — a vertical log standing to ONE SIDE;
-// the cap cantilevers out from it like a real shelf fungus
-function drawTrunk(c) {
+// the woody tree stump the reishi grows out of — a short, centred log rising
+// from the ground, with a cut-ring top; the stipe emerges from its centre
+function drawTreeBase(c) {
   const g = ctx
-  const tw = c.half * 0.16
-  const tx = c.trunkX
-  const trunkTopY = c.cy - c.half * 0.5
-  const tg = g.createLinearGradient(tx - tw, 0, tx + tw, 0)
-  tg.addColorStop(0, '#100a06'); tg.addColorStop(0.45, '#3a2418'); tg.addColorStop(1, '#0d0704')
+  const tw = c.half * 0.5
+  const topY = c.stumpTopY
+  const tg = g.createLinearGradient(c.cx - tw, 0, c.cx + tw, 0)
+  tg.addColorStop(0, '#0d0704'); tg.addColorStop(0.45, '#3a2418'); tg.addColorStop(1, '#0d0704')
   g.fillStyle = tg
   g.beginPath()
-  g.moveTo(tx - tw, trunkTopY)
-  g.quadraticCurveTo(tx, trunkTopY - tw * 0.8, tx + tw, trunkTopY)
-  g.quadraticCurveTo(tx + tw * 1.4, c.baseY, tx + tw * 1.7, c.baseY)
-  g.lineTo(tx - tw * 1.7, c.baseY)
-  g.quadraticCurveTo(tx - tw * 1.4, c.baseY, tx - tw, trunkTopY)
+  g.moveTo(c.cx - tw, topY)
+  g.quadraticCurveTo(c.cx, topY - tw * 0.45, c.cx + tw, topY)
+  g.lineTo(c.cx + tw * 1.12, c.baseY)
+  g.lineTo(c.cx - tw * 1.12, c.baseY)
   g.closePath(); g.fill()
+  // concentric cut rings on the sawn top
+  g.strokeStyle = 'rgba(120,78,46,0.35)'; g.lineWidth = Math.max(1, PR)
+  for (let r = 0.28; r < 1; r += 0.24) { g.beginPath(); g.ellipse(c.cx, topY, tw * r, tw * 0.26 * r, 0, 0, TAU); g.stroke() }
+}
+// the lacquered reddish-brown stipe (stem) rising from the substrate to the
+// centre of the cap — a tapered, glossy ribbon following a gentle lean
+function drawStipe(c) {
+  const g = ctx, s = c.stipe
+  const wB = s.w, wT = s.w * 0.62
+  const midx = (s.x0 + s.x1) / 2 + c.dir * c.half * 0.06
+  const midy = (s.y0 + s.y1) / 2
+  const ang = Math.atan2(s.y1 - s.y0, s.x1 - s.x0)
+  const nx = Math.cos(ang + Math.PI / 2), ny = Math.sin(ang + Math.PI / 2)
+  g.beginPath()
+  g.moveTo(s.x0 + nx * wB, s.y0 + ny * wB)
+  g.quadraticCurveTo(midx + nx * (wB + wT) / 2, midy + ny * (wB + wT) / 2, s.x1 + nx * wT, s.y1 + ny * wT)
+  g.lineTo(s.x1 - nx * wT, s.y1 - ny * wT)
+  g.quadraticCurveTo(midx - nx * (wB + wT) / 2, midy - ny * (wB + wT) / 2, s.x0 - nx * wB, s.y0 - ny * wB)
+  g.closePath()
+  const grd = g.createLinearGradient(midx - wB, 0, midx + wB, 0)
+  grd.addColorStop(0, '#2a1206'); grd.addColorStop(0.5, '#7d3116'); grd.addColorStop(1, '#3a1608')
+  g.fillStyle = grd; g.fill()
+  // gloss run down the light side
+  g.strokeStyle = 'rgba(255,204,156,0.28)'; g.lineWidth = Math.max(1, wT * 0.4)
+  g.beginPath(); g.moveTo(s.x0 - nx * wB * 0.35, s.y0 - ny * wB * 0.35); g.quadraticCurveTo(midx - nx * wB * 0.25, midy - ny * wB * 0.25, s.x1 - nx * wT * 0.35, s.y1 - ny * wT * 0.35); g.stroke()
 }
 // the lacquered shelf cap itself, at c.capCx/capCy — drawn the same whether the
 // stalk beneath it is a woody trunk or an antler stem
 function drawCap(c) {
   const g = ctx
   const px = c.capCx, py = c.capCy
-  // tilt the whole cap so its free (outer) end droops away from the stalk
+  // a slight natural tilt only — the cap sits centred over the stipe
   g.save()
-  g.translate(px, py); g.rotate(c.dir * 0.13); g.translate(-px, -py)
+  g.translate(px, py); g.rotate(c.dir * 0.05); g.translate(-px, -py)
 
   const K = 24
   for (let k = K; k >= 1; k--) {
@@ -227,7 +259,7 @@ function drawCap(c) {
   capPath(g, 0.95, c); g.stroke()
   g.restore()
 }
-function drawConk(c) { drawTrunk(c); drawCap(c) }
+function drawConk(c) { drawTreeBase(c); drawStipe(c); drawCap(c) }
 
 // --- antler (deer-horn) form: branching red lacquered fingers ---------------
 function drawAntler(c) {
@@ -261,7 +293,7 @@ function drawGrowths() {
   // paint back-to-front (higher on screen = further, drawn first)
   const order = [...conks].sort((a, b) => a.baseY - b.baseY)
   for (const c of order) {
-    if (c.form === 'Antler') { drawAntler(c); drawCap(c) } // conch grows off the stem
+    if (c.form === 'Antler') { drawAntler(c); drawStipe(c); drawCap(c) } // stipe + cap grow from a central antler tip
     else drawConk(c)
   }
 }
