@@ -455,7 +455,7 @@ function addNode(type) {
                         : type === 'polygon'
                           ? { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0 }
                           : type === 'geo'
-                            ? { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28 }
+                            ? { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28, source: 'Shape', cloud: 'Galaxy', voxel: 'Sphere', count: 12000, res: 18, pointSize: 0.03, dataVer: 0 }
                             : type === 'vcam'
                               ? { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, lightSat: 34, lightVal: 86, spin: true }
                               : type === 'mask'
@@ -1077,7 +1077,7 @@ function buildFromSpec(spec) {
       case 'polygon': { const shp = POLY_SHAPES[capitalize(n.shape)]; params = { points: (shp || [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]).map((p) => [...p]), feather: nlNum(n.feather, 0, 0, 0.5) }; break }
       case 'mask': params = { mode: 'multiply', strength: 1, invert: !!n.invert }; break
       case 'portal': params = { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }; break
-      case 'geo': params = { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28 }; break
+      case 'geo': params = { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28, source: 'Shape', cloud: 'Galaxy', voxel: 'Sphere', count: 12000, res: 18, pointSize: 0.03, dataVer: 0 }; break
       case 'vcam': params = { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, lightSat: 34, lightVal: 86, spin: true }; break
       default: params = {}
     }
@@ -2504,8 +2504,167 @@ function buildObject(geo) {
   const nrm = Float32Array.from(g.attributes.normal.array)
   const mat = makeMaterial(geo.material, geo.hue, geo.sat, geo.val)
   const obj = geo.material === 'Points' ? new THREE.Points(g, mat) : new THREE.Mesh(g, mat)
-  obj.userData = { shape: geo.shape, material: geo.material, detail: geo.detail, flutes: geo.flutes, twist: geo.twist, groove: geo.groove, base, nrm, warped: false }
+  obj.userData = { source: 'Shape', base, nrm, warped: false }
   return obj
+}
+
+// --- point cloud + voxel geometry sources ----------------------------------
+const GEO_SOURCES = ['Shape', 'Point cloud', 'Voxel']
+const GEO_CLOUDS = ['Galaxy', 'Sphere', 'Torus', 'Terrain', 'Cube', 'Imported']
+const GEO_VOXELS = ['Sphere', 'Terrain', 'Gyroid', 'Shell']
+// Generate a procedural point cloud: {positions, colors} in unit-ish space,
+// tinted from the node's hue by a per-point factor t (height/radius).
+function genPointCloud(type, count, hue, sat, val) {
+  const n = Math.max(200, Math.min(140000, Math.round(count || 8000)))
+  const pos = new Float32Array(n * 3), col = new Float32Array(n * 3)
+  const base = hsvToHsl(hue ?? 200, sat, val), c = new THREE.Color()
+  for (let i = 0; i < n; i++) {
+    let x = 0, y = 0, z = 0, t = 0.5
+    if (type === 'Sphere') {
+      const u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, r = Math.sqrt(1 - u * u), rr = 1.1 * (0.92 + Math.random() * 0.1)
+      x = Math.cos(a) * r * rr; y = u * rr; z = Math.sin(a) * r * rr; t = (u + 1) / 2
+    } else if (type === 'Torus') {
+      const a = Math.random() * Math.PI * 2, b = Math.random() * Math.PI * 2, R = 0.85, rr = 0.35
+      x = (R + rr * Math.cos(b)) * Math.cos(a); y = rr * Math.sin(b); z = (R + rr * Math.cos(b)) * Math.sin(a); t = (Math.sin(b) + 1) / 2
+    } else if (type === 'Terrain') {
+      x = (Math.random() * 2 - 1) * 1.4; z = (Math.random() * 2 - 1) * 1.4
+      y = (Math.sin(x * 2.3) * Math.cos(z * 2.1) + Math.sin(x * 5 + z * 3) * 0.4) * 0.35; t = y + 0.5
+    } else if (type === 'Cube') {
+      x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1; t = (y + 1) / 2
+    } else { // Galaxy
+      const arm = Math.floor(Math.random() * 3), rad = Math.pow(Math.random(), 0.6) * 1.4
+      const ang = rad * 3.4 + arm * (Math.PI * 2 / 3) + (Math.random() - 0.5) * 0.5
+      x = Math.cos(ang) * rad; z = Math.sin(ang) * rad; y = (Math.random() - 0.5) * 0.14 * (1.3 - rad); t = 1 - rad / 1.4
+    }
+    pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z
+    c.setHSL(base.h, base.s, Math.min(0.88, base.l * (0.45 + t * 0.9)))
+    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b
+  }
+  return { positions: pos, colors: col }
+}
+function buildPointsObject(geo) {
+  const data = geo.cloudData || genPointCloud(geo.cloud, geo.count, geo.hue, geo.sat, geo.val)
+  const g = new THREE.BufferGeometry()
+  const positions = Float32Array.from(data.positions)
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  if (data.colors) g.setAttribute('color', new THREE.Float32BufferAttribute(Float32Array.from(data.colors), 3))
+  const mat = new THREE.PointsMaterial({ size: geo.pointSize || 0.03, sizeAttenuation: true, vertexColors: !!data.colors })
+  if (!data.colors) { const cc = hsvToHsl(geo.hue, geo.sat, geo.val); mat.color.setHSL(cc.h, cc.s, cc.l) }
+  const obj = new THREE.Points(g, mat)
+  // radial "normals" so the displace warp still works on a cloud
+  const nrm = new Float32Array(positions.length)
+  for (let i = 0; i < positions.length; i += 3) { const l = Math.hypot(positions[i], positions[i + 1], positions[i + 2]) || 1; nrm[i] = positions[i] / l; nrm[i + 1] = positions[i + 1] / l; nrm[i + 2] = positions[i + 2] / l }
+  obj.userData = { source: 'Point cloud', base: positions, nrm, warped: false }
+  return obj
+}
+// Voxel grid → one InstancedMesh of little cubes, coloured by height.
+function genVoxels(type, res) {
+  const N = Math.max(6, Math.min(46, Math.round(res || 18)))
+  const cells = []
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let k = 0; k < N; k++) {
+    const x = i / (N - 1) * 2 - 1, y = j / (N - 1) * 2 - 1, z = k / (N - 1) * 2 - 1
+    let fill = false
+    if (type === 'Terrain') { fill = y < (Math.sin(x * 2.5) * Math.cos(z * 2.3)) * 0.42 }
+    else if (type === 'Gyroid') { const g = Math.sin(x * 3) * Math.cos(y * 3) + Math.sin(y * 3) * Math.cos(z * 3) + Math.sin(z * 3) * Math.cos(x * 3); fill = Math.abs(g) < 0.55 }
+    else if (type === 'Shell') { const r = x * x + y * y + z * z; fill = r < 0.85 && r > 0.5 }
+    else fill = (x * x + y * y + z * z) < 0.85 // Sphere
+    if (fill) cells.push(x, y, z)
+  }
+  return { cells: Float32Array.from(cells), N }
+}
+function buildVoxelObject(geo) {
+  const { cells, N } = genVoxels(geo.voxel, geo.res)
+  const count = cells.length / 3
+  const size = (2 / N) * 0.9
+  const box = new THREE.BoxGeometry(size, size, size)
+  const mat = new THREE.MeshStandardMaterial({ metalness: 0.2, roughness: 0.6 })
+  const inst = new THREE.InstancedMesh(box, mat, Math.max(1, count))
+  const m = new THREE.Matrix4(), c = new THREE.Color(), base = hsvToHsl(geo.hue, geo.sat, geo.val)
+  for (let i = 0; i < count; i++) {
+    const x = cells[i * 3], y = cells[i * 3 + 1], z = cells[i * 3 + 2]
+    m.makeTranslation(x, y, z); inst.setMatrixAt(i, m)
+    c.setHSL(base.h, base.s, Math.min(0.85, base.l * (0.5 + (y + 1) / 2 * 0.7))); inst.setColorAt(i, c)
+  }
+  inst.instanceMatrix.needsUpdate = true
+  if (inst.instanceColor) inst.instanceColor.needsUpdate = true
+  inst.userData = { source: 'Voxel', warped: false }
+  return inst
+}
+// Rebuild signature: any change here rebuilds the object in the camera. Point
+// clouds and voxels bake their colours/size into the geometry, so those are part
+// of their signature; a plain Shape updates colour live and leaves them out.
+function geoSig(geo) {
+  const baked = geo.source === 'Shape' ? '' : `${geo.hue}/${geo.sat}/${geo.val}/${geo.pointSize}`
+  return [geo.source, geo.shape, geo.material, geo.detail, geo.flutes, geo.twist, geo.groove, geo.cloud, geo.voxel, geo.count, geo.res, geo.dataVer, baked].join('|')
+}
+function buildGeoObject(geo) {
+  let obj
+  if (geo.source === 'Point cloud') obj = buildPointsObject(geo)
+  else if (geo.source === 'Voxel') obj = buildVoxelObject(geo)
+  else obj = buildObject(geo)
+  obj.userData.sig = geoSig(geo)
+  return obj
+}
+// Parse an imported .ply (ASCII) or .xyz point file → {positions, colors},
+// centred and scaled to fit the unit-ish view.
+function parsePointFile(text) {
+  const lines = text.split(/\r?\n/)
+  const xs = [], cs = []
+  let hasColor = false
+  if (/^ply\b/i.test(text.trimStart())) {
+    let i = 0, count = 0, props = []
+    for (; i < lines.length; i++) {
+      const l = lines[i].trim()
+      if (/^element\s+vertex\s+(\d+)/i.test(l)) count = +RegExp.$1
+      else if (/^property\s+\S+\s+(\S+)/i.test(l)) props.push(RegExp.$1.toLowerCase())
+      else if (/^end_header/i.test(l)) { i++; break }
+    }
+    const ix = props.indexOf('x'), iy = props.indexOf('y'), iz = props.indexOf('z')
+    const ir = props.findIndex((p) => p === 'red' || p === 'r'), ig = props.findIndex((p) => p === 'green' || p === 'g'), ib = props.findIndex((p) => p === 'blue' || p === 'b')
+    hasColor = ir >= 0 && ig >= 0 && ib >= 0
+    for (let k = 0; k < count && i < lines.length; k++, i++) {
+      const t = lines[i].trim().split(/\s+/).map(Number); if (t.length < 3) continue
+      xs.push(t[ix], t[iy], t[iz])
+      if (hasColor) cs.push(t[ir] / 255, t[ig] / 255, t[ib] / 255)
+    }
+  } else {
+    for (const l of lines) {
+      const t = l.trim(); if (!t || t.startsWith('#')) continue
+      const v = t.split(/[\s,]+/).map(Number); if (v.length < 3 || v.some((x) => !isFinite(x))) continue
+      xs.push(v[0], v[1], v[2])
+      if (v.length >= 6) { hasColor = true; const s = v[3] > 1 ? 255 : 1; cs.push(v[3] / s, v[4] / s, v[5] / s) }
+    }
+  }
+  const n = xs.length / 3
+  if (n < 1) return null
+  // centre + uniform scale to ~[-1.2,1.2]
+  let cx = 0, cy = 0, cz = 0, mx = 0
+  for (let i = 0; i < xs.length; i += 3) { cx += xs[i]; cy += xs[i + 1]; cz += xs[i + 2] }
+  cx /= n; cy /= n; cz /= n
+  for (let i = 0; i < xs.length; i += 3) { mx = Math.max(mx, Math.hypot(xs[i] - cx, xs[i + 1] - cy, xs[i + 2] - cz)) }
+  const sc = mx > 0 ? 1.2 / mx : 1
+  const pos = new Float32Array(xs.length)
+  for (let i = 0; i < xs.length; i += 3) { pos[i] = (xs[i] - cx) * sc; pos[i + 1] = (xs[i + 1] - cy) * sc; pos[i + 2] = (xs[i + 2] - cz) * sc }
+  return { positions: pos, colors: hasColor ? Float32Array.from(cs) : null, count: n }
+}
+function importGeoPointFile(node) {
+  const inp = document.createElement('input')
+  inp.type = 'file'; inp.accept = '.ply,.xyz,.pts,.txt,text/plain'
+  inp.onchange = () => {
+    const f = inp.files?.[0]; if (!f) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const data = parsePointFile(String(reader.result))
+      if (!data) { showToast('No points found in that file'); return }
+      st(node.id).cloudData = data
+      node.params.source = 'Point cloud'; node.params.cloud = 'Imported'
+      node.params.dataVer = (node.params.dataVer || 0) + 1
+      persist(); showToast(`Loaded ${data.count.toLocaleString()} points`)
+    }
+    reader.onerror = () => showToast('Could not read the file')
+    reader.readAsText(f)
+  }
+  inp.click()
 }
 function disposeObject(obj) {
   obj.geometry?.dispose?.()
@@ -2515,17 +2674,23 @@ function updateObject(obj, geo, time) {
   const spin = geo.spin ?? 0.5
   obj.rotation.y = time * spin * 0.6
   obj.rotation.x = time * spin * 0.25 + 0.3
-  if (obj.material.color) { const c = hsvToHsl(geo.hue ?? 160, geo.sat, geo.val); obj.material.color.setHSL(c.h, c.s, c.l) }
+  // Voxels (InstancedMesh) and vertex/instance-coloured objects keep their own
+  // colours; only override a single-colour material's colour, and only warp
+  // objects that carry per-vertex base positions (shapes + point clouds).
+  if (obj.isInstancedMesh) return
+  if (obj.material.color && !obj.material.vertexColors) { const c = hsvToHsl(geo.hue ?? 160, geo.sat, geo.val); obj.material.color.setHSL(c.h, c.s, c.l) }
+  const base = obj.userData.base, nrm = obj.userData.nrm
+  if (!base || !nrm) return
+  const isSolid = geo.source === 'Shape' && geo.material === 'Solid'
   // the "vertex shader": push every vertex along its normal by a travelling wave
   // of its base position, so the mesh warps in geometry space each frame
   const amp = geo.displace ?? 0
   const g = obj.geometry
   const pos = g.attributes.position
-  const base = obj.userData.base, nrm = obj.userData.nrm
   if (amp < 0.001) {
     if (obj.userData.warped) {
       pos.array.set(base); pos.needsUpdate = true; obj.userData.warped = false
-      if (geo.material === 'Solid') g.computeVertexNormals()
+      if (isSolid) g.computeVertexNormals()
     }
   } else {
     const f = geo.freq ?? 2
@@ -2540,7 +2705,7 @@ function updateObject(obj, geo, time) {
     }
     pos.needsUpdate = true
     obj.userData.warped = true
-    if (geo.material === 'Solid') g.computeVertexNormals()
+    if (isSolid) g.computeVertexNormals()
   }
 }
 // Cheap wireframe skeletons (verts + edge index pairs) for the Geometry node's
@@ -2627,7 +2792,12 @@ function drawGeoGlyph(ctx, ang, hue, warp, shape, sat, val) {
 }
 function evalGeo(node, octx) {
   const p = node.params
-  st(node.id).geo = { shape: p.shape, material: p.material, hue: p.hue, sat: p.sat, val: p.val, displace: p.displace, freq: p.freq, spin: p.spin, detail: p.detail, flutes: p.flutes, twist: p.twist, groove: p.groove }
+  const rs = st(node.id)
+  rs.geo = {
+    shape: p.shape, material: p.material, hue: p.hue, sat: p.sat, val: p.val, displace: p.displace, freq: p.freq, spin: p.spin, detail: p.detail, flutes: p.flutes, twist: p.twist, groove: p.groove,
+    source: p.source ?? 'Shape', cloud: p.cloud, voxel: p.voxel, count: p.count, res: p.res, pointSize: p.pointSize, dataVer: p.dataVer,
+    cloudData: (p.source === 'Point cloud' && p.cloud === 'Imported') ? rs.cloudData : null,
+  }
   const t = performance.now() * 0.001
   octx.fillStyle = '#0a0e14'
   octx.fillRect(0, 0, W, H)
@@ -2635,7 +2805,8 @@ function evalGeo(node, octx) {
   octx.fillStyle = 'rgba(230,240,255,0.85)'
   octx.font = `${Math.round(H * 0.07)}px system-ui, sans-serif`
   octx.textAlign = 'center'
-  octx.fillText(`${p.shape} · ${p.material}`, W / 2, H * 0.9)
+  const label = (p.source === 'Point cloud') ? `Point cloud · ${p.cloud}` : (p.source === 'Voxel') ? `Voxel · ${p.voxel}` : `${p.shape} · ${p.material}`
+  octx.fillText(label, W / 2, H * 0.9)
 }
 function evalCamera(node, octx) {
   const s = st(node.id)
@@ -2668,10 +2839,9 @@ function evalCamera(node, octx) {
   for (const [id, obj] of three.meshes) if (!want.has(id)) { three.scene.remove(obj); disposeObject(obj); three.meshes.delete(id) }
   inputs.forEach(({ id, geo }, idx) => {
     let obj = three.meshes.get(id)
-    if (!obj || obj.userData.shape !== geo.shape || obj.userData.material !== geo.material || obj.userData.detail !== geo.detail ||
-        obj.userData.flutes !== geo.flutes || obj.userData.twist !== geo.twist || obj.userData.groove !== geo.groove) {
+    if (!obj || obj.userData.sig !== geoSig(geo)) {
       if (obj) { three.scene.remove(obj); disposeObject(obj) }
-      obj = buildObject(geo); three.meshes.set(id, obj); three.scene.add(obj)
+      obj = buildGeoObject(geo); three.meshes.set(id, obj); three.scene.add(obj)
     }
     updateObject(obj, geo, time)
     obj.position.x = (idx - (inputs.length - 1) / 2) * 2.7
@@ -4961,23 +5131,49 @@ onBeforeUnmount(() => {
             <label class="chk"><input type="checkbox" v-model="n.params.swap" @change="persist" @pointerdown.stop /> swap A/B order</label>
           </template>
           <template v-if="n.type === 'geo'">
-            <label>shape
-              <select v-model="n.params.shape" @change="persist" @pointerdown.stop>
-                <option v-for="sh in GEO_SHAPES" :key="sh" :value="sh">{{ sh }}</option>
+            <div class="media-hint">A 3D geometry source — wire it into a <b>Camera</b> node. Choose a procedural shape, a point cloud (procedural or imported .ply/.xyz), or a voxel grid.</div>
+            <label>data
+              <select :value="n.params.source || 'Shape'" @change="n.params.source = $event.target.value; persist()" @pointerdown.stop>
+                <option v-for="sr in GEO_SOURCES" :key="sr" :value="sr">{{ sr }}</option>
               </select>
             </label>
-            <label>material
-              <select v-model="n.params.material" @change="persist" @pointerdown.stop>
-                <option v-for="m in GEO_MATERIALS" :key="m" :value="m">{{ m }}</option>
-              </select>
-            </label>
-            <label>color <ColorField v-model:h="n.params.hue" v-model:s="n.params.sat" v-model:v="n.params.val" @change="persist" /></label>
-            <template v-if="n.params.shape === 'Gaudí column'">
-              <label>flutes <NumSlider :min="3" :max="20" :step="1" :model-value="n.params.flutes ?? 8" @update:model-value="n.params.flutes = $event" @commit="persist" /></label>
-              <label>twist <NumSlider :min="-360" :max="360" :step="5" :model-value="n.params.twist ?? 90" @update:model-value="n.params.twist = $event" @commit="persist" /></label>
-              <label>groove <NumSlider :min="0" :max="0.6" :step="0.01" :model-value="n.params.groove ?? 0.28" @update:model-value="n.params.groove = $event" @commit="persist" /></label>
+            <template v-if="(n.params.source || 'Shape') === 'Shape'">
+              <label>shape
+                <select v-model="n.params.shape" @change="persist" @pointerdown.stop>
+                  <option v-for="sh in GEO_SHAPES" :key="sh" :value="sh">{{ sh }}</option>
+                </select>
+              </label>
+              <label>material
+                <select v-model="n.params.material" @change="persist" @pointerdown.stop>
+                  <option v-for="m in GEO_MATERIALS" :key="m" :value="m">{{ m }}</option>
+                </select>
+              </label>
+              <template v-if="n.params.shape === 'Gaudí column'">
+                <label>flutes <NumSlider :min="3" :max="20" :step="1" :model-value="n.params.flutes ?? 8" @update:model-value="n.params.flutes = $event" @commit="persist" /></label>
+                <label>twist <NumSlider :min="-360" :max="360" :step="5" :model-value="n.params.twist ?? 90" @update:model-value="n.params.twist = $event" @commit="persist" /></label>
+                <label>groove <NumSlider :min="0" :max="0.6" :step="0.01" :model-value="n.params.groove ?? 0.28" @update:model-value="n.params.groove = $event" @commit="persist" /></label>
+              </template>
             </template>
-            <label>displace <NumSlider :min="0" :max="1" :step="0.01" :model-value="n.params.displace" @update:model-value="n.params.displace = $event" @commit="persist" /></label>
+            <template v-else-if="n.params.source === 'Point cloud'">
+              <label>cloud
+                <select v-model="n.params.cloud" @change="persist" @pointerdown.stop>
+                  <option v-for="cl in GEO_CLOUDS" :key="cl" :value="cl">{{ cl }}</option>
+                </select>
+              </label>
+              <label v-if="n.params.cloud !== 'Imported'">points <NumSlider :min="500" :max="120000" :step="500" :model-value="n.params.count ?? 12000" @update:model-value="n.params.count = $event" @commit="persist" /></label>
+              <label>point size <NumSlider :min="0.005" :max="0.12" :step="0.005" :model-value="n.params.pointSize ?? 0.03" @update:model-value="n.params.pointSize = $event" @commit="persist" /></label>
+              <div class="shape-row"><button class="shape-btn" @pointerdown.stop @click="importGeoPointFile(n)">import .ply / .xyz</button></div>
+            </template>
+            <template v-else>
+              <label>voxels
+                <select v-model="n.params.voxel" @change="persist" @pointerdown.stop>
+                  <option v-for="vx in GEO_VOXELS" :key="vx" :value="vx">{{ vx }}</option>
+                </select>
+              </label>
+              <label>resolution <NumSlider :min="6" :max="46" :step="1" :model-value="n.params.res ?? 18" @update:model-value="n.params.res = $event" @commit="persist" /></label>
+            </template>
+            <label>color <ColorField v-model:h="n.params.hue" v-model:s="n.params.sat" v-model:v="n.params.val" @change="persist" /></label>
+            <label v-if="(n.params.source || 'Shape') !== 'Voxel'">displace <NumSlider :min="0" :max="1" :step="0.01" :model-value="n.params.displace" @update:model-value="n.params.displace = $event" @commit="persist" /></label>
             <label>frequency <NumSlider :min="0.5" :max="6" :step="0.1" :model-value="n.params.freq" @update:model-value="n.params.freq = $event" @commit="persist" /></label>
             <label>spin <NumSlider :min="0" :max="3" :step="0.05" :model-value="n.params.spin" @update:model-value="n.params.spin = $event" @commit="persist" /></label>
             <label>detail <NumSlider :min="0" :max="4" :step="1" :model-value="n.params.detail" @update:model-value="n.params.detail = $event" @commit="persist" /></label>
