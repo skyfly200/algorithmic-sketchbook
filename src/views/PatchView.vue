@@ -26,7 +26,7 @@ import perfScores from '../registry/perf.json'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
-import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, sharedCameraStream, flipSharedCamera } from '../stores/media.js'
+import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, sharedCameraStream, flipSharedCamera, startSharedScreen, stopSharedScreen, sharedScreenOn, sharedScreenStream } from '../stores/media.js'
 import { pickFromGooglePhotos, setGooglePhotosClientId, googlePhotosConfigured } from '../lib/googlePhotos.js'
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
 // feed, so in the graph they live behind a dedicated Filter node type that
@@ -1980,6 +1980,15 @@ function bindFrame(id, el) {
 }
 // --- media node: shared camera + library playback -------------------------
 const cameraOn = ref(sharedCameraOn())
+const screenOn = ref(sharedScreenOn())
+async function toggleScreen() {
+  if (screenOn.value) {
+    stopSharedScreen(); screenOn.value = false
+    for (const s of rtState.values()) if (s.mediaWant === 'screen' && s.mediaEl?.srcObject) s.mediaEl.srcObject = null
+  } else {
+    try { await startSharedScreen(); screenOn.value = true } catch { showToast('Screen share cancelled') }
+  }
+}
 async function toggleCamera() {
   if (cameraOn.value) {
     stopSharedCamera()
@@ -2015,7 +2024,7 @@ async function flipCamera() {
 function mediaEl(node) {
   const s = st(node.id)
   const p = node.params
-  const want = p.mode === 'camera' ? 'camera' : `media:${p.mediaId}`
+  const want = p.mode === 'camera' ? 'camera' : p.mode === 'screen' ? 'screen' : `media:${p.mediaId}`
   if (s.mediaWant !== want) {
     s.mediaWant = want
     if (s.mediaEl) { try { s.mediaEl.pause?.() } catch {}; s.mediaEl.srcObject = null; s.mediaEl.removeAttribute('src'); s.mediaEl = null }
@@ -2024,6 +2033,11 @@ function mediaEl(node) {
       v.muted = true; v.playsInline = true; v.autoplay = true
       s.mediaEl = v
       if (cameraOn.value) startSharedCamera().then((stream) => { v.srcObject = stream; v.play().catch(() => {}) }).catch(() => {})
+    } else if (p.mode === 'screen') {
+      const v = document.createElement('video')
+      v.muted = true; v.playsInline = true; v.autoplay = true
+      s.mediaEl = v
+      const ss = sharedScreenStream(); if (ss) { v.srcObject = ss; v.play().catch(() => {}) }
     } else {
       const item = mediaById(p.mediaId)
       if (item) {
@@ -2043,6 +2057,13 @@ function mediaEl(node) {
   // camera turned on after the element was made in a prior frame
   if (p.mode === 'camera' && s.mediaEl && cameraOn.value && !s.mediaEl.srcObject) {
     startSharedCamera().then((stream) => { s.mediaEl.srcObject = stream; s.mediaEl.play().catch(() => {}) }).catch(() => {})
+  }
+  // screen share (re)started after the element was made, or ended — keep in sync
+  if (p.mode === 'screen' && s.mediaEl) {
+    const ss = sharedScreenStream()
+    if (ss && s.mediaEl.srcObject !== ss) { s.mediaEl.srcObject = ss; s.mediaEl.play().catch(() => {}) }
+    else if (!ss && s.mediaEl.srcObject) { s.mediaEl.srcObject = null }
+    if (screenOn.value !== !!ss) screenOn.value = !!ss // reflect the picker's "Stop sharing"
   }
   return s.mediaEl
 }
@@ -2190,6 +2211,14 @@ async function wizFromUrl() {
     showToast('Imported from URL'); wizOpen.value = false
   } catch { showToast('URL import failed (the host may block cross-origin fetches)') }
 }
+// Live screen capture: create a Media node in 'screen' mode and start sharing.
+async function wizScreenLive() {
+  const n = wizNode('media'); n.params.mode = 'screen'; persist()
+  wizOpen.value = false
+  try { await startSharedScreen(); screenOn.value = true; showToast('Screen sharing') }
+  catch { showToast('Screen share cancelled') }
+}
+// One-off still snapshot of a screen/window into the library.
 async function wizScreenGrab() {
   try {
     const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
@@ -2772,22 +2801,93 @@ function parsePointFile(text) {
   for (let i = 0; i < xs.length; i += 3) { pos[i] = (xs[i] - cx) * sc; pos[i + 1] = (xs[i + 1] - cy) * sc; pos[i + 2] = (xs[i + 2] - cz) * sc }
   return { positions: pos, colors: hasColor ? Float32Array.from(cs) : null, count: n }
 }
+// Colour a point by normalised height: teal → green → tan → snow.
+function heightRamp(t) {
+  t = Math.max(0, Math.min(1, t))
+  const stops = [[0.08, 0.22, 0.36], [0.16, 0.5, 0.4], [0.55, 0.56, 0.33], [0.92, 0.92, 0.88]]
+  const f = t * (stops.length - 1), i = Math.floor(f), u = f - i
+  const a = stops[i], b = stops[Math.min(stops.length - 1, i + 1)]
+  return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]
+}
+// Native parser for LAS (LASF) point clouds — the standard uncompressed LiDAR
+// format. Reads point formats 0–10 (X/Y/Z always at the record start; RGB where
+// the format carries it), applies the header scale/offset, remaps LAS z-up to
+// three.js y-up, subsamples very large files, and colours by height when the
+// scan has no RGB. LAZ (compressed) is detected and reported separately.
+function parseLas(buf) {
+  const dv = new DataView(buf)
+  if (dv.getUint8(0) !== 0x4C || dv.getUint8(1) !== 0x41 || dv.getUint8(2) !== 0x53 || dv.getUint8(3) !== 0x46) return { err: 'not-las' }
+  const verMinor = dv.getUint8(25)
+  const offsetToPts = dv.getUint32(96, true)
+  const fmtByte = dv.getUint8(104)
+  if (fmtByte & 0xC0) return { err: 'laz' } // high bits set → LAZ compressed
+  const fmt = fmtByte & 0x3f
+  const recLen = dv.getUint16(105, true)
+  let numPts = dv.getUint32(107, true)
+  const sx = dv.getFloat64(131, true), sy = dv.getFloat64(139, true), sz = dv.getFloat64(147, true)
+  const ox = dv.getFloat64(155, true), oy = dv.getFloat64(163, true), oz = dv.getFloat64(171, true)
+  if (verMinor >= 4) { try { const n64 = dv.getBigUint64(247, true); if (n64 > 0n) numPts = Number(n64) } catch { /* keep legacy count */ } }
+  if (!numPts || !recLen) return { err: 'empty' }
+  const rgbOff = { 2: 20, 3: 28, 5: 28, 7: 30, 8: 30, 10: 30 }[fmt]
+  const cap = 2_500_000
+  const stride = numPts > cap ? Math.ceil(numPts / cap) : 1
+  const outMax = Math.floor((numPts + stride - 1) / stride)
+  const xs = new Float64Array(outMax * 3)
+  const cs = rgbOff != null ? new Float32Array(outMax * 3) : null
+  let w = 0
+  for (let i = 0; i < numPts; i += stride) {
+    const base = offsetToPts + i * recLen
+    if (base + 12 > buf.byteLength) break
+    const X = dv.getInt32(base, true) * sx + ox
+    const Y = dv.getInt32(base + 4, true) * sy + oy
+    const Z = dv.getInt32(base + 8, true) * sz + oz
+    xs[w * 3] = X; xs[w * 3 + 1] = Z; xs[w * 3 + 2] = -Y // LAS z-up → three y-up
+    if (cs) { const ro = base + rgbOff; const r = dv.getUint16(ro, true), g = dv.getUint16(ro + 2, true), b = dv.getUint16(ro + 4, true); const d = (r > 255 || g > 255 || b > 255) ? 65535 : 255; cs[w * 3] = r / d; cs[w * 3 + 1] = g / d; cs[w * 3 + 2] = b / d }
+    w++
+  }
+  if (!w) return { err: 'empty' }
+  let cx = 0, cy = 0, cz = 0, mx = 0
+  for (let i = 0; i < w * 3; i += 3) { cx += xs[i]; cy += xs[i + 1]; cz += xs[i + 2] }
+  cx /= w; cy /= w; cz /= w
+  for (let i = 0; i < w * 3; i += 3) mx = Math.max(mx, Math.hypot(xs[i] - cx, xs[i + 1] - cy, xs[i + 2] - cz))
+  const scl = mx > 0 ? 1.2 / mx : 1
+  const pos = new Float32Array(w * 3)
+  for (let i = 0; i < w * 3; i += 3) { pos[i] = (xs[i] - cx) * scl; pos[i + 1] = (xs[i + 1] - cy) * scl; pos[i + 2] = (xs[i + 2] - cz) * scl }
+  let colors = cs ? cs.slice(0, w * 3) : null
+  if (!colors) { // no RGB in the scan → colour by height
+    colors = new Float32Array(w * 3)
+    let ymin = Infinity, ymax = -Infinity
+    for (let i = 1; i < w * 3; i += 3) { if (pos[i] < ymin) ymin = pos[i]; if (pos[i] > ymax) ymax = pos[i] }
+    const yr = (ymax - ymin) || 1
+    for (let i = 0; i < w * 3; i += 3) { const c = heightRamp((pos[i + 1] - ymin) / yr); colors[i] = c[0]; colors[i + 1] = c[1]; colors[i + 2] = c[2] }
+  }
+  return { positions: pos, colors, count: w }
+}
 function importGeoPointFile(node) {
   const inp = document.createElement('input')
-  inp.type = 'file'; inp.accept = '.ply,.xyz,.pts,.txt,text/plain'
+  inp.type = 'file'; inp.accept = '.ply,.xyz,.pts,.txt,.las,.laz'
   inp.onchange = () => {
     const f = inp.files?.[0]; if (!f) return
+    const binary = /\.la[sz]$/i.test(f.name)
     const reader = new FileReader()
     reader.onload = () => {
-      const data = parsePointFile(String(reader.result))
-      if (!data) { showToast('No points found in that file'); return }
+      let data
+      if (binary) {
+        const res = parseLas(reader.result)
+        if (res?.err === 'laz') { showToast('LAZ is compressed — export it as LAS (or PLY/XYZ) to import'); return }
+        if (!res || res.err || !res.count) { showToast('Could not read that LAS file'); return }
+        data = res
+      } else {
+        data = parsePointFile(String(reader.result))
+      }
+      if (!data || !data.count) { showToast('No points found in that file'); return }
       st(node.id).cloudData = data
       node.params.source = 'Point cloud'; node.params.cloud = 'Imported'
       node.params.dataVer = (node.params.dataVer || 0) + 1
       persist(); showToast(`Loaded ${data.count.toLocaleString()} points`)
     }
     reader.onerror = () => showToast('Could not read the file')
-    reader.readAsText(f)
+    if (binary) reader.readAsArrayBuffer(f); else reader.readAsText(f)
   }
   inp.click()
 }
@@ -5377,7 +5477,7 @@ onBeforeUnmount(() => {
               </label>
               <label v-if="n.params.cloud !== 'Imported'">points <NumSlider :min="500" :max="120000" :step="500" :model-value="n.params.count ?? 12000" @update:model-value="n.params.count = $event" @commit="persist" /></label>
               <label>point size <NumSlider :min="0.005" :max="0.12" :step="0.005" :model-value="n.params.pointSize ?? 0.03" @update:model-value="n.params.pointSize = $event" @commit="persist" /></label>
-              <div class="shape-row"><button class="shape-btn" @pointerdown.stop @click="importGeoPointFile(n)">import .ply / .xyz</button></div>
+              <div class="shape-row"><button class="shape-btn" @pointerdown.stop @click="importGeoPointFile(n)">import .ply / .las / .xyz</button></div>
             </template>
             <template v-else-if="n.params.source === 'Voxel'">
               <label>voxels
@@ -5425,9 +5525,14 @@ onBeforeUnmount(() => {
             <label>source
               <select v-model="n.params.mode" @change="persist" @pointerdown.stop>
                 <option value="camera">📷 Camera{{ cameraOn ? '' : ' (off)' }}</option>
+                <option value="screen">🖥 Screen{{ screenOn ? '' : ' (off)' }}</option>
                 <option value="library">🎞 Library</option>
               </select>
             </label>
+            <div v-if="n.params.mode === 'screen'">
+              <button class="load-btn" :title="screenOn ? 'Stop sharing your screen' : 'Share a window or screen (live)'" @pointerdown.stop @click="toggleScreen">{{ screenOn ? '■ Stop screen share' : '🖥 Share screen…' }}</button>
+              <div v-if="!screenOn" class="media-hint">Live screen/window capture — click “Share screen” and pick a source.</div>
+            </div>
             <label v-if="n.params.mode === 'library'">clip
               <select :value="n.params.mediaId" @change="pickMedia(n, +$event.target.value)" @pointerdown.stop>
                 <option v-if="!mediaLibrary.length" :value="null" disabled>— load files below —</option>
@@ -5671,14 +5776,17 @@ onBeforeUnmount(() => {
           <button class="wiz-card" @click="wizFromUrl">
             <v-icon icon="mdi-link-variant" size="26" /><span>From URL</span><small>Paste an image/video link</small>
           </button>
+          <button class="wiz-card" @click="wizScreenLive">
+            <v-icon icon="mdi-monitor-share" size="26" /><span>Screen capture</span><small>Live window/screen source</small>
+          </button>
           <button class="wiz-card" @click="wizScreenGrab">
-            <v-icon icon="mdi-monitor-screenshot" size="26" /><span>Screen grab</span><small>Snapshot a window/screen</small>
+            <v-icon icon="mdi-monitor-screenshot" size="26" /><span>Screen snapshot</span><small>One still frame → Media</small>
           </button>
           <button class="wiz-card" :class="{ 'wiz-card--dim': !wizHasGoogle }" @click="wizHasGoogle ? wizGoogle() : router.push({ name: 'settings' })">
             <v-icon icon="mdi-google-photos" size="26" /><span>Google Photos</span><small>{{ wizHasGoogle ? 'Pick from your library' : 'Add a client ID in Settings' }}</small>
           </button>
           <button class="wiz-card" @click="wizPointCloud">
-            <v-icon icon="mdi-dots-hexagon" size="26" /><span>Point cloud / LiDAR</span><small>.ply / .xyz / .pts → Geometry</small>
+            <v-icon icon="mdi-dots-hexagon" size="26" /><span>Point cloud / LiDAR</span><small>.ply / .las / .xyz / .pts → Geometry</small>
           </button>
           <button class="wiz-card" @click="wizGeodata">
             <v-icon icon="mdi-map" size="26" /><span>Map / Satellite</span><small>Live tiles → Geodata node</small>

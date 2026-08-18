@@ -121,3 +121,35 @@ export function stopSharedCamera() {
     camPromise = null
   }
 }
+
+// --- shared screen: one getDisplayMedia, reused by every screen-mode node ----
+// getDisplayMedia needs a user gesture, and the picker also has its own "Stop
+// sharing" button; when the user stops it there the track ends, so we listen
+// and clear the shared stream so nodes fall back cleanly.
+let screenStream = null
+let screenPromise = null
+export function sharedScreenOn() { return !!screenStream }
+export function sharedScreenStream() { return screenStream }
+export async function startSharedScreen() {
+  if (screenStream) return screenStream
+  if (!screenPromise) {
+    screenPromise = navigator.mediaDevices
+      .getDisplayMedia({ video: { frameRate: 30 }, audio: false })
+      .then((s) => {
+        screenStream = s
+        // the browser's own "Stop sharing" ends the track — reflect that here
+        s.getVideoTracks()[0]?.addEventListener('ended', () => stopSharedScreen())
+        return s
+      })
+      .catch((e) => { screenPromise = null; throw e })
+      .finally(() => { screenPromise = null })
+  }
+  return screenPromise
+}
+export function stopSharedScreen() {
+  if (screenStream) {
+    for (const t of screenStream.getTracks()) t.stop()
+    screenStream = null
+  }
+  screenPromise = null
+}
