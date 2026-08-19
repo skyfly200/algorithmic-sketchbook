@@ -2846,6 +2846,11 @@ function parseLas(buf) {
     w++
   }
   if (!w) return { err: 'empty' }
+  return finalizePoints(xs.subarray(0, w * 3), w, cs ? cs.subarray(0, w * 3) : null)
+}
+// Centre + uniformly scale raw points to fit the view; colour by height when no
+// per-point RGB is supplied. Shared by the LAS and LAZ decoders.
+function finalizePoints(xs, w, colorsIn) {
   let cx = 0, cy = 0, cz = 0, mx = 0
   for (let i = 0; i < w * 3; i += 3) { cx += xs[i]; cy += xs[i + 1]; cz += xs[i + 2] }
   cx /= w; cy /= w; cz /= w
@@ -2853,8 +2858,8 @@ function parseLas(buf) {
   const scl = mx > 0 ? 1.2 / mx : 1
   const pos = new Float32Array(w * 3)
   for (let i = 0; i < w * 3; i += 3) { pos[i] = (xs[i] - cx) * scl; pos[i + 1] = (xs[i + 1] - cy) * scl; pos[i + 2] = (xs[i + 2] - cz) * scl }
-  let colors = cs ? cs.slice(0, w * 3) : null
-  if (!colors) { // no RGB in the scan → colour by height
+  let colors = colorsIn ? Float32Array.from(colorsIn) : null
+  if (!colors) { // no RGB → colour by height
     colors = new Float32Array(w * 3)
     let ymin = Infinity, ymax = -Infinity
     for (let i = 1; i < w * 3; i += 3) { if (pos[i] < ymin) ymin = pos[i]; if (pos[i] > ymax) ymax = pos[i] }
@@ -2868,18 +2873,26 @@ function importGeoPointFile(node) {
   inp.type = 'file'; inp.accept = '.ply,.xyz,.pts,.txt,.las,.laz'
   inp.onchange = () => {
     const f = inp.files?.[0]; if (!f) return
-    const binary = /\.la[sz]$/i.test(f.name)
+    const isLaz = /\.laz$/i.test(f.name), isLas = /\.las$/i.test(f.name)
+    const binary = isLaz || isLas
     const reader = new FileReader()
-    reader.onload = () => {
+    reader.onload = async () => {
       let data
-      if (binary) {
-        const res = parseLas(reader.result)
-        if (res?.err === 'laz') { showToast('LAZ is compressed — export it as LAS (or PLY/XYZ) to import'); return }
-        if (!res || res.err || !res.count) { showToast('Could not read that LAS file'); return }
-        data = res
-      } else {
-        data = parsePointFile(String(reader.result))
-      }
+      try {
+        if (isLaz) {
+          showToast('Decompressing LAZ…')
+          const { decodeLaz } = await import('../lib/laz.js')
+          const raw = await decodeLaz(reader.result)
+          if (!raw || !raw.count) { showToast('Could not decode that LAZ file'); return }
+          data = finalizePoints(raw.xs, raw.count, raw.colors)
+        } else if (isLas) {
+          const res = parseLas(reader.result)
+          if (!res || res.err || !res.count) { showToast('Could not read that LAS file'); return }
+          data = res
+        } else {
+          data = parsePointFile(String(reader.result))
+        }
+      } catch (e) { showToast('Point import failed: ' + (e?.message || e)); return }
       if (!data || !data.count) { showToast('No points found in that file'); return }
       st(node.id).cloudData = data
       node.params.source = 'Point cloud'; node.params.cloud = 'Imported'
