@@ -39,6 +39,7 @@ export async function decodeLaz(arrayBuffer) {
     const outMax = Math.floor((count + stride - 1) / stride)
     const xs = new Float64Array(outMax * 3)
     const cs = rgbOff != null ? new Float32Array(outMax * 3) : null
+    const inten = new Uint16Array(outMax) // return strength, offset 12 in every format
     let w = 0
     for (let i = 0; i < count; i++) {
       zip.getPoint(ptPtr) // must decode every point in sequence (streaming)
@@ -48,10 +49,11 @@ export async function decodeLaz(arrayBuffer) {
       const Y = pv.getInt32(4, true) * sy + oy
       const Z = pv.getInt32(8, true) * sz + oz
       xs[w * 3] = X; xs[w * 3 + 1] = Z; xs[w * 3 + 2] = -Y // LAS z-up → three y-up
+      inten[w] = pv.getUint16(12, true)
       if (cs) { const r = pv.getUint16(rgbOff, true), g = pv.getUint16(rgbOff + 2, true), b = pv.getUint16(rgbOff + 4, true); const d = (r > 255 || g > 255 || b > 255) ? 65535 : 255; cs[w * 3] = r / d; cs[w * 3 + 1] = g / d; cs[w * 3 + 2] = b / d }
       w++
     }
-    return { xs: xs.subarray(0, w * 3), colors: cs ? cs.subarray(0, w * 3) : null, count: w }
+    return { xs: xs.subarray(0, w * 3), colors: cs ? cs.subarray(0, w * 3) : null, intensity: inten.subarray(0, w), count: w }
   } finally {
     zip.delete()
     Module._free(filePtr)

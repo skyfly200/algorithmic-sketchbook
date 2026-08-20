@@ -6,6 +6,7 @@ import '@mdi/font/css/materialdesignicons.css'
 
 import App from './App.vue'
 import router from './router'
+import { hydrateMediaLibrary } from './stores/media.js'
 
 const vuetify = createVuetify({
   theme: {
@@ -25,6 +26,10 @@ const vuetify = createVuetify({
 })
 
 createApp(App).use(createPinia()).use(router).use(vuetify).mount('#app')
+
+// Restore any media the user imported in a previous session (blobs live in
+// IndexedDB; this mints fresh object URLs for them).
+hydrateMediaLibrary()
 
 // Register the offline service worker (built only in production). Scope is the
 // deployment root so it covers the gallery, viewer and every iframed sketch.

@@ -18,6 +18,9 @@ import { useSketchStore, CATEGORIES } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
 import { PATCH_HANDOFF_KEY } from '../lib/mixToPatch'
 import { inputParams } from '../lib/inputParams'
+import { parsePointFile, parseLas, finalizePoints, genVoxels } from '../lib/points.js'
+import { parseDesignerIntent, hueHex, NL_MOD_PARAMS, NL_TEXT_DEFAULTS } from '../lib/nlDesigner.js'
+import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTileUrl, decodeElev as demDecode } from '../lib/geoTiles.js'
 import TourOverlay from '../components/TourOverlay.vue'
 import NumSlider from '../components/NumSlider.vue'
 import ColorField from '../components/ColorField.vue'
@@ -709,105 +712,7 @@ const NL_EXAMPLES = [
 const nlIntent = ref(null) // the editable parse result shown before building
 const nlModKeys = computed(() => Object.keys(nlIntent.value?.mods || {}))
 function nlDropMod(k) { if (nlIntent.value) delete nlIntent.value.mods[k] }
-// slug → extra spoken/written phrases that don't appear in the title or slug
-const NL_SYN = {
-  glow: ['bloom', 'halo', 'soft glow'], 'vhs-defects': ['vhs', 'tape', 'video tape'],
-  'rain-window': ['rain', 'rainy', 'raindrops', 'window rain'],
-  kaleidoscope: ['kaleidoscopic', 'mirror'], 'channel-offset': ['rgb split', 'chromatic', 'chromatic aberration', 'colour split', 'color split'],
-  'motion-extraction': ['motion', 'motion extraction', 'echo trails'], pointillism: ['dots', 'stipple', 'pointillist'],
-  halftone: ['comic', 'newspaper', 'print dots'], 'brightness-contrast': ['brightness', 'contrast'],
-  'liquid-metal': ['chrome', 'mercury', 'molten'], 'ink-bleed': ['ink', 'watercolor', 'watercolour', 'bleeding ink'],
-  polaroid: ['old photo', 'vintage photo', 'aged photo'], twist: ['twirl', 'swirl'],
-  'hyperbolic-space': ['hyperbolic', 'poincare'], azulejos: ['azulejo', 'spanish tiles', 'portuguese tiles', 'ceramic tiles'],
-  noise: ['static', 'fractal noise', 'tv snow'], feedback: ['trails', 'feedback loop'],
-  crt: ['old tv', 'scanlines'],
-}
-// Mood/theme words → extra search keywords that get matched against the catalog,
-// so vibe-only descriptions ("dreamy underwater", "glitchy") still find sketches.
-const NL_MOODS = {
-  dreamy: ['glow', 'bloom', 'soft', 'mist', 'fog', 'nebula'], ethereal: ['glow', 'mist', 'nebula', 'aurora'],
-  glitch: ['vhs', 'channel', 'rgb split', 'crt', 'interlace', 'feedback'], glitchy: ['vhs', 'channel', 'rgb split', 'crt', 'interlace'],
-  underwater: ['caustics', 'water', 'ripple', 'liquid', 'ocean', 'wave'], aquatic: ['caustics', 'water', 'ripple', 'liquid'],
-  psychedelic: ['kaleidoscope', 'plasma', 'moire', 'swirl', 'liquid light'], trippy: ['kaleidoscope', 'moire', 'swirl', 'plasma'],
-  retro: ['vhs', 'crt', 'film', 'halftone'], vintage: ['film', 'polaroid', 'halftone', 'grain', 'crt'],
-  fiery: ['ember', 'flame', 'solar', 'lava', 'fire'], fire: ['ember', 'flame', 'solar', 'lava'],
-  cosmic: ['nebula', 'stars', 'galaxy', 'solar', 'aurora'], space: ['nebula', 'stars', 'galaxy', 'solar'],
-  organic: ['slime', 'coral', 'fungal', 'mycelium', 'flower', 'bloom'], natural: ['coral', 'flower', 'bloom', 'animal'],
-  geometric: ['tiling', 'hyperbolic', 'moire', 'grid', 'azulejo'], neon: ['glow', 'uv', 'strobe', 'laser'],
-  calm: ['fog', 'mist', 'glow', 'flow'], chaotic: ['feedback', 'strobe', 'shaky', 'noise'], energetic: ['strobe', 'feedback', 'kaleidoscope'],
-}
-// Adjectives that nudge parameters after building: [category, +1|-1, trigger words].
-const NL_MODS = [
-  ['speed', +1, ['fast', 'quick', 'rapid', 'energetic', 'frantic', 'hyper', 'racing']],
-  ['speed', -1, ['slow', 'calm', 'gentle', 'lazy', 'sluggish', 'relaxed', 'drifting']],
-  ['bright', +1, ['bright', 'glowing', 'vivid', 'luminous', 'radiant', 'brilliant']],
-  ['bright', -1, ['dark', 'dim', 'moody', 'shadowy', 'murky', 'gloomy', 'muted']],
-  ['contrast', +1, ['punchy', 'harsh', 'high contrast', 'high-contrast', 'stark', 'crisp', 'bold']],
-  ['contrast', -1, ['soft', 'flat', 'washed', 'faded', 'hazy', 'gentle']],
-  ['amount', +1, ['intense', 'strong', 'heavy', 'extreme', 'aggressive', 'wild', 'max', 'dramatic']],
-  ['amount', -1, ['subtle', 'light', 'faint', 'minimal', 'delicate', 'slight']],
-  ['scale', +1, ['big', 'large', 'huge', 'zoomed', 'macro', 'giant', 'coarse']],
-  ['scale', -1, ['small', 'tiny', 'fine', 'micro', 'dense', 'detailed']],
-]
-// category → which schema param names/labels it should drive
-const NL_MOD_PARAMS = {
-  speed: /speed|rate|flow|churn|drift|velocity|tempo|spin|swirl/i,
-  bright: /bright|expos|glow|lumin|value|gain|light/i,
-  contrast: /contrast|gamma|punch/i,
-  amount: /amount|intensity|strength|mix|power|depth|density|opacity|blur/i,
-  scale: /scale|zoom|size|radius|detail|freq|count/i,
-}
-const NL_COLORS = { red: 0, crimson: 350, scarlet: 5, orange: 30, amber: 40, yellow: 55, gold: 48, lime: 90, green: 130, emerald: 150, teal: 170, cyan: 185, aqua: 185, blue: 215, azure: 205, indigo: 250, purple: 275, violet: 270, magenta: 305, pink: 325, rose: 340, white: 0, black: 0 }
-const NL_STOP = new Set('the and with over into through onto a an of to in on for it its this that make makes look looks like live source filter effect them then as by from your you i me my is are be or so at not no all one two some more very really want give show turn put using use add just kinda sort feel feels bit little lot really really'.split(/\s+/))
-const NL_BLENDS = [['soft light', 'soft-light'], ['hard light', 'hard-light'], ['color dodge', 'color-dodge'], ['dodge', 'color-dodge'], ['burn', 'color-burn'], ['screen', 'screen'], ['additive', 'add'], ['add', 'add'], ['multiply', 'multiply'], ['overlay', 'overlay'], ['difference', 'difference'], ['lighten', 'lighten'], ['darken', 'darken']]
-const NL_TEXT_DEFAULTS = { font: 'sans-serif', size: 0.2, weight: 800, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false }
-
-// word-boundary-ish search; returns match position or -1
-function nlHas(text, phrase) {
-  const p = (phrase || '').trim().toLowerCase()
-  if (p.length < 2) return -1
-  const esc = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const m = new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`, 'i').exec(text)
-  return m ? m.index : -1
-}
-// HSV(0-360,0-100,0-100) → #rrggbb, for setting an effect's colour params.
-function hueHex(h, s = 85, v = 95) {
-  h = ((h % 360) + 360) % 360; s /= 100; v /= 100
-  const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c
-  let r = 0, g = 0, b = 0
-  if (h < 60) [r, g, b] = [c, x, 0]; else if (h < 120) [r, g, b] = [x, c, 0]
-  else if (h < 180) [r, g, b] = [0, c, x]; else if (h < 240) [r, g, b] = [0, x, c]
-  else if (h < 300) [r, g, b] = [x, 0, c]; else [r, g, b] = [c, 0, x]
-  return '#' + [r, g, b].map((n) => Math.round((n + m) * 255).toString(16).padStart(2, '0')).join('')
-}
-// Words distinctive enough (appear in few descriptions) to be worth matching on.
-const nlDescIndex = computed(() => {
-  const idx = new Map()
-  for (const s of [...effectOptions.value, ...filterOptions.value]) {
-    for (const w of new Set(String(s.description || '').toLowerCase().match(/[a-z]{5,}/g) || [])) idx.set(w, (idx.get(w) || 0) + 1)
-  }
-  return idx
-})
-// Score each catalog option against the text: strong hits on title/slug/synonym,
-// weaker on tags, distinctive description words, and mood-derived keywords.
-function nlScore(opts, text, moodKW) {
-  const idx = nlDescIndex.value
-  const found = []
-  for (const s of opts) {
-    let score = 0, pos = Infinity
-    const strong = [s.title.toLowerCase(), s.slug.replace(/-/g, ' '), ...(NL_SYN[s.slug] || [])]
-    for (const ph of strong) { const i = nlHas(text, ph); if (i >= 0) { score += 5; if (i < pos) pos = i } }
-    for (const t of (s.tags || [])) { if (t.length >= 4 && !t.includes('-')) { const i = nlHas(text, t); if (i >= 0) { score += 1.5; if (i < pos) pos = i } } }
-    for (const w of new Set(String(s.description || '').toLowerCase().match(/[a-z]{5,}/g) || [])) {
-      if ((idx.get(w) || 99) <= 5) { const i = nlHas(text, w); if (i >= 0) { score += 1; if (i < pos) pos = i } }
-    }
-    for (const kw of moodKW) { for (const ph of strong) if (ph.includes(kw)) { score += 2.5; break } }
-    if (score > 0) found.push({ s, score, pos: pos === Infinity ? 9999 : pos })
-  }
-  found.sort((a, b) => b.score - a.score || a.pos - b.pos)
-  const seen = new Set()
-  return found.filter((m) => !seen.has(m.s.slug) && seen.add(m.s.slug))
-}
+// NL designer lexicons + the pure parser live in ../lib/nlDesigner.js.
 
 // Parse the prompt into an editable intent (does NOT build yet). The preview
 // shows this so you can drop anything it got wrong before committing.
@@ -815,54 +720,7 @@ function parseIntent(raw) {
   const prompt = (raw ?? nlText.value ?? '').trim()
   if (!prompt) { nlIntent.value = null; showToast('Describe the look you want'); return }
   nlText.value = prompt
-  const text = prompt.toLowerCase()
-  const recognized = new Set()
-  const note = (phrase) => { for (const w of String(phrase).toLowerCase().split(/[^a-z0-9]+/)) if (w.length > 2) recognized.add(w) }
-
-  // Pull the literal text-content first (a quoted string, or "saying X"), then
-  // strip it from the matching text so words *inside* the caption (e.g. "BRIGHT
-  // WAVES") don't get read as effect names, moods, adjectives or colours.
-  let quote = prompt.match(/["“”'‘’]([^"“”'‘’]{1,60})["“”'‘’]/)
-  let textContent = quote ? quote[1] : null
-  const textM = text.match(/\b(text|title|lyrics|typography|caption|words)\b/)
-  if (!textContent) { const m = text.match(/\b(?:saying|text|title|words?|says|caption)\s+([a-z0-9 ,'!?-]{2,40})/); if (m) { textContent = m[1].replace(/\b(over|on|onto|with|through|and|then|masked|blend).*$/, '').trim() } }
-  let search = text
-  if (quote) search = search.replace(quote[0].toLowerCase(), ' ')
-  if (textM) note(textM[0])
-
-  const moodKW = []
-  for (const [mood, kws] of Object.entries(NL_MOODS)) if (nlHas(search, mood) >= 0) { moodKW.push(...kws); note(mood) }
-
-  const effM = nlScore(effectOptions.value, search, moodKW)
-  const filtM = nlScore(filterOptions.value, search, moodKW)
-  for (const m of [...effM, ...filtM]) {
-    note(m.s.title); note(m.s.slug.replace(/-/g, ' '))
-    for (const syn of (NL_SYN[m.s.slug] || [])) if (nlHas(search, syn) >= 0) note(syn)
-  }
-
-  let blend = 'screen'
-  for (const [w, mode] of NL_BLENDS) if (nlHas(search, w) >= 0) { blend = mode; note(w); break }
-
-  const camM = search.match(/\b(camera|webcam|selfie|my face|live video|myself|my cam)\b/); if (camM) note(camM[0])
-  const maskM = search.match(/\b(mask|masked|through the (?:text|shape|word)|inside the (?:text|shape)|cut ?out|silhouette|stencil|clipped)\b/); if (maskM) note(maskM[0])
-  if (textContent) note(textContent)
-  const audM = search.match(/\b(audio|music|beat|bass|mic|sound|react|pulse|rhythm)\b/); if (audM) note(audM[0])
-  const mouM = search.match(/\b(mouse|cursor|pointer)\b/); if (mouM) note(mouM[0])
-
-  const mods = {}
-  for (const [cat, dir, words] of NL_MODS) { if (mods[cat]) continue; for (const w of words) if (nlHas(search, w) >= 0) { mods[cat] = dir; note(w); break } }
-
-  let color = null
-  for (const [name, hue] of Object.entries(NL_COLORS)) if (nlHas(search, name) >= 0) { color = { name, hue, sat: name === 'white' ? 0 : 85, val: name === 'black' ? 10 : 95 }; note(name); break }
-
-  const ignored = [...new Set((search.match(/[a-z][a-z'-]{2,}/g) || []).filter((w) => !NL_STOP.has(w) && !recognized.has(w)))].slice(0, 12)
-
-  nlIntent.value = {
-    effects: effM.slice(0, 3).map((m) => ({ slug: m.s.slug, title: m.s.title })),
-    filters: filtM.slice(0, 4).map((m) => ({ slug: m.s.slug, title: m.s.title })),
-    camera: !!camM, text: { on: !!textContent || !!textM, content: textContent },
-    mask: !!maskM, audio: !!audM, mouse: !!mouM, blend, mods, color, ignored,
-  }
+  nlIntent.value = parseDesignerIntent(prompt, effectOptions.value, filterOptions.value)
 }
 
 // Queue adjective/colour mods for an effect/filter node, applied once its sketch
@@ -2639,20 +2497,7 @@ function buildPointsObject(geo) {
   return obj
 }
 // Voxel grid → one InstancedMesh of little cubes, coloured by height.
-function genVoxels(type, res) {
-  const N = Math.max(6, Math.min(46, Math.round(res || 18)))
-  const cells = []
-  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let k = 0; k < N; k++) {
-    const x = i / (N - 1) * 2 - 1, y = j / (N - 1) * 2 - 1, z = k / (N - 1) * 2 - 1
-    let fill = false
-    if (type === 'Terrain') { fill = y < (Math.sin(x * 2.5) * Math.cos(z * 2.3)) * 0.42 }
-    else if (type === 'Gyroid') { const g = Math.sin(x * 3) * Math.cos(y * 3) + Math.sin(y * 3) * Math.cos(z * 3) + Math.sin(z * 3) * Math.cos(x * 3); fill = Math.abs(g) < 0.55 }
-    else if (type === 'Shell') { const r = x * x + y * y + z * z; fill = r < 0.85 && r > 0.5 }
-    else fill = (x * x + y * y + z * z) < 0.85 // Sphere
-    if (fill) cells.push(x, y, z)
-  }
-  return { cells: Float32Array.from(cells), N }
-}
+// (genVoxels lives in ../lib/points.js)
 function buildVoxelObject(geo) {
   const { cells, N } = genVoxels(geo.voxel, geo.res)
   const count = cells.length / 3
@@ -2689,16 +2534,9 @@ function buildGeoObject(geo) {
 }
 // --- 3D terrain from public elevation (DEM) tiles --------------------------
 function loadCorsImage(url) { return new Promise((res) => { const im = new Image(); im.crossOrigin = 'anonymous'; im.onload = () => res(im); im.onerror = () => res(null); im.src = url }) }
-function terrainTileUrl(z, x, y) {
-  const key = settings.mapKey, prov = settings.mapProvider
-  if (key && prov === 'mapbox') return `https://api.mapbox.com/v4/mapbox.terrain-rgb/${z}/${x}/${y}.pngraw?access_token=${key}`
-  if (key && prov === 'maptiler') return `https://api.maptiler.com/tiles/terrain-rgb-v2/${z}/${x}/${y}.webp?key=${key}`
-  return `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png` // free, CORS-enabled
-}
-function decodeElev(r, g, b) {
-  if (settings.mapKey && (settings.mapProvider === 'mapbox' || settings.mapProvider === 'maptiler')) return -10000 + (r * 65536 + g * 256 + b) * 0.1 // terrain-RGB
-  return (r * 256 + g + b / 256) - 32768 // Terrarium
-}
+// (terrainTileUrl / decodeElev live in ../lib/geoTiles.js; wrappers inject settings.)
+function terrainTileUrl(z, x, y) { return demTileUrl(z, x, y, settings.mapKey, settings.mapProvider) }
+function decodeElev(r, g, b) { return demDecode(r, g, b, settings.mapKey, settings.mapProvider) }
 function sampleTile(img, N) {
   const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256
   const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0, 256, 256)
@@ -2759,115 +2597,8 @@ function buildTerrainObject(geo) {
   obj.userData = { source: 'Terrain', base: Float32Array.from(pos.array), nrm: Float32Array.from(g.attributes.normal.array), warped: false }
   return obj
 }
-// Parse an imported .ply (ASCII) or .xyz point file → {positions, colors},
-// centred and scaled to fit the unit-ish view.
-function parsePointFile(text) {
-  const lines = text.split(/\r?\n/)
-  const xs = [], cs = []
-  let hasColor = false
-  if (/^ply\b/i.test(text.trimStart())) {
-    let i = 0, count = 0, props = []
-    for (; i < lines.length; i++) {
-      const l = lines[i].trim()
-      if (/^element\s+vertex\s+(\d+)/i.test(l)) count = +RegExp.$1
-      else if (/^property\s+\S+\s+(\S+)/i.test(l)) props.push(RegExp.$1.toLowerCase())
-      else if (/^end_header/i.test(l)) { i++; break }
-    }
-    const ix = props.indexOf('x'), iy = props.indexOf('y'), iz = props.indexOf('z')
-    const ir = props.findIndex((p) => p === 'red' || p === 'r'), ig = props.findIndex((p) => p === 'green' || p === 'g'), ib = props.findIndex((p) => p === 'blue' || p === 'b')
-    hasColor = ir >= 0 && ig >= 0 && ib >= 0
-    for (let k = 0; k < count && i < lines.length; k++, i++) {
-      const t = lines[i].trim().split(/\s+/).map(Number); if (t.length < 3) continue
-      xs.push(t[ix], t[iy], t[iz])
-      if (hasColor) cs.push(t[ir] / 255, t[ig] / 255, t[ib] / 255)
-    }
-  } else {
-    for (const l of lines) {
-      const t = l.trim(); if (!t || t.startsWith('#')) continue
-      const v = t.split(/[\s,]+/).map(Number); if (v.length < 3 || v.some((x) => !isFinite(x))) continue
-      xs.push(v[0], v[1], v[2])
-      if (v.length >= 6) { hasColor = true; const s = v[3] > 1 ? 255 : 1; cs.push(v[3] / s, v[4] / s, v[5] / s) }
-    }
-  }
-  const n = xs.length / 3
-  if (n < 1) return null
-  // centre + uniform scale to ~[-1.2,1.2]
-  let cx = 0, cy = 0, cz = 0, mx = 0
-  for (let i = 0; i < xs.length; i += 3) { cx += xs[i]; cy += xs[i + 1]; cz += xs[i + 2] }
-  cx /= n; cy /= n; cz /= n
-  for (let i = 0; i < xs.length; i += 3) { mx = Math.max(mx, Math.hypot(xs[i] - cx, xs[i + 1] - cy, xs[i + 2] - cz)) }
-  const sc = mx > 0 ? 1.2 / mx : 1
-  const pos = new Float32Array(xs.length)
-  for (let i = 0; i < xs.length; i += 3) { pos[i] = (xs[i] - cx) * sc; pos[i + 1] = (xs[i + 1] - cy) * sc; pos[i + 2] = (xs[i + 2] - cz) * sc }
-  return { positions: pos, colors: hasColor ? Float32Array.from(cs) : null, count: n }
-}
-// Colour a point by normalised height: teal → green → tan → snow.
-function heightRamp(t) {
-  t = Math.max(0, Math.min(1, t))
-  const stops = [[0.08, 0.22, 0.36], [0.16, 0.5, 0.4], [0.55, 0.56, 0.33], [0.92, 0.92, 0.88]]
-  const f = t * (stops.length - 1), i = Math.floor(f), u = f - i
-  const a = stops[i], b = stops[Math.min(stops.length - 1, i + 1)]
-  return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]
-}
-// Native parser for LAS (LASF) point clouds — the standard uncompressed LiDAR
-// format. Reads point formats 0–10 (X/Y/Z always at the record start; RGB where
-// the format carries it), applies the header scale/offset, remaps LAS z-up to
-// three.js y-up, subsamples very large files, and colours by height when the
-// scan has no RGB. LAZ (compressed) is detected and reported separately.
-function parseLas(buf) {
-  const dv = new DataView(buf)
-  if (dv.getUint8(0) !== 0x4C || dv.getUint8(1) !== 0x41 || dv.getUint8(2) !== 0x53 || dv.getUint8(3) !== 0x46) return { err: 'not-las' }
-  const verMinor = dv.getUint8(25)
-  const offsetToPts = dv.getUint32(96, true)
-  const fmtByte = dv.getUint8(104)
-  if (fmtByte & 0xC0) return { err: 'laz' } // high bits set → LAZ compressed
-  const fmt = fmtByte & 0x3f
-  const recLen = dv.getUint16(105, true)
-  let numPts = dv.getUint32(107, true)
-  const sx = dv.getFloat64(131, true), sy = dv.getFloat64(139, true), sz = dv.getFloat64(147, true)
-  const ox = dv.getFloat64(155, true), oy = dv.getFloat64(163, true), oz = dv.getFloat64(171, true)
-  if (verMinor >= 4) { try { const n64 = dv.getBigUint64(247, true); if (n64 > 0n) numPts = Number(n64) } catch { /* keep legacy count */ } }
-  if (!numPts || !recLen) return { err: 'empty' }
-  const rgbOff = { 2: 20, 3: 28, 5: 28, 7: 30, 8: 30, 10: 30 }[fmt]
-  const cap = 2_500_000
-  const stride = numPts > cap ? Math.ceil(numPts / cap) : 1
-  const outMax = Math.floor((numPts + stride - 1) / stride)
-  const xs = new Float64Array(outMax * 3)
-  const cs = rgbOff != null ? new Float32Array(outMax * 3) : null
-  let w = 0
-  for (let i = 0; i < numPts; i += stride) {
-    const base = offsetToPts + i * recLen
-    if (base + 12 > buf.byteLength) break
-    const X = dv.getInt32(base, true) * sx + ox
-    const Y = dv.getInt32(base + 4, true) * sy + oy
-    const Z = dv.getInt32(base + 8, true) * sz + oz
-    xs[w * 3] = X; xs[w * 3 + 1] = Z; xs[w * 3 + 2] = -Y // LAS z-up → three y-up
-    if (cs) { const ro = base + rgbOff; const r = dv.getUint16(ro, true), g = dv.getUint16(ro + 2, true), b = dv.getUint16(ro + 4, true); const d = (r > 255 || g > 255 || b > 255) ? 65535 : 255; cs[w * 3] = r / d; cs[w * 3 + 1] = g / d; cs[w * 3 + 2] = b / d }
-    w++
-  }
-  if (!w) return { err: 'empty' }
-  return finalizePoints(xs.subarray(0, w * 3), w, cs ? cs.subarray(0, w * 3) : null)
-}
-// Centre + uniformly scale raw points to fit the view; colour by height when no
-// per-point RGB is supplied. Shared by the LAS and LAZ decoders.
-function finalizePoints(xs, w, colorsIn) {
-  let cx = 0, cy = 0, cz = 0, mx = 0
-  for (let i = 0; i < w * 3; i += 3) { cx += xs[i]; cy += xs[i + 1]; cz += xs[i + 2] }
-  cx /= w; cy /= w; cz /= w
-  for (let i = 0; i < w * 3; i += 3) mx = Math.max(mx, Math.hypot(xs[i] - cx, xs[i + 1] - cy, xs[i + 2] - cz))
-  const scl = mx > 0 ? 1.2 / mx : 1
-  const pos = new Float32Array(w * 3)
-  for (let i = 0; i < w * 3; i += 3) { pos[i] = (xs[i] - cx) * scl; pos[i + 1] = (xs[i + 1] - cy) * scl; pos[i + 2] = (xs[i + 2] - cz) * scl }
-  let colors = colorsIn ? Float32Array.from(colorsIn) : null
-  if (!colors) { // no RGB → colour by height
-    colors = new Float32Array(w * 3)
-    let ymin = Infinity, ymax = -Infinity
-    for (let i = 1; i < w * 3; i += 3) { if (pos[i] < ymin) ymin = pos[i]; if (pos[i] > ymax) ymax = pos[i] }
-    const yr = (ymax - ymin) || 1
-    for (let i = 0; i < w * 3; i += 3) { const c = heightRamp((pos[i + 1] - ymin) / yr); colors[i] = c[0]; colors[i + 1] = c[1]; colors[i + 2] = c[2] }
-  }
-  return { positions: pos, colors, count: w }
-}
+// parsePointFile / parseLas / finalizePoints / heightRamp / intensityRamp
+// live in ../lib/points.js (pure ingest logic, unit-tested).
 function importGeoPointFile(node) {
   const inp = document.createElement('input')
   inp.type = 'file'; inp.accept = '.ply,.xyz,.pts,.txt,.las,.laz'
@@ -2884,7 +2615,7 @@ function importGeoPointFile(node) {
           const { decodeLaz } = await import('../lib/laz.js')
           const raw = await decodeLaz(reader.result)
           if (!raw || !raw.count) { showToast('Could not decode that LAZ file'); return }
-          data = finalizePoints(raw.xs, raw.count, raw.colors)
+          data = finalizePoints(raw.xs, raw.count, raw.colors, raw.intensity)
         } else if (isLas) {
           const res = parseLas(reader.result)
           if (!res || res.err || !res.count) { showToast('Could not read that LAS file'); return }
@@ -3125,29 +2856,10 @@ function getMapTile(url) {
   }
   return e
 }
-const lonToTileX = (lon, z) => (lon + 180) / 360 * (2 ** z)
-const latToTileY = (lat, z) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * (2 ** z) }
 // Tile URL: free no-key public sources by default; a MapTiler/Mapbox key
-// (Settings) upgrades the imagery. Note Esri uses {z}/{y}/{x} order.
-function mapTileUrl(layer, z, x, y) {
-  const key = settings.mapKey, prov = settings.mapProvider
-  if (key && prov === 'maptiler') {
-    const set = layer === 'Satellite' ? 'satellite-v2' : layer === 'Topographic' ? 'outdoor-v2' : layer === 'Dark' ? 'streets-v2-dark' : 'streets-v2'
-    const ext = layer === 'Satellite' ? 'jpg' : 'png'
-    return `https://api.maptiler.com/maps/${set}/${z}/${x}/${y}.${ext}?key=${key}`
-  }
-  if (key && prov === 'mapbox') {
-    const set = layer === 'Satellite' ? 'mapbox.satellite' : 'mapbox.mapbox-streets-v8'
-    if (layer === 'Satellite') return `https://api.mapbox.com/v4/mapbox.satellite/${z}/${x}/${y}@2x.jpg90?access_token=${key}`
-    const style = layer === 'Dark' ? 'dark-v11' : layer === 'Topographic' ? 'outdoors-v12' : 'streets-v12'
-    return `https://api.mapbox.com/styles/v1/mapbox/${style}/tiles/512/${z}/${x}/${y}@2x?access_token=${key}`
-  }
-  // free defaults
-  if (layer === 'Satellite') return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
-  if (layer === 'Topographic') return `https://a.tile.opentopomap.org/${z}/${x}/${y}.png`
-  if (layer === 'Dark') return `https://a.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}.png`
-  return `https://a.tile.openstreetmap.org/${z}/${x}/${y}.png`
-}
+// (Settings) upgrades the imagery. (Web Mercator math + provider URLs live in
+// ../lib/geoTiles.js; these wrappers inject the current key/provider.)
+function mapTileUrl(layer, z, x, y) { return tileUrl(layer, z, x, y, settings.mapKey, settings.mapProvider) }
 function drawGeodata(node, octx) {
   const p = node.params
   const z = Math.max(1, Math.min(19, Math.round(p.zoom ?? 12)))

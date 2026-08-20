@@ -1,33 +1,40 @@
 /**
- * Media library — a session-scoped store of the images, videos and recorded
- * clips a Media node can play as a Patch/Mixer source. Blobs live in memory
- * as object URLs (too large for localStorage), so the library rebuilds each
- * session; the shared camera is requested once and every Media node in camera
- * mode reuses the same stream.
+ * Media library — the images, videos and recorded clips a Media node can play
+ * as a Patch/Mixer source. The raw Blobs are persisted to IndexedDB (too large
+ * for localStorage) and rehydrated into fresh object URLs at start, so a show
+ * built around imported footage keeps its media across reloads; ids are stable
+ * so a saved patch/show that references media by id still resolves. The shared
+ * camera and screen streams are live device sources — requested per session,
+ * never persisted.
  *
  * A recorded/prebaked clip is just a video item captured from a live canvas —
  * that's how a slow non-realtime effect is "prebaked": record its output once,
  * then play the clip back at full speed.
  */
 import { reactive } from 'vue'
+import { putMediaBlob, deleteMediaBlob, allMediaBlobs, clearMediaBlobs } from '../lib/mediaDb.js'
 
 let idSeq = 1
 export const mediaLibrary = reactive([]) // { id, name, kind:'image'|'video', url, thumb, recorded }
 
 export function addMediaFile(file) {
   const kind = file.type.startsWith('video') ? 'video' : 'image'
+  const id = idSeq++
   const url = URL.createObjectURL(file)
-  const item = { id: idSeq++, name: file.name || `${kind} ${idSeq}`, kind, url, recorded: false }
+  const item = { id, name: file.name || `${kind} ${id}`, kind, url, recorded: false }
   mediaLibrary.push(item)
   makeThumb(item)
+  putMediaBlob({ id, name: item.name, kind, recorded: false, blob: file })
   return item
 }
 
 export function addRecordedClip(blob, name) {
+  const id = idSeq++
   const url = URL.createObjectURL(blob)
-  const item = { id: idSeq++, name: name || `clip ${idSeq}`, kind: 'video', url, recorded: true }
+  const item = { id, name: name || `clip ${id}`, kind: 'video', url, recorded: true }
   mediaLibrary.push(item)
   makeThumb(item)
+  putMediaBlob({ id, name: item.name, kind: 'video', recorded: true, blob })
   return item
 }
 
@@ -38,6 +45,34 @@ export function removeMedia(id) {
     URL.revokeObjectURL(mediaLibrary[i].url)
   } catch {}
   mediaLibrary.splice(i, 1)
+  deleteMediaBlob(id)
+}
+
+// Wipe the whole persisted library (used by Settings' "clear" controls).
+export function clearMediaLibrary() {
+  for (const m of mediaLibrary) { try { URL.revokeObjectURL(m.url) } catch {} }
+  mediaLibrary.splice(0, mediaLibrary.length)
+  clearMediaBlobs()
+}
+
+// Rehydrate persisted blobs into the live library once, at app start. Fresh
+// object URLs are minted from the stored Blobs; idSeq is advanced past every
+// restored id so new imports never collide with a persisted one.
+let hydrated = false
+export async function hydrateMediaLibrary() {
+  if (hydrated) return
+  hydrated = true
+  const records = await allMediaBlobs()
+  records.sort((a, b) => a.id - b.id)
+  for (const rec of records) {
+    if (!rec || !rec.blob) continue
+    if (rec.id >= idSeq) idSeq = rec.id + 1
+    if (mediaLibrary.some((m) => m.id === rec.id)) continue
+    const url = URL.createObjectURL(rec.blob)
+    const item = { id: rec.id, name: rec.name, kind: rec.kind, url, recorded: !!rec.recorded }
+    mediaLibrary.push(item)
+    makeThumb(item)
+  }
 }
 
 export function mediaById(id) {

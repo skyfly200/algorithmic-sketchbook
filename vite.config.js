@@ -161,8 +161,25 @@ export default defineConfig({
   base: './',
   plugins: [vue(), vuetify({ autoImport: true }), sketchUpdated(), offlinePwa()],
   build: {
+    // The gallery app splits its framework deps into a long-lived vendor chunk
+    // (see manualChunks). Individual sketch pages legitimately bundle heavy libs
+    // (p5, three) on their own — that's per-page and expected — so we lift the
+    // warning ceiling rather than chase it across 150 self-contained sketches.
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       input: sketchInputs(),
+      output: {
+        // Group the Vue/Vuetify framework into one cacheable vendor chunk so
+        // it's fetched once and shared, instead of inflating the main entry.
+        // three.js is left to Rollup's automatic splitting (it's imported by
+        // both the compositors and standalone sketch pages).
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (/[\\/]node_modules[\\/](vuetify|@mdi)[\\/]/.test(id)) return 'vendor-vuetify'
+            if (/[\\/]node_modules[\\/](vue|vue-router|pinia|@vue)[\\/]/.test(id)) return 'vendor-vue'
+          }
+        },
+      },
     },
   },
 })

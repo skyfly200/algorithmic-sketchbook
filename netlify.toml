@@ -2,7 +2,9 @@
 # repo in Netlify and it builds on every push to main. The Vite base is './'
 # (relative), so the site works from any host or subpath.
 [build]
-  command = "npm run build"
+  # Tests gate the deploy: a failing unit test fails the build, so Netlify's
+  # existing build pipeline doubles as CI (the repo has no separate CI runner).
+  command = "npm run test && npm run build"
   publish = "dist"
 
 [build.environment]
