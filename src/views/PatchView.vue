@@ -24,6 +24,7 @@ import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTil
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
 import { RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, NL_EXAMPLES } from '../lib/patch/constants.js'
+import { normalizeNodes, migrateGraph, topoMatch, applyCurve, evalOrder as orderGraph, ancestorsOf as ancestorsIn, applyRamp as rampParams, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
 import TourOverlay from '../components/TourOverlay.vue'
 import NumSlider from '../components/NumSlider.vue'
 import ColorField from '../components/ColorField.vue'
@@ -173,45 +174,8 @@ function loadGraph() {
     return null
   }
 }
-// Migration: Motion Extract used to be its own node type; it's now just the
-// motion-extraction sketch behind a Filter node, so legacy graphs convert.
-function normalizeNodes(list) {
-  for (const n of list ?? []) {
-    if (!n.params) n.params = {} // guard malformed/legacy saves
-    if (n.type === 'motion') {
-      n.type = 'filter'
-      n.params = { slug: 'motion-extraction' }
-    }
-    if (n.type === 'camera') {
-      n.type = 'media'
-      n.params = { mode: 'camera', mediaId: null }
-    }
-    // Legacy "Polygon Mask" (shape) → the new Polygon matte source. Its old
-    // content input is rewired to a Mask node in migrateGraph(); here we just
-    // switch the type and drop the now-meaningless invert (Mask owns that).
-    if (n.type === 'shape') { n.type = 'polygon'; delete n.params.invert }
-  }
-  return list
-}
-// The old Polygon Mask clipped its input to the polygon. Now Polygon is a
-// source, so reconnect any legacy graph: for each converted polygon that had a
-// content wire, insert a Mask (content × polygon) in its place so old routings
-// keep clipping as before.
-function migrateGraph(nodesArr, edgesArr) {
-  let maxId = nodesArr.reduce((m, n) => Math.max(m, n.id ?? 0), 0)
-  for (const poly of [...nodesArr]) {
-    if (poly.type !== 'polygon') continue
-    const inEdge = edgesArr.find((e) => e.to === poly.id)
-    if (!inEdge) continue // a fresh Polygon source — nothing to rewire
-    const m = { id: ++maxId, type: 'mask', x: poly.x, y: poly.y, params: { strength: 1, invert: false } }
-    nodesArr.push(m)
-    // reroute the polygon's downstream consumers to come from the new Mask
-    for (const e of edgesArr) if (e.from === poly.id) e.from = m.id
-    inEdge.to = m.id; inEdge.port = 0 // old content → Mask.content
-    edgesArr.push({ from: poly.id, to: m.id, port: 1 }) // polygon → Mask.matte
-    poly.x -= 60; poly.y += 70 // nudge the polygon out from under the mask
-  }
-}
+// normalizeNodes (legacy save migration) + migrateGraph (Polygon-Mask rewire)
+// live in ../lib/patch/graph.js.
 const saved = settings.persistEditors ? loadGraph() : null
 let nextId = 1
 const nodes = reactive(normalizeNodes(saved?.nodes) ?? [])
@@ -749,20 +713,7 @@ async function smartInterpret() {
 
 const nlNum = (v, d, lo = -Infinity, hi = Infinity) => (typeof v === 'number' && isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d)
 // Lay the graph out left-to-right by dependency depth (longest path from a source).
-function layoutByDepth(newIds) {
-  const set = new Set(newIds)
-  const depth = new Map(newIds.map((id) => [id, 0]))
-  for (let iter = 0; iter <= newIds.length; iter++) {
-    for (const e of edges) {
-      if (!set.has(e.from) || !set.has(e.to)) continue
-      const d = (depth.get(e.from) ?? 0) + 1
-      if (d > (depth.get(e.to) ?? 0)) depth.set(e.to, d)
-    }
-  }
-  const byCol = new Map()
-  for (const id of newIds) { const c = depth.get(id) ?? 0; if (!byCol.has(c)) byCol.set(c, []); byCol.get(c).push(id) }
-  for (const [c, list] of byCol) list.forEach((id, i) => { const n = nodeById(id); if (n) { n.x = 60 + c * 240; n.y = 70 + i * 200 } })
-}
+const layoutByDepth = (newIds) => layoutDepth(newIds, nodes, edges)
 
 function buildFromSpec(spec) {
   if (!spec || !Array.isArray(spec.nodes)) { showToast('AI returned no usable patch'); return }
@@ -864,34 +815,11 @@ function nlVoice() {
 }
 
 // All nodes that feed (directly or transitively) into `id` via video edges.
-function ancestorsOf(id) {
-  const anc = new Set()
-  const stack = [id]
-  while (stack.length) {
-    const cur = stack.pop()
-    for (const e of edges) if (e.to === cur && !anc.has(e.from)) { anc.add(e.from); stack.push(e.from) }
-  }
-  return anc
-}
+const ancestorsOf = (id) => ancestorsIn(id, edges)
 // Replace the whole branch feeding a node: remove every (unlocked) node upstream
 // of it and grow a fresh random source into each of its now-empty input ports.
-// Slide a proposed node box downward until it no longer overlaps any existing
-// node (plus a margin) — keeps freshly-laid-out nodes from stacking on top of
-// each other or on nodes that are staying put.
 const NODE_H = HEAD_H + THUMB_H + 24
-function freeSpot(x, y, ignore = new Set()) {
-  const mx = 24, my = 20
-  let guard = 0
-  let overlap = true
-  while (overlap && guard++ < 200) {
-    overlap = false
-    for (const o of nodes) {
-      if (ignore.has(o.id)) continue
-      if (Math.abs(o.x - x) < NODE_W + mx && Math.abs(o.y - y) < NODE_H + my) { y = o.y + NODE_H + my; overlap = true; break }
-    }
-  }
-  return { x, y }
-}
+const freeSpot = (x, y, ignore = new Set()) => placeFree(x, y, nodes, { nodeW: NODE_W, nodeH: NODE_H, ignore })
 function rerollUpstream(node) {
   if (!node || TYPES[node.type].ins === 0) return
   const anc = ancestorsOf(node.id)
@@ -946,14 +874,8 @@ const autoTotal = ref(1)       // length of the current dwell, for the ring
 const autoProgress = computed(() => Math.min(1, Math.max(0, 1 - autoLeft.value / Math.max(1, autoTotal.value))))
 function autoResetClock() { autoTotal.value = Math.max(2, autoEverySec.value); autoLeft.value = autoTotal.value }
 // Per-sketch render cost (higher = slower), same model as the Autopilot view.
-function slugCost(slug) {
-  const s = perfScores[slug]
-  if (!s) return 4
-  return Math.min(12, Math.max(1, Math.round(100 / Math.max(s, 8))))
-}
-function graphCost() {
-  return nodes.reduce((a, n) => a + ((n.type === 'effect' || n.type === 'filter') && n.params.slug ? slugCost(n.params.slug) : 0), 0)
-}
+const slugCost = (slug) => costOfSlug(slug, perfScores)
+const graphCost = () => costOfGraph(nodes, perfScores)
 function slugPool(n) {
   const base = n.type === 'filter' ? filterOptions.value : settings.filterToPool(effectOptions.value)
   return base.length ? base : (n.type === 'filter' ? filterOptions.value : effectOptions.value)
@@ -1189,15 +1111,7 @@ function sourceValue(src, now) {
 // Response curves reshape the 0..1 signal after scale/offset: exp favours the
 // top, log/sqrt favours the bottom, s-curve steepens the middle, and step
 // hard-gates at the halfway point.
-function applyCurve(v, curve) {
-  switch (curve) {
-    case 'exp': return v * v
-    case 'log': return Math.sqrt(v)
-    case 's-curve': return v * v * (3 - 2 * v)
-    case 'step': return v >= 0.5 ? 1 : 0
-    default: return v
-  }
-}
+// applyCurve (input response reshape) lives in ../lib/patch/graph.js.
 // Per-Input-node smoothing memory (EMA), for the `smooth` inertia control.
 const inputSmooth = new Map()
 function inputValue(node, now) {
@@ -2752,28 +2666,7 @@ function evalNode(node) {
 }
 
 // Topological order (cycles tolerated: leftovers appended → 1-frame feedback).
-function evalOrder() {
-  const indeg = new Map(nodes.map((n) => [n.id, 0]))
-  for (const e of edges) indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1)
-  const queue = nodes.filter((n) => (indeg.get(n.id) ?? 0) === 0)
-  const order = []
-  const seen = new Set()
-  while (queue.length) {
-    const n = queue.shift()
-    if (seen.has(n.id)) continue
-    seen.add(n.id)
-    order.push(n)
-    for (const e of edges.filter((e) => e.from === n.id)) {
-      indeg.set(e.to, indeg.get(e.to) - 1)
-      if (indeg.get(e.to) === 0) {
-        const t = nodes.find((x) => x.id === e.to)
-        if (t) queue.push(t)
-      }
-    }
-  }
-  for (const n of nodes) if (!seen.has(n.id)) order.push(n) // cyclic remainder
-  return order
-}
+const evalOrder = () => orderGraph(nodes, edges)
 
 let raf = 0
 // Adaptive throttling: a full compositor pass can get expensive (big
@@ -3211,31 +3104,9 @@ function playShow() { if (!cues.length) return; showPlaying.value = true; lastSh
 function pauseShow() { showPlaying.value = false }
 function stopShow() { showPlaying.value = false; playhead.value = 0; curSeg = -1 }
 function seekShow(t) { playhead.value = Math.max(0, Math.min(showLength(), t)); curSeg = -1 }
-function topoMatch(a, b) {
-  if (!a || !b || a.nodes.length !== b.nodes.length) return false
-  const bm = new Map(b.nodes.map((n) => [n.id, n]))
-  for (const n of a.nodes) { const m = bm.get(n.id); if (!m || m.type !== n.type) return false }
-  if (JSON.stringify(a.edges) !== JSON.stringify(b.edges)) return false
-  if (JSON.stringify(a.links || []) !== JSON.stringify(b.links || [])) return false
-  return true
-}
+// topoMatch (same-shape check) lives in ../lib/patch/graph.js.
 // Ramp the live graph's numeric params (and point arrays) from cue A→B by f.
-function applyRamp(a, b, f) {
-  const am = new Map(a.nodes.map((n) => [n.id, n]))
-  const bm = new Map(b.nodes.map((n) => [n.id, n]))
-  for (const n of nodes) {
-    const A = am.get(n.id), B = bm.get(n.id)
-    if (!A || !B || !A.params) continue
-    for (const k of Object.keys(A.params)) {
-      const av = A.params[k], bv = B.params?.[k]
-      if (typeof av === 'number' && typeof bv === 'number') n.params[k] = av + (bv - av) * f
-      else if (Array.isArray(av) && Array.isArray(bv) && av.length === bv.length) {
-        n.params[k] = av.map((p, idx) => (Array.isArray(p) && Array.isArray(bv[idx]) && p.length === bv[idx].length)
-          ? p.map((c, ci) => c + (bv[idx][ci] - c) * f) : p)
-      }
-    }
-  }
-}
+const applyRamp = (a, b, f) => rampParams(nodes, a, b, f)
 // Ramp each effect sketch's *internal* params between two cues by streaming
 // set-param to the live iframe. Only animates params that actually differ
 // between the cues, and throttles the postMessage traffic.
