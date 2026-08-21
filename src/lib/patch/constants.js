@@ -98,6 +98,53 @@ export const GEO_VOXELS = ['Sphere', 'Terrain', 'Gyroid', 'Shell']
 export const GEO_LAYERS = ['Streets', 'Satellite', 'Topographic', 'Dark']
 export const GEO_PLACES = { grand: { lat: 36.06, lon: -112.14, zoom: 12 }, alps: { lat: 45.98, lon: 7.66, zoom: 12 }, tokyo: { lat: 35.68, lon: 139.76, zoom: 13 } }
 
+// Built-in preset blocks: common routing patterns as structural templates
+// (node indices, not ids). Their effect/filter slugs are filled from the user's
+// enabled pools when stamped (see fillPreset). CX/RY lay them out on a grid.
+const CX = 230, RY = 170
+export const PRESET_BLOCKS = [
+  { name: 'Blended pair',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'output', x: CX * 2, y: RY * 0.5 }],
+    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }] },
+  { name: 'Filtered effect',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'filter', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
+    edges: [{ from: 0, to: 1, port: 0 }, { from: 1, to: 2, port: 0 }] },
+  { name: 'Filtered pair',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'filter', x: CX * 2, y: RY * 0.5 }, { type: 'output', x: CX * 3, y: RY * 0.5 }],
+    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }, { from: 3, to: 4, port: 0 }] },
+  { name: 'Layered trio',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'effect', x: 0, y: RY * 2 }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'blend', x: CX * 2, y: RY }, { type: 'output', x: CX * 3, y: RY }],
+    edges: [{ from: 0, to: 3, port: 0 }, { from: 1, to: 3, port: 1 }, { from: 3, to: 4, port: 0 }, { from: 2, to: 4, port: 1 }, { from: 4, to: 5, port: 0 }] },
+  { name: 'Polygon-mapped',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'polygon', x: CX, y: RY }, { type: 'mask', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
+    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }] },
+  // one effect cut to a shape, laid over a second effect — the "shape cutout
+  // overlay": B masked by a polygon, composited normal over background A.
+  { name: 'Shape cutout overlay',
+    nodes: [
+      { type: 'effect', x: 0, y: 0 },                              // 0: background A
+      { type: 'effect', x: 0, y: RY },                             // 1: overlay B
+      { type: 'mask', x: CX, y: RY },                              // 2: cut B to shape
+      { type: 'polygon', x: CX, y: RY * 1.9, params: { points: [[0.5, 0.14], [0.8, 0.32], [0.8, 0.68], [0.5, 0.86], [0.2, 0.68], [0.2, 0.32]], feather: 0.05 } }, // 3: shape matte
+      { type: 'blend', x: CX * 2, y: RY * 0.5, params: { mode: 'normal', mix: 1 } }, // 4: overlay over A
+      { type: 'output', x: CX * 3, y: RY * 0.5 },                  // 5
+    ],
+    edges: [
+      { from: 1, to: 2, port: 0 }, // B → mask content
+      { from: 3, to: 2, port: 1 }, // polygon → mask matte
+      { from: 0, to: 4, port: 0 }, // A → blend base
+      { from: 2, to: 4, port: 1 }, // masked B → blend top
+      { from: 4, to: 5, port: 0 },
+    ] },
+  { name: 'Portal echo',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'portal', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
+    edges: [{ from: 0, to: 1, port: 0 }, { from: 1, to: 2, port: 0 }] },
+  { name: 'Audio-reactive blend',
+    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'output', x: CX * 2, y: RY * 0.5 }, { type: 'input', x: 0, y: RY * 2, params: { source: 'audio.volume', scale: 1, offset: 0 } }],
+    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }],
+    links: [{ from: 4, srcPort: 0, node: 2, param: 'mix' }] },
+]
+
 // Prompt-chip examples shown in the natural-language designer.
 export const NL_EXAMPLES = [
   'dreamy underwater scene, slow and deep blue',

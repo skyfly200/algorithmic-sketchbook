@@ -23,8 +23,9 @@ import { parseDesignerIntent, hueHex, NL_MOD_PARAMS, NL_TEXT_DEFAULTS } from '..
 import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTileUrl, decodeElev as demDecode } from '../lib/geoTiles.js'
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
-import { RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, NL_EXAMPLES } from '../lib/patch/constants.js'
+import { RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, PRESET_BLOCKS, NL_EXAMPLES } from '../lib/patch/constants.js'
 import { normalizeNodes, migrateGraph, topoMatch, applyCurve, evalOrder as orderGraph, ancestorsOf as ancestorsIn, applyRamp as rampParams, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
+import { loadJson, saveJson, fileSlug, downloadJson, pickJsonFile, captureBlockData, stampBlock, fillPreset, buildPatchFile, buildShowFile, parsePatchImport, parseShowImport } from '../lib/patch/library.js'
 import TourOverlay from '../components/TourOverlay.vue'
 import NumSlider from '../components/NumSlider.vue'
 import ColorField from '../components/ColorField.vue'
@@ -820,6 +821,7 @@ const ancestorsOf = (id) => ancestorsIn(id, edges)
 // of it and grow a fresh random source into each of its now-empty input ports.
 const NODE_H = HEAD_H + THUMB_H + 24
 const freeSpot = (x, y, ignore = new Set()) => placeFree(x, y, nodes, { nodeW: NODE_W, nodeH: NODE_H, ignore })
+const pk = (a) => a[Math.floor(Math.random() * a.length)] // random pick, for reroll
 function rerollUpstream(node) {
   if (!node || TYPES[node.type].ins === 0) return
   const anc = ancestorsOf(node.id)
@@ -3211,14 +3213,7 @@ function tlCueDown(i, e) {
 
 // --- saved routings: named snapshots of the node graph in localStorage ----
 const SAVED_KEY = 'sketchbook-patch-saved'
-function loadSaved() {
-  try {
-    return JSON.parse(localStorage.getItem(SAVED_KEY)) || []
-  } catch {
-    return []
-  }
-}
-const savedRoutings = ref(loadSaved())
+const savedRoutings = ref(loadJson(SAVED_KEY, []))
 const newName = ref('')
 // The saved routing currently being edited (set on load/save) — lets "Save"
 // overwrite it in place while "Save as" always forks a new one.
@@ -3255,39 +3250,24 @@ function commitRenameRouting() {
   if (r) { const n = editRoutingName.value.trim(); if (n) { r.name = n; persistSaved() } }
   editRoutingId.value = null
 }
-function persistSaved() {
-  localStorage.setItem(SAVED_KEY, JSON.stringify(savedRoutings.value))
-}
+function persistSaved() { saveJson(SAVED_KEY, savedRoutings.value) }
 
 // --- blocks: reusable named subgraphs saved from a selection ----------------
 // A block captures the selected nodes (with their params), the wiring between
 // them, and any control links between them. It can be re-inserted (duplicated)
 // as many times as you like, so you build a mini-rig once and stamp it out.
 const BLOCK_KEY = 'sketchbook-patch-blocks'
-const savedBlocks = ref((() => { try { return JSON.parse(localStorage.getItem(BLOCK_KEY)) || [] } catch { return [] } })())
+const savedBlocks = ref(loadJson(BLOCK_KEY, []))
 const newBlockName = ref('')
 const editBlockId = ref(null)
 const editBlockName = ref('')
-function persistBlocks() { localStorage.setItem(BLOCK_KEY, JSON.stringify(savedBlocks.value)) }
+function persistBlocks() { saveJson(BLOCK_KEY, savedBlocks.value) }
 function saveBlock() {
   const ids = selectedSet.size ? [...selectedSet] : (selected.value != null ? [selected.value] : [])
   if (!ids.length) return
-  const set = new Set(ids)
   const members = ids.map((id) => nodeById(id)).filter(Boolean)
-  const minX = Math.min(...members.map((n) => n.x))
-  const minY = Math.min(...members.map((n) => n.y))
-  const bnodes = members.map((n) => ({
-    id: n.id, type: n.type, x: n.x - minX, y: n.y - minY, name: n.name,
-    locked: n.locked, params: JSON.parse(JSON.stringify(n.params)),
-  }))
-  const bedges = edges.filter((e) => set.has(e.from) && set.has(e.to)).map((e) => ({ ...e }))
-  const blinks = links.filter((l) => set.has(l.from) && set.has(l.node)).map((l) => ({ ...l }))
   const bname = newBlockName.value.trim() || `Block ${savedBlocks.value.length + 1}`
-  savedBlocks.value.push({
-    id: Date.now().toString(36),
-    name: bname,
-    nodes: bnodes, edges: bedges, links: blinks,
-  })
+  savedBlocks.value.push({ id: Date.now().toString(36), name: bname, ...captureBlockData(members, edges, links) })
   newBlockName.value = ''
   persistBlocks()
   showToast(`Saved block “${bname}”`)
@@ -3295,22 +3275,13 @@ function saveBlock() {
 // Insert (stamp) a saved block into the graph with fresh ids, offset so it
 // lands in view; selects the new nodes so you can immediately drag them.
 function insertBlock(b) {
-  const idMap = new Map()
-  const ox = 90, oy = 80
-  const created = []
-  for (const mn of b.nodes) {
-    const id = nextId++
-    idMap.set(mn.id, id)
-    const n = reactive({
-      id, type: mn.type, x: mn.x + ox, y: mn.y + oy, name: mn.name,
-      locked: mn.locked, params: JSON.parse(JSON.stringify(mn.params)),
-    })
-    nodes.push(n); st(id); created.push(id)
-  }
-  for (const e of b.edges) edges.push({ from: idMap.get(e.from), to: idMap.get(e.to), port: e.port })
-  for (const l of b.links) links.push({ from: idMap.get(l.from), srcPort: l.srcPort, node: idMap.get(l.node), param: l.param })
+  const stamped = stampBlock(b, nextId)
+  nextId = stamped.nextId
+  for (const d of stamped.nodes) { const n = reactive(d); nodes.push(n); st(n.id) }
+  edges.push(...stamped.edges)
+  links.push(...stamped.links)
   clearSelection()
-  for (const id of created) selectedSet.add(id)
+  for (const id of stamped.ids) selectedSet.add(id)
   persist()
   nextTick(() => layoutTick.value++)
 }
@@ -3319,67 +3290,15 @@ function deleteBlock(b) {
   if (i >= 0) { savedBlocks.value.splice(i, 1); persistBlocks() }
 }
 
-// --- built-in preset blocks: common routing patterns -----------------------
-// Structural templates (indices, not ids); slugs are filled from your enabled
-// effect/filter pools when stamped, so each preset comes out with real sketches.
-const CX = 230, RY = 170
-const PRESET_BLOCKS = [
-  { name: 'Blended pair',
-    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'output', x: CX * 2, y: RY * 0.5 }],
-    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }] },
-  { name: 'Filtered effect',
-    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'filter', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
-    edges: [{ from: 0, to: 1, port: 0 }, { from: 1, to: 2, port: 0 }] },
-  { name: 'Filtered pair',
-    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'filter', x: CX * 2, y: RY * 0.5 }, { type: 'output', x: CX * 3, y: RY * 0.5 }],
-    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }, { from: 3, to: 4, port: 0 }] },
-  { name: 'Layered trio',
-    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'effect', x: 0, y: RY * 2 }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'blend', x: CX * 2, y: RY }, { type: 'output', x: CX * 3, y: RY }],
-    edges: [{ from: 0, to: 3, port: 0 }, { from: 1, to: 3, port: 1 }, { from: 3, to: 4, port: 0 }, { from: 2, to: 4, port: 1 }, { from: 4, to: 5, port: 0 }] },
-  { name: 'Polygon-mapped',
-    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'polygon', x: CX, y: RY }, { type: 'mask', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
-    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }] },
-  // one effect cut to a shape, laid over a second effect — the "shape cutout
-  // overlay": B masked by a polygon, composited normal over background A.
-  { name: 'Shape cutout overlay',
-    nodes: [
-      { type: 'effect', x: 0, y: 0 },                              // 0: background A
-      { type: 'effect', x: 0, y: RY },                             // 1: overlay B
-      { type: 'mask', x: CX, y: RY },                              // 2: cut B to shape
-      { type: 'polygon', x: CX, y: RY * 1.9, params: { points: [[0.5, 0.14], [0.8, 0.32], [0.8, 0.68], [0.5, 0.86], [0.2, 0.68], [0.2, 0.32]], feather: 0.05 } }, // 3: shape matte
-      { type: 'blend', x: CX * 2, y: RY * 0.5, params: { mode: 'normal', mix: 1 } }, // 4: overlay over A
-      { type: 'output', x: CX * 3, y: RY * 0.5 },                  // 5
-    ],
-    edges: [
-      { from: 1, to: 2, port: 0 }, // B → mask content
-      { from: 3, to: 2, port: 1 }, // polygon → mask matte
-      { from: 0, to: 4, port: 0 }, // A → blend base
-      { from: 2, to: 4, port: 1 }, // masked B → blend top
-      { from: 4, to: 5, port: 0 },
-    ] },
-  { name: 'Portal echo',
-    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'portal', x: CX, y: 0 }, { type: 'output', x: CX * 2, y: 0 }],
-    edges: [{ from: 0, to: 1, port: 0 }, { from: 1, to: 2, port: 0 }] },
-  { name: 'Audio-reactive blend',
-    nodes: [{ type: 'effect', x: 0, y: 0 }, { type: 'effect', x: 0, y: RY }, { type: 'blend', x: CX, y: RY * 0.5 }, { type: 'output', x: CX * 2, y: RY * 0.5 }, { type: 'input', x: 0, y: RY * 2, params: { source: 'audio.volume', scale: 1, offset: 0 } }],
-    edges: [{ from: 0, to: 2, port: 0 }, { from: 1, to: 2, port: 1 }, { from: 2, to: 3, port: 0 }],
-    links: [{ from: 4, srcPort: 0, node: 2, param: 'mix' }] },
-]
-const pk = (a) => a[Math.floor(Math.random() * a.length)]
-// Fill a structural template's effect/filter slugs from the current pools, then
-// stamp it into the graph like any block.
+// PRESET_BLOCKS (built-in routing patterns) live in ../lib/patch/constants.js.
+// Fill a preset's effect/filter slugs from the current pools, then stamp it in.
 function insertPreset(p) {
   const pool = settings.filterToPool(effectOptions.value)
-  const bn = p.nodes.map((mn, i) => {
-    const params = { ...(mn.params || {}) }
-    if (mn.type === 'effect' && !params.slug) params.slug = pk(pool.length ? pool : effectOptions.value)?.slug ?? ''
-    if (mn.type === 'filter' && !params.slug) params.slug = pk(filterOptions.value)?.slug ?? ''
-    if (mn.type === 'blend' && !params.mode) { params.mode = pk(BLENDS); params.mix = +(0.5 + Math.random() * 0.5).toFixed(2) }
-    if (mn.type === 'portal' && !params.srcW) Object.assign(params, { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' })
-    if (mn.type === 'polygon' && !params.points) Object.assign(params, { points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], feather: 0 })
-    return { id: i, type: mn.type, x: mn.x, y: mn.y, params, locked: !!mn.locked }
-  })
-  insertBlock({ nodes: bn, edges: (p.edges || []).map((e) => ({ ...e })), links: (p.links || []).map((l) => ({ ...l })) })
+  insertBlock(fillPreset(p, {
+    effectPool: pool.length ? pool : effectOptions.value,
+    filterPool: filterOptions.value,
+    blends: BLENDS,
+  }))
   showToast(`Added “${p.name}”`)
 }
 function startRenameBlock(b) { editBlockId.value = b.id; editBlockName.value = b.name }
@@ -3466,68 +3385,37 @@ function deleteRouting(r) {
 }
 
 // --- file import / export: patches and shows as .json -----------------------
-function fileSlug(s) { return (s || 'untitled').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'untitled' }
-function downloadJson(obj, filename) {
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = filename
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000)
-}
-function pickJsonFile() {
-  return new Promise((resolve) => {
-    const inp = document.createElement('input')
-    inp.type = 'file'
-    inp.accept = 'application/json,.json'
-    inp.onchange = () => {
-      const f = inp.files?.[0]
-      if (!f) return resolve(null)
-      const r = new FileReader()
-      r.onload = () => { try { resolve(JSON.parse(r.result)) } catch { resolve(null) } }
-      r.onerror = () => resolve(null)
-      r.readAsText(f)
-    }
-    inp.click()
-  })
-}
-// A patch file carries the graph plus a little metadata so it's self-describing.
+// The serialization/validation core (fileSlug, downloadJson, pickJsonFile,
+// buildPatchFile, buildShowFile, parsePatchImport, parseShowImport) lives in
+// ../lib/patch/library.js; here we wire it to the live reactive graph.
 function exportPatch() {
   const name = newName.value.trim() || 'patch'
-  downloadJson({
-    type: 'sketchbook-patch', version: 1, name, resolution: resLabel.value,
-    patch: { nodes: JSON.parse(JSON.stringify(nodes)), edges: JSON.parse(JSON.stringify(edges)), links: JSON.parse(JSON.stringify(links)), effects: currentEffects() },
-  }, `${fileSlug(name)}.patch.json`)
+  downloadJson(buildPatchFile({ name, resolution: resLabel.value, nodes, edges, links, effects: currentEffects() }), `${fileSlug(name)}.patch.json`)
 }
 function exportRouting(r) {
-  downloadJson({ type: 'sketchbook-patch', version: 1, name: r.name, patch: { nodes: r.nodes, edges: r.edges, links: r.links || [], effects: r.effects || {} } }, `${fileSlug(r.name)}.patch.json`)
+  downloadJson(buildPatchFile({ name: r.name, nodes: r.nodes, edges: r.edges, links: r.links || [], effects: r.effects || {} }), `${fileSlug(r.name)}.patch.json`)
 }
 async function importPatch() {
-  const data = await pickJsonFile()
-  if (!data) { alertBadFile(); return }
-  // accept the wrapped form, a bare {nodes,edges,links}, or a list of routings
-  if (Array.isArray(data)) {
-    for (const r of data) if (r?.nodes) savedRoutings.value.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: r.name || 'Imported', nodes: r.nodes, edges: r.edges || [], links: r.links || [] })
+  const parsed = parsePatchImport(await pickJsonFile(), RESOLUTIONS.map((r) => r.label))
+  if (!parsed) { alertBadFile(); return }
+  if (parsed.kind === 'routings') {
+    for (const r of parsed.routings) savedRoutings.value.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: r.name || 'Imported', nodes: r.nodes, edges: r.edges || [], links: r.links || [] })
     persistSaved()
     return
   }
-  const patch = data.patch || (data.nodes ? data : null)
-  if (!patch?.nodes) { alertBadFile(); return }
-  if (data.resolution && RESOLUTIONS.some((x) => x.label === data.resolution)) applyResolution(data.resolution)
+  const patch = parsed.patch
+  if (parsed.resolution) applyResolution(parsed.resolution)
   loadRouting(patch)
   // keep it around in the saved list too
-  savedRoutings.value.push({ id: Date.now().toString(36), name: data.name || 'Imported patch', nodes: patch.nodes, edges: patch.edges || [], links: patch.links || [] })
+  savedRoutings.value.push({ id: Date.now().toString(36), name: parsed.name, nodes: patch.nodes, edges: patch.edges || [], links: patch.links || [] })
   persistSaved()
 }
 function exportShow(show = null) {
-  const src = show && show.cues ? show.cues : cues
-  const name = show?.name || 'show'
-  downloadJson({ type: 'sketchbook-show', version: 1, name, mode: show?.mode ?? showMode.value, cues: JSON.parse(JSON.stringify(src)) }, `${fileSlug(name)}.show.json`)
+  downloadJson(buildShowFile({ name: show?.name || 'show', mode: show?.mode ?? showMode.value, cues: show && show.cues ? show.cues : cues }), `${fileSlug(show?.name || 'show')}.show.json`)
 }
 async function importShow() {
-  const data = await pickJsonFile()
-  const arr = Array.isArray(data) ? data : data?.cues
-  if (!Array.isArray(arr)) { alertBadFile(); return }
+  const arr = parseShowImport(await pickJsonFile())
+  if (!arr) { alertBadFile(); return }
   cues.splice(0, cues.length, ...arr)
   activeCue.value = -1
   curSeg = -1
@@ -3539,10 +3427,9 @@ function alertBadFile() {
 
 // --- named show files: save a set of cues (+ mode) to a persisted library ---
 const SHOWS_KEY = 'sketchbook-patch-shows'
-function loadShows() { try { return JSON.parse(localStorage.getItem(SHOWS_KEY)) || [] } catch { return [] } }
-const savedShows = ref(loadShows())
+const savedShows = ref(loadJson(SHOWS_KEY, []))
 const newShowName = ref('')
-function persistShows() { localStorage.setItem(SHOWS_KEY, JSON.stringify(savedShows.value)) }
+function persistShows() { saveJson(SHOWS_KEY, savedShows.value) }
 function saveShowAs() {
   if (!cues.length) { showToast('No cues to save yet'); return }
   const name = newShowName.value.trim() || `Show ${savedShows.value.length + 1}`
