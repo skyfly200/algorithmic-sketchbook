@@ -15,6 +15,11 @@ export const RESOLUTIONS = [
   { label: 'Native', native: true },
 ]
 
+// Node box dimensions in px: card width, header-strip height, thumbnail height.
+export const NODE_W = 190
+export const HEAD_H = 30
+export const THUMB_H = 107
+
 // The node catalogue: title, input-port count, accent colour and icon per type.
 export const TYPES = {
   effect: { title: 'Effect', ins: 0, color: '#7c8cff', icon: 'mdi-creation' },
@@ -151,4 +156,14 @@ export const NL_EXAMPLES = [
   'glitchy retro camera, punchy and fast',
   'liquid metal over noise, intense, react to the beat',
   'the text "BRIGHT WAVES" masked through a psychedelic swirl',
+]
+
+// Guided-tour steps for the Patch view (TourOverlay reads target/title/body/pad).
+export const PATCH_TOUR_STEPS = [
+  { title: 'Patch — the studio', body: 'A node compositor: wire generator effects through filters and blends into an Output, then project it. This is the deep end.' },
+  { target: '[data-tour="patch-add"]', title: 'Build the graph', body: 'Add effects, filters, text, media, masks and blends from here, then drag a node’s right port to another’s left port to wire them.', pad: 8 },
+  { target: '[data-tour="patch-random"]', title: 'Randomize', body: 'Deal out a whole new random-but-sensible patch in one click (undoable). It draws from the effect pool you set in Settings.' },
+  { target: '[data-tour="patch-mask"]', title: 'Projection mapping', body: 'Add a Polygon node (wire it into a Mask), then turn this on and drag the polygon’s corners on the output to fit it to a real surface.' },
+  { target: '[data-tour="patch-show"]', title: 'Plan a show', body: 'Capture the patch as cues and step through them, or lay them on a timeline that ramps parameters between them.' },
+  { target: '[data-tour="patch-output"]', title: 'Go live', body: 'Switch to output-only and fullscreen for a clean projection, pop the output to a second display, or export the patch to a file.' },
 ]

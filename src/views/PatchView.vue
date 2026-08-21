@@ -17,13 +17,13 @@ import { useRouter } from 'vue-router'
 import { useSketchStore, CATEGORIES } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
 import { PATCH_HANDOFF_KEY } from '../lib/mixToPatch'
-import { inputParams } from '../lib/inputParams'
+import { inputParams, groupInputSources } from '../lib/inputParams'
 import { parsePointFile, parseLas, finalizePoints } from '../lib/points.js'
-import { parseDesignerIntent, hueHex, NL_MOD_PARAMS, NL_TEXT_DEFAULTS } from '../lib/nlDesigner.js'
+import { parseDesignerIntent, NL_TEXT_DEFAULTS, specNodeParams, callDesignerAI, resolveEffectMods } from '../lib/nlDesigner.js'
 import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTileUrl, decodeElev as demDecode } from '../lib/geoTiles.js'
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
-import { RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, PRESET_BLOCKS, NL_EXAMPLES } from '../lib/patch/constants.js'
+import { NODE_W, HEAD_H, THUMB_H, RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, PRESET_BLOCKS, NL_EXAMPLES, PATCH_TOUR_STEPS } from '../lib/patch/constants.js'
 import { normalizeNodes, migrateGraph, topoMatch, applyCurve, evalOrder as orderGraph, ancestorsOf as ancestorsIn, applyRamp as rampParams, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
 import { loadJson, saveJson, fileSlug, downloadJson, pickJsonFile, captureBlockData, stampBlock, fillPreset, buildPatchFile, buildShowFile, parsePatchImport, parseShowImport } from '../lib/patch/library.js'
 import TourOverlay from '../components/TourOverlay.vue'
@@ -124,9 +124,7 @@ function applyResolution(label) {
   geomVer.value++ // the mask overlay's cover-fit depends on W/H
 }
 
-const NODE_W = 190
-const HEAD_H = 30
-const THUMB_H = 107
+// Node box dimensions (px) live in ../lib/patch/constants.js.
 
 // How many control/video outputs a node exposes (xy: x,y · tracker: x,y,size).
 function outCount(n) {
@@ -150,21 +148,9 @@ async function loadSystemFonts() {
 // Node catalogue, param ranges, blend lists, geometry/geodata option sets,
 // polygon presets + path builders and the aspect presets live in
 // ../lib/patch/{constants,shapes}.js.
-// Input sources grouped for the pickers (audio, midi, mouse, touch, tilt,
-// time, leap, artnet — per-category optgroups instead of one long list).
-const INPUT_GROUPS = computed(() => {
-  const groups = { audio: [], midi: [], mouse: [], touch: [], tilt: [], time: [], leap: [], artnet: [] }
-  for (const s of INPUT_SOURCES) {
-    if (s.startsWith('midi.')) continue // MIDI handled below (hidden until set up)
-    const head = s.split('.')[0]
-    const g = head === 'shake' ? 'tilt' : head
-    ;(groups[g] ?? (groups[g] = [])).push(s)
-  }
-  // MIDI stays hidden until it's set up in Settings; once set up it's a single
-  // entry (the channel is chosen globally there, not per-mapping).
-  if (settings.midiEnabled) groups.midi = ['midi.cc1', 'midi.note', 'midi.velocity']
-  return Object.entries(groups).filter(([, list]) => list.length)
-})
+// Input sources grouped for the pickers (per-category optgroups). The grouping
+// (incl. MIDI hidden until set up) lives in ../lib/inputParams.js.
+const INPUT_GROUPS = computed(() => groupInputSources(INPUT_SOURCES, { midiEnabled: settings.midiEnabled }))
 
 // --- persisted graph ---
 const STORE_KEY = 'sketchbook-patch'
@@ -553,17 +539,7 @@ function queueNlMods(node, it) {
 function applyNlMods(id, { mods, color }) {
   const c = effectControls.get(id)
   if (!c?.schema) return
-  for (const [name, spec] of Object.entries(c.schema)) {
-    const label = (name + ' ' + (spec.label || '')).toLowerCase()
-    if (spec.type === 'color') { if (color) setEffectParam(id, name, hueHex(color.hue, color.sat, color.val)); continue }
-    if (typeof spec.min !== 'number') continue
-    const span = spec.max - spec.min || 1
-    let applied = false
-    for (const [cat, re] of Object.entries(NL_MOD_PARAMS)) {
-      if (mods[cat] && re.test(label)) { setEffectParam(id, name, +(spec.min + span * (mods[cat] > 0 ? 0.8 : 0.2)).toFixed(4)); applied = true; break }
-    }
-    if (!applied && color && /\bhue\b/.test(label)) setEffectParam(id, name, spec.max <= 361 ? color.hue : +(color.hue / 360).toFixed(3))
-  }
+  for (const [name, value] of resolveEffectMods(c.schema, mods, color)) setEffectParam(id, name, value)
 }
 
 // Build the graph from the (possibly edited) intent.
@@ -645,64 +621,14 @@ const nlBusy = ref(false)
 const nlAiSpec = ref(null) // the model's returned plan, shown before building
 watch(nlSmart, (v) => settings.setAiSmart(v))
 
-const NL_SYS = `You are the patch designer for "Bright Waves", a live-visuals node-graph compositor. Turn the user's description into a graph as a JSON object and nothing else.
-
-Node types (field "type"):
-- effect: a generative source. Needs "slug" from the effects list.
-- filter: processes ONE video input (port 0). Needs "slug" from the filters list.
-- media: a camera source. Use {"type":"media","mode":"camera"}.
-- text: on-screen text. Fields: text, and optional x,y (0..1), size (0.03..0.6), weight (100..900), hue (0..360), sat (0..100), val (0..100), rotate.
-- sprite: a placed image. Optional x,y,scale.
-- polygon: a white matte shape source. Optional "shape": one of triangle,square,pentagon,hexagon,octagon,circle,diamond,star,heart,arrow,cross.
-- mask: cuts a picture to a matte. Input port 0 = picture (content), port 1 = matte (a polygon/text). Optional "invert".
-- blend: composites TWO inputs. Port 0 = base, port 1 = top. Fields: mode (screen,add,multiply,overlay,difference,lighten,darken,soft-light,normal), mix (0..1).
-- portal: remaps a region. geo/vcam: 3D geometry + camera (geo feeds vcam).
-- input: emits a 0..1 control signal. Field "source" from the input-sources list. xy: an XY pad control. tracker: video motion tracker.
-- output: the final image. Exactly one; wire the last picture node into it.
-
-Rules:
-- "edges" are VIDEO/geometry connections: {"from": id, "to": id, "port": inputIndex}. port is 0-based.
-- "links" are CONTROL connections from an input/xy/tracker OUTPUT to a target node's numeric PARAM: {"from": id, "to": id, "param": "mix"}. Controllable params include blend "mix", text "x"/"y"/"hue"/"rotate"/"size", portal edges, polygon "feather".
-- Every graph must end in exactly one output node fed by the final picture.
-- Only use slugs that appear in the provided lists. Prefer few nodes (2–7) unless the description clearly needs more.
-- ids are short strings you choose.
-
-Return ONLY a JSON object: {"nodes":[...],"edges":[...],"links":[...],"notes":"one short sentence"}. No markdown, no prose.`
-
-async function nlCallClaude(prompt) {
-  const key = settings.aiKey
-  const eff = effectOptions.value.map((s) => `${s.slug}: ${s.title}`).join('\n')
-  const filt = filterOptions.value.map((s) => `${s.slug}: ${s.title}`).join('\n')
-  const user = `EFFECTS (sources), slug: title —\n${eff}\n\nFILTERS (process video), slug: title —\n${filt}\n\nINPUT SOURCES for input nodes: ${INPUT_SOURCES.join(', ')}\n\nDESCRIPTION: "${prompt}"\n\nReturn ONLY the JSON patch.`
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({ model: settings.aiModel, max_tokens: 1600, system: NL_SYS, messages: [{ role: 'user', content: user }] }),
-  })
-  if (!res.ok) {
-    let msg = res.status + ''
-    try { const j = await res.json(); msg = j.error?.message || JSON.stringify(j).slice(0, 140) } catch { /* non-json */ }
-    throw new Error(msg)
-  }
-  const data = await res.json()
-  const text = (data.content || []).map((c) => c.text || '').join('')
-  const a = text.indexOf('{'), b = text.lastIndexOf('}')
-  if (a < 0 || b < a) throw new Error('no JSON in response')
-  return JSON.parse(text.slice(a, b + 1))
-}
-
+// The system prompt + the Anthropic call live in ../lib/nlDesigner.js.
 async function smartInterpret() {
   const prompt = (nlText.value || '').trim()
   if (!prompt) { showToast('Describe the look you want'); return }
   if (!settings.aiKey) { showToast('Add a Claude API key in Settings for smart mode'); return }
   nlBusy.value = true; nlAiSpec.value = null; nlIntent.value = null
   try {
-    const spec = await nlCallClaude(prompt)
+    const spec = await callDesignerAI({ prompt, apiKey: settings.aiKey, model: settings.aiModel, effects: effectOptions.value, filters: filterOptions.value, inputs: INPUT_SOURCES })
     if (!spec || !Array.isArray(spec.nodes) || !spec.nodes.length) throw new Error('empty patch')
     nlAiSpec.value = spec
   } catch (e) {
@@ -712,16 +638,19 @@ async function smartInterpret() {
   }
 }
 
-const nlNum = (v, d, lo = -Infinity, hi = Infinity) => (typeof v === 'number' && isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d)
 // Lay the graph out left-to-right by dependency depth (longest path from a source).
 const layoutByDepth = (newIds) => layoutDepth(newIds, nodes, edges)
 
 function buildFromSpec(spec) {
   if (!spec || !Array.isArray(spec.nodes)) { showToast('AI returned no usable patch'); return }
-  const effSet = new Set(effectOptions.value.map((s) => s.slug))
-  const filtSet = new Set(filterOptions.value.map((s) => s.slug))
-  const inputSet = new Set(INPUT_SOURCES)
-  const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s)
+  const specCtx = {
+    effectSlugs: new Set(effectOptions.value.map((s) => s.slug)),
+    filterSlugs: new Set(filterOptions.value.map((s) => s.slug)),
+    inputSlugs: new Set(INPUT_SOURCES),
+    blends: BLENDS, polyShapes: POLY_SHAPES,
+    fallbackEffect: effectOptions.value[0]?.slug ?? '', fallbackFilter: filterOptions.value[0]?.slug ?? '',
+    seed: randSeed, nodeW: NODE_W, thumbH: THUMB_H,
+  }
 
   // clear everything except locked / kept nodes
   const keptIds = new Set(nodes.filter((n) => n.locked || n.keep).map((n) => n.id))
@@ -734,24 +663,7 @@ function buildFromSpec(spec) {
   const newIds = []
   for (const n of spec.nodes) {
     if (!n || !TYPES[n.type]) continue
-    let params
-    switch (n.type) {
-      case 'effect': params = { slug: effSet.has(n.slug) ? n.slug : (effectOptions.value[0]?.slug ?? ''), seed: randSeed() }; break
-      case 'filter': params = { slug: filtSet.has(n.slug) ? n.slug : (filterOptions.value[0]?.slug ?? ''), seed: randSeed() }; break
-      case 'blend': params = { mode: BLENDS.includes(n.mode) ? n.mode : 'screen', mix: nlNum(n.mix, 0.6, 0, 1) }; break
-      case 'text': params = { ...NL_TEXT_DEFAULTS, text: String(n.text ?? 'BRIGHT WAVES'), x: nlNum(n.x, 0.5, 0, 1), y: nlNum(n.y, 0.5, 0, 1), size: nlNum(n.size, 0.2, 0.03, 0.6), weight: nlNum(n.weight, 800, 100, 900), hue: nlNum(n.hue, 200, 0, 360), sat: nlNum(n.sat, 82, 0, 100), val: nlNum(n.val, 96, 0, 100), rotate: nlNum(n.rotate, 0, -180, 180) }; break
-      case 'input': params = { source: inputSet.has(n.source) ? n.source : 'audio.pulse', scale: 1, offset: 0, invert: false, curve: 'linear' }; break
-      case 'xy': params = { x: 0.5, y: 0.5, recenter: false, xMin: 0, xMax: 1, yMin: 0, yMax: 1, curve: 'linear', padW: NODE_W, padH: THUMB_H }; break
-      case 'tracker': params = { thresh: 0.5, smooth: 0.7 }; break
-      case 'media': params = { mode: 'camera', mediaId: null }; break
-      case 'sprite': params = { mediaId: null, x: nlNum(n.x, 0.5, 0, 1), y: nlNum(n.y, 0.5, 0, 1), scale: nlNum(n.scale, 0.4, 0.02, 2), rotate: 0, opacity: 1, spin: 0, motion: 'None', speed: 0.5, amp: 0.2, cols: 1, rows: 1, fps: 12 }; break
-      case 'polygon': { const shp = POLY_SHAPES[capitalize(n.shape)]; params = { points: (shp || [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]).map((p) => [...p]), feather: nlNum(n.feather, 0, 0, 0.5) }; break }
-      case 'mask': params = { mode: 'multiply', strength: 1, invert: !!n.invert }; break
-      case 'portal': params = { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }; break
-      case 'geo': params = { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28, source: 'Shape', cloud: 'Galaxy', voxel: 'Sphere', count: 12000, res: 18, pointSize: 0.03, dataVer: 0, lat: 46.5, lon: 8.0, zoom: 11, terrainRes: 96, verticalScale: 0.6, drape: true }; break
-      case 'vcam': params = { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, lightSat: 34, lightVal: 86, spin: true }; break
-      default: params = {}
-    }
+    const params = specNodeParams(n, specCtx)
     const rn = reactive({ id: nextId++, type: n.type, x: 0, y: 0, params })
     nodes.push(rn); st(rn.id); idMap.set(n.id, rn.id); newIds.push(rn.id)
   }
@@ -3459,14 +3371,7 @@ function deleteShowFile(s) {
 
 // --- guided tour -------------------------------------------------------------
 const tourActive = ref(false)
-const tourSteps = [
-  { title: 'Patch — the studio', body: 'A node compositor: wire generator effects through filters and blends into an Output, then project it. This is the deep end.' },
-  { target: '[data-tour="patch-add"]', title: 'Build the graph', body: 'Add effects, filters, text, media, masks and blends from here, then drag a node’s right port to another’s left port to wire them.', pad: 8 },
-  { target: '[data-tour="patch-random"]', title: 'Randomize', body: 'Deal out a whole new random-but-sensible patch in one click (undoable). It draws from the effect pool you set in Settings.' },
-  { target: '[data-tour="patch-mask"]', title: 'Projection mapping', body: 'Add a Polygon node (wire it into a Mask), then turn this on and drag the polygon’s corners on the output to fit it to a real surface.' },
-  { target: '[data-tour="patch-show"]', title: 'Plan a show', body: 'Capture the patch as cues and step through them, or lay them on a timeline that ramps parameters between them.' },
-  { target: '[data-tour="patch-output"]', title: 'Go live', body: 'Switch to output-only and fullscreen for a clean projection, pop the output to a second display, or export the patch to a file.' },
-]
+const tourSteps = PATCH_TOUR_STEPS // step data lives in ../lib/patch/constants.js
 function startTour() { tourActive.value = true }
 function finishTour(payload) { settings.markSeen('patch'); if (payload?.disableAll) settings.setTutorials(false) }
 

@@ -159,3 +159,119 @@ export function parseDesignerIntent(prompt, effectOptions, filterOptions) {
     mask: !!maskM, audio: !!audM, mouse: !!mouM, blend, mods, color, ignored,
   }
 }
+
+// --- AI smart mode ----------------------------------------------------------
+// The optional Claude-powered designer. The offline parser above handles most
+// prompts; with the user's own API key, this sends the description + the live
+// effect/filter catalogue to the model and gets back a structured graph spec.
+// The three helpers here are the framework-free core — the system prompt, the
+// per-node param sanitizer that clamps whatever the model returns to safe
+// ranges, and the fetch itself (fetchImpl injectable for tests). PatchView owns
+// the reactive graph mutation that turns a validated spec into live nodes.
+
+// Clamp a numeric field to [lo,hi], falling back to d for non-numbers.
+export function nlNum(v, d, lo = -Infinity, hi = Infinity) {
+  return typeof v === 'number' && isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d
+}
+
+// The system prompt describing the node graph the model must emit.
+export const NL_SYSTEM_PROMPT = `You are the patch designer for "Bright Waves", a live-visuals node-graph compositor. Turn the user's description into a graph as a JSON object and nothing else.
+
+Node types (field "type"):
+- effect: a generative source. Needs "slug" from the effects list.
+- filter: processes ONE video input (port 0). Needs "slug" from the filters list.
+- media: a camera source. Use {"type":"media","mode":"camera"}.
+- text: on-screen text. Fields: text, and optional x,y (0..1), size (0.03..0.6), weight (100..900), hue (0..360), sat (0..100), val (0..100), rotate.
+- sprite: a placed image. Optional x,y,scale.
+- polygon: a white matte shape source. Optional "shape": one of triangle,square,pentagon,hexagon,octagon,circle,diamond,star,heart,arrow,cross.
+- mask: cuts a picture to a matte. Input port 0 = picture (content), port 1 = matte (a polygon/text). Optional "invert".
+- blend: composites TWO inputs. Port 0 = base, port 1 = top. Fields: mode (screen,add,multiply,overlay,difference,lighten,darken,soft-light,normal), mix (0..1).
+- portal: remaps a region. geo/vcam: 3D geometry + camera (geo feeds vcam).
+- input: emits a 0..1 control signal. Field "source" from the input-sources list. xy: an XY pad control. tracker: video motion tracker.
+- output: the final image. Exactly one; wire the last picture node into it.
+
+Rules:
+- "edges" are VIDEO/geometry connections: {"from": id, "to": id, "port": inputIndex}. port is 0-based.
+- "links" are CONTROL connections from an input/xy/tracker OUTPUT to a target node's numeric PARAM: {"from": id, "to": id, "param": "mix"}. Controllable params include blend "mix", text "x"/"y"/"hue"/"rotate"/"size", portal edges, polygon "feather".
+- Every graph must end in exactly one output node fed by the final picture.
+- Only use slugs that appear in the provided lists. Prefer few nodes (2–7) unless the description clearly needs more.
+- ids are short strings you choose.
+
+Return ONLY a JSON object: {"nodes":[...],"edges":[...],"links":[...],"notes":"one short sentence"}. No markdown, no prose.`
+
+// Sanitize one node from the model's spec into a safe params object, clamping
+// every numeric field and falling back known slugs/sources to valid choices.
+// ctx supplies the catalogue sets + defaults so this stays framework-free.
+export function specNodeParams(n, ctx) {
+  const {
+    effectSlugs, filterSlugs, inputSlugs, blends = [], polyShapes = {},
+    fallbackEffect = '', fallbackFilter = '', seed = () => '', nodeW = 190, thumbH = 107,
+  } = ctx
+  const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s)
+  switch (n.type) {
+    case 'effect': return { slug: effectSlugs.has(n.slug) ? n.slug : fallbackEffect, seed: seed() }
+    case 'filter': return { slug: filterSlugs.has(n.slug) ? n.slug : fallbackFilter, seed: seed() }
+    case 'blend': return { mode: blends.includes(n.mode) ? n.mode : 'screen', mix: nlNum(n.mix, 0.6, 0, 1) }
+    case 'text': return { ...NL_TEXT_DEFAULTS, text: String(n.text ?? 'BRIGHT WAVES'), x: nlNum(n.x, 0.5, 0, 1), y: nlNum(n.y, 0.5, 0, 1), size: nlNum(n.size, 0.2, 0.03, 0.6), weight: nlNum(n.weight, 800, 100, 900), hue: nlNum(n.hue, 200, 0, 360), sat: nlNum(n.sat, 82, 0, 100), val: nlNum(n.val, 96, 0, 100), rotate: nlNum(n.rotate, 0, -180, 180) }
+    case 'input': return { source: inputSlugs.has(n.source) ? n.source : 'audio.pulse', scale: 1, offset: 0, invert: false, curve: 'linear' }
+    case 'xy': return { x: 0.5, y: 0.5, recenter: false, xMin: 0, xMax: 1, yMin: 0, yMax: 1, curve: 'linear', padW: nodeW, padH: thumbH }
+    case 'tracker': return { thresh: 0.5, smooth: 0.7 }
+    case 'media': return { mode: 'camera', mediaId: null }
+    case 'sprite': return { mediaId: null, x: nlNum(n.x, 0.5, 0, 1), y: nlNum(n.y, 0.5, 0, 1), scale: nlNum(n.scale, 0.4, 0.02, 2), rotate: 0, opacity: 1, spin: 0, motion: 'None', speed: 0.5, amp: 0.2, cols: 1, rows: 1, fps: 12 }
+    case 'polygon': { const shp = polyShapes[capitalize(n.shape)]; return { points: (shp || [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]).map((p) => [...p]), feather: nlNum(n.feather, 0, 0, 0.5) } }
+    case 'mask': return { mode: 'multiply', strength: 1, invert: !!n.invert }
+    case 'portal': return { srcX: 0.05, srcY: 0.05, srcW: 0.35, srcH: 0.35, dstX: 0.6, dstY: 0.6, dstW: 0.35, dstH: 0.35, recurse: 1, border: true, shape: 'rectangle', lockAspect: false, aspect: '1:1' }
+    case 'geo': return { shape: 'Icosahedron', material: 'Solid', hue: 160, sat: 72, val: 90, displace: 0.25, freq: 2, spin: 0.5, detail: 2, flutes: 8, twist: 90, groove: 0.28, source: 'Shape', cloud: 'Galaxy', voxel: 'Sphere', count: 12000, res: 18, pointSize: 0.03, dataVer: 0, lat: 46.5, lon: 8.0, zoom: 11, terrainRes: 96, verticalScale: 0.6, drape: true }
+    case 'vcam': return { fov: 55, distance: 4.5, orbit: 0.4, tilt: 0.35, bg: 'Dark', lightHue: 40, lightSat: 34, lightVal: 86, spin: true }
+    default: return {}
+  }
+}
+
+// Call the Anthropic API (directly from the browser, with the user's own key)
+// and return the parsed JSON patch. Throws on HTTP error or missing JSON.
+export async function callDesignerAI({ prompt, apiKey, model, system = NL_SYSTEM_PROMPT, effects, filters, inputs, maxTokens = 1600, fetchImpl = globalThis.fetch }) {
+  const eff = effects.map((s) => `${s.slug}: ${s.title}`).join('\n')
+  const filt = filters.map((s) => `${s.slug}: ${s.title}`).join('\n')
+  const user = `EFFECTS (sources), slug: title —\n${eff}\n\nFILTERS (process video), slug: title —\n${filt}\n\nINPUT SOURCES for input nodes: ${inputs.join(', ')}\n\nDESCRIPTION: "${prompt}"\n\nReturn ONLY the JSON patch.`
+  const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
+  })
+  if (!res.ok) {
+    let msg = res.status + ''
+    try { const j = await res.json(); msg = j.error?.message || JSON.stringify(j).slice(0, 140) } catch { /* non-json */ }
+    throw new Error(msg)
+  }
+  const data = await res.json()
+  const text = (data.content || []).map((c) => c.text || '').join('')
+  const a = text.indexOf('{'), b = text.lastIndexOf('}')
+  if (a < 0 || b < a) throw new Error('no JSON in response')
+  return JSON.parse(text.slice(a, b + 1))
+}
+
+// Given an effect sketch's live param schema, decide which params a set of
+// adjective mods + a colour should nudge and to what value: adjective categories
+// (NL_MOD_PARAMS) push a matching numeric param toward its high/low end, a colour
+// fills a colour param or an obvious "hue" param. Returns [name, value] pairs;
+// PatchView pushes each to the effect over postMessage.
+export function resolveEffectMods(schema, mods = {}, color = null) {
+  const out = []
+  for (const [name, spec] of Object.entries(schema || {})) {
+    const label = (name + ' ' + (spec.label || '')).toLowerCase()
+    if (spec.type === 'color') { if (color) out.push([name, hueHex(color.hue, color.sat, color.val)]); continue }
+    if (typeof spec.min !== 'number') continue
+    const span = spec.max - spec.min || 1
+    let applied = false
+    for (const [cat, re] of Object.entries(NL_MOD_PARAMS)) {
+      if (mods[cat] && re.test(label)) { out.push([name, +(spec.min + span * (mods[cat] > 0 ? 0.8 : 0.2)).toFixed(4)]); applied = true; break }
+    }
+    if (!applied && color && /\bhue\b/.test(label)) out.push([name, spec.max <= 361 ? color.hue : +(color.hue / 360).toFixed(3)])
+  }
+  return out
+}

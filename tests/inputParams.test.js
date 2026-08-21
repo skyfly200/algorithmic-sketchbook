@@ -27,3 +27,21 @@ describe('inputParams', () => {
     expect(q).toBe('&aud=mic&midich=3&gpu=high')
   })
 })
+
+import { groupInputSources } from '../src/lib/inputParams.js'
+describe('groupInputSources', () => {
+  const SRC = ['audio.pulse', 'audio.low', 'mouse.x', 'shake.x', 'time.saw', 'midi.cc1', 'leap.pinch']
+  it('buckets sources by their prefix and folds shake→tilt', () => {
+    const g = Object.fromEntries(groupInputSources(SRC, {}))
+    expect(g.audio).toEqual(['audio.pulse', 'audio.low'])
+    expect(g.mouse).toEqual(['mouse.x'])
+    expect(g.tilt).toEqual(['shake.x']) // shake folds into tilt
+    expect(g.leap).toEqual(['leap.pinch'])
+  })
+  it('drops empty groups and hides MIDI until enabled', () => {
+    const off = Object.fromEntries(groupInputSources(SRC, { midiEnabled: false }))
+    expect(off.midi).toBeUndefined()
+    const on = Object.fromEntries(groupInputSources(SRC, { midiEnabled: true }))
+    expect(on.midi).toEqual(['midi.cc1', 'midi.note', 'midi.velocity'])
+  })
+})

@@ -70,3 +70,111 @@ describe('parseDesignerIntent', () => {
     expect(a).toEqual(b)
   })
 })
+
+// --- AI smart-mode helpers --------------------------------------------------
+import { nlNum, specNodeParams, callDesignerAI, NL_SYSTEM_PROMPT } from '../src/lib/nlDesigner.js'
+
+const CTX = {
+  effectSlugs: new Set(['kaleidoscope', 'microbes']),
+  filterSlugs: new Set(['glow']),
+  inputSlugs: new Set(['audio.pulse', 'audio.volume']),
+  blends: ['screen', 'add', 'multiply'],
+  polyShapes: { Triangle: [[0.5, 0.1], [0.9, 0.9], [0.1, 0.9]] },
+  fallbackEffect: 'kaleidoscope', fallbackFilter: 'glow',
+  seed: () => 'SEED', nodeW: 190, thumbH: 107,
+}
+
+describe('nlNum', () => {
+  it('clamps finite numbers and falls back for non-numbers', () => {
+    expect(nlNum(5, 0, 0, 10)).toBe(5)
+    expect(nlNum(-3, 0, 0, 10)).toBe(0)
+    expect(nlNum(99, 0, 0, 10)).toBe(10)
+    expect(nlNum('x', 7)).toBe(7)
+    expect(nlNum(NaN, 7)).toBe(7)
+    expect(nlNum(undefined, 7)).toBe(7)
+  })
+})
+
+describe('specNodeParams (sanitize AI output)', () => {
+  it('keeps a known effect/filter slug, falls back on an unknown one', () => {
+    expect(specNodeParams({ type: 'effect', slug: 'microbes' }, CTX)).toEqual({ slug: 'microbes', seed: 'SEED' })
+    expect(specNodeParams({ type: 'effect', slug: 'not-real' }, CTX).slug).toBe('kaleidoscope')
+    expect(specNodeParams({ type: 'filter', slug: 'nope' }, CTX).slug).toBe('glow')
+  })
+  it('clamps blend mix and validates the mode', () => {
+    expect(specNodeParams({ type: 'blend', mode: 'screen', mix: 5 }, CTX)).toEqual({ mode: 'screen', mix: 1 })
+    expect(specNodeParams({ type: 'blend', mode: 'bogus' }, CTX).mode).toBe('screen')
+  })
+  it('clamps text fields into their ranges and coerces the string', () => {
+    const p = specNodeParams({ type: 'text', text: 42, size: 9, weight: 50, hue: 400 }, CTX)
+    expect(p.text).toBe('42')
+    expect(p.size).toBe(0.6)   // clamped to max
+    expect(p.weight).toBe(100) // clamped to min
+    expect(p.hue).toBe(360)
+  })
+  it('falls back an unknown input source', () => {
+    expect(specNodeParams({ type: 'input', source: 'audio.volume' }, CTX).source).toBe('audio.volume')
+    expect(specNodeParams({ type: 'input', source: 'ghost' }, CTX).source).toBe('audio.pulse')
+  })
+  it('looks a polygon shape up by capitalized name, else a default box', () => {
+    expect(specNodeParams({ type: 'polygon', shape: 'triangle' }, CTX).points).toHaveLength(3)
+    expect(specNodeParams({ type: 'polygon', shape: 'weird' }, CTX).points).toHaveLength(4)
+  })
+  it('honours the mask invert flag and returns {} for unknown types', () => {
+    expect(specNodeParams({ type: 'mask', invert: true }, CTX).invert).toBe(true)
+    expect(specNodeParams({ type: 'nonsense' }, CTX)).toEqual({})
+  })
+})
+
+describe('callDesignerAI', () => {
+  const catalog = { effects: [{ slug: 'a', title: 'A' }], filters: [{ slug: 'b', title: 'B' }], inputs: ['audio.pulse'] }
+  it('sends the key/model/system and parses the JSON out of the reply', async () => {
+    let seen = null
+    const fetchImpl = async (url, opts) => { seen = { url, opts }; return { ok: true, json: async () => ({ content: [{ text: 'here you go {"nodes":[{"type":"effect"}]} done' }] }) } }
+    const spec = await callDesignerAI({ prompt: 'glow', apiKey: 'K', model: 'M', ...catalog, fetchImpl })
+    expect(spec).toEqual({ nodes: [{ type: 'effect' }] })
+    expect(seen.url).toBe('https://api.anthropic.com/v1/messages')
+    expect(seen.opts.headers['x-api-key']).toBe('K')
+    const body = JSON.parse(seen.opts.body)
+    expect(body.model).toBe('M')
+    expect(body.system).toBe(NL_SYSTEM_PROMPT)
+    expect(body.messages[0].content).toContain('a: A') // catalog embedded
+  })
+  it('throws the API error message on a non-ok response', async () => {
+    const fetchImpl = async () => ({ ok: false, status: 401, json: async () => ({ error: { message: 'bad key' } }) })
+    await expect(callDesignerAI({ prompt: 'x', apiKey: 'K', model: 'M', ...catalog, fetchImpl })).rejects.toThrow('bad key')
+  })
+  it('throws when the reply has no JSON object', async () => {
+    const fetchImpl = async () => ({ ok: true, json: async () => ({ content: [{ text: 'sorry, no' }] }) })
+    await expect(callDesignerAI({ prompt: 'x', apiKey: 'K', model: 'M', ...catalog, fetchImpl })).rejects.toThrow('no JSON')
+  })
+})
+
+import { resolveEffectMods } from '../src/lib/nlDesigner.js'
+describe('resolveEffectMods (adjective/colour → effect params)', () => {
+  it('pushes a matching numeric param toward its high end for a positive mod', () => {
+    const schema = { speed: { min: 0, max: 10, label: 'Speed' } }
+    const out = resolveEffectMods(schema, { speed: 1 }, null)
+    expect(out).toEqual([['speed', 8]]) // min + 0.8*span
+  })
+  it('pushes toward the low end for a negative mod', () => {
+    const out = resolveEffectMods({ speed: { min: 0, max: 10, label: 'Speed' } }, { speed: -1 }, null)
+    expect(out).toEqual([['speed', 2]])
+  })
+  it('fills a colour-type param from the colour', () => {
+    const out = resolveEffectMods({ tint: { type: 'color' } }, {}, { hue: 200, sat: 80, val: 90 })
+    expect(out).toHaveLength(1)
+    expect(out[0][0]).toBe('tint')
+    expect(out[0][1]).toMatch(/^#[0-9a-f]{6}$/i)
+  })
+  it('sets an obvious hue param from a colour when no adjective claimed it', () => {
+    // a degrees hue param (max ≤ 361) receives the raw hue…
+    expect(resolveEffectMods({ hue: { min: 0, max: 360, label: 'Hue' } }, {}, { hue: 120, sat: 80, val: 90 })).toEqual([['hue', 120]])
+    // …while a param whose range exceeds 361 is treated as a 0..1 turn fraction
+    expect(resolveEffectMods({ hue: { min: 0, max: 720, label: 'Hue' } }, {}, { hue: 180, sat: 80, val: 90 })).toEqual([['hue', 0.5]])
+  })
+  it('ignores non-numeric params and empty schema', () => {
+    expect(resolveEffectMods({ mode: { min: undefined } }, { speed: 1 }, null)).toEqual([])
+    expect(resolveEffectMods(null, {}, null)).toEqual([])
+  })
+})

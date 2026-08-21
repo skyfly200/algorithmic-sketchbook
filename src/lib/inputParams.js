@@ -10,3 +10,18 @@ export function inputParams(settings) {
   if (settings.highPerformance) parts.push('gpu=high')
   return parts.length ? '&' + parts.join('&') : ''
 }
+
+// Group the flat INPUT_SOURCES list into the optgroups the mapping pickers show
+// (audio, mouse, touch, tilt, time, leap, artnet). MIDI is hidden until it's set
+// up in Settings, then surfaced as a fixed trio (the channel is chosen globally).
+export function groupInputSources(sources, { midiEnabled = false } = {}) {
+  const groups = { audio: [], midi: [], mouse: [], touch: [], tilt: [], time: [], leap: [], artnet: [] }
+  for (const s of sources) {
+    if (s.startsWith('midi.')) continue // handled below
+    const head = s.split('.')[0]
+    const g = head === 'shake' ? 'tilt' : head
+    ;(groups[g] ?? (groups[g] = [])).push(s)
+  }
+  if (midiEnabled) groups.midi = ['midi.cc1', 'midi.note', 'midi.velocity']
+  return Object.entries(groups).filter(([, list]) => list.length)
+}
