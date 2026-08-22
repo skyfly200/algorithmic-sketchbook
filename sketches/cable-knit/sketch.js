@@ -66,7 +66,7 @@ function frame(now) {
 
   const gauge = Math.round(params.gauge)
   const stitchW = W / gauge
-  const rowH = stitchW * 0.72
+  const rowH = stitchW * 0.6 // shorter rows pack the knit tighter vertically
   scrollPx += params.speed * dt * rowH * 3
 
   const hue = params.hue, sat = params.sat, lig = params.light
@@ -74,9 +74,10 @@ function frame(now) {
   const hi = hsl(hue, sat * 0.5, Math.min(96, lig + 22 + params.sheen * 14))
   const wob = params.wobble
 
-  // felted-wool ground so any gaps read as fabric, not black
+  // black ground: the yarn is dense enough that only the deep interstices show,
+  // reading as the shadow between stitches
   ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.fillStyle = hsl(hue, sat, lig - 8)
+  ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, W, H)
 
   // which stitch columns belong to a cable panel, and each cable's centre column
@@ -92,25 +93,28 @@ function frame(now) {
     if (lo + cw < gauge) inCable[lo + cw] = 2
   }
 
-  const baseW = stitchW * 0.24 * params.thickness   // ground yarn: thin so the V's read
+  const baseW = stitchW * 0.54 * params.thickness   // fat yarn so neighbouring stitches push together
   const subY = ((scrollPx % rowH) + rowH) % rowH
   const baseRow = Math.floor(scrollPx / rowH)
   const rows = Math.ceil(H / rowH) + 2
 
   // one knit "V" stitch: two legs from the top corners to a shared low point
   const knitV = (colX, y, jx, jy, w, d, co, h) => {
-    const mx = colX + stitchW * 0.5 + jx, my = y + rowH * 1.02 + jy, ty = y + jy
-    yarn([[colX + stitchW * 0.06 + jx, ty], [colX + stitchW * 0.28 + jx, y + rowH * 0.5], [mx, my]], w, d, co, h)
-    yarn([[colX + stitchW * 0.94 + jx, ty], [colX + stitchW * 0.72 + jx, y + rowH * 0.5], [mx, my]], w, d, co, h)
+    // legs reach the full cell width and the V dips into the row below, so
+    // stitches interlock top-to-bottom with no gaps
+    const mx = colX + stitchW * 0.5 + jx, my = y + rowH * 1.16 + jy, ty = y - rowH * 0.16 + jy
+    yarn([[colX - stitchW * 0.04 + jx, ty], [colX + stitchW * 0.28 + jx, y + rowH * 0.5], [mx, my]], w, d, co, h)
+    yarn([[colX + stitchW * 1.04 + jx, ty], [colX + stitchW * 0.72 + jx, y + rowH * 0.5], [mx, my]], w, d, co, h)
   }
   const purlBump = (colX, y, jx, jy) => {
     const cx = colX + stitchW / 2 + jx, cy = y + rowH / 2 + jy
-    yarn([[cx - stitchW * 0.34, cy], [cx + stitchW * 0.34, cy]], baseW * 0.92, hsl(hue, sat, lig - 22), hsl(hue, sat * 0.8, lig - 6), hi)
+    // full-cell-width bump so the purl gutter reads as solid wool, not gaps
+    yarn([[cx - stitchW * 0.52, cy], [cx + stitchW * 0.52, cy]], baseW * 1.15, hsl(hue, sat, lig - 22), hsl(hue, sat * 0.8, lig - 6), hi)
   }
 
-  // --- ground stitches (skip cable columns; the cable draws its own stitches) ---
+  // --- ground stitches. Cable columns get a static knit base too, so where the
+  //     woven plies slide apart they reveal fabric, not black. ---
   for (let c = 0; c < gauge; c++) {
-    if (inCable[c] === 1) continue
     const colX = c * stitchW
     const ribPurl = params.ground === 'Ribbing' && c % 2 === 1
     for (let r = -1; r < rows; r++) {
@@ -132,9 +136,8 @@ function frame(now) {
     const lo = c - Math.floor(cw / 2)
     const half = Math.max(1, Math.round(cw / 2))
     const amp = (cw - half) * stitchW * 0.5   // how far each group slides sideways
-    const ccx = c * stitchW + stitchW / 2
-    ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.lineCap = 'round'; ctx.lineWidth = stitchW * cw * 0.72
-    ctx.beginPath(); ctx.moveTo(ccx, 0); ctx.lineTo(ccx, H); ctx.stroke()
+    // no flat backing — the ropes weave on black, so the gaps between the two
+    // plies read as the shadow down the centre of a real cable
     for (let r = -1; r < rows; r++) {
       const wr = baseRow + r
       const y = r * rowH - subY
