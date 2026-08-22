@@ -112,8 +112,12 @@ self.addEventListener('install', (e) => {
     const cache = await caches.open(CACHE)
     // add individually so one failed asset can't abort the whole precache
     await Promise.allSettled(ASSETS.map((p) => cache.add(new Request(abs(p), { cache: 'reload' }))))
-    // note: we do NOT skipWaiting here — a new version waits so it never swaps
-    // caches out from under a running session; it takes over on the next load.
+    // Take over promptly: a cache-first shell from an older version would keep
+    // referencing hashed chunks that a newer deploy has already purged (→ a 404
+    // and a blank page). Activating now, paired with the network-first shell
+    // below, guarantees a returning visitor always gets an index that matches
+    // the assets currently on the server.
+    await self.skipWaiting()
   })())
 })
 
@@ -134,20 +138,24 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== self.location.origin) return // let cross-origin pass through
   e.respondWith((async () => {
     const cache = await caches.open(CACHE)
+    // Navigations (the HTML shell): network-FIRST. The shell names the current
+    // hashed entry chunks, so it must never be stale — fetch fresh, refresh the
+    // cached copy, and fall back to cache only when offline.
+    if (req.mode === 'navigate') {
+      try {
+        const res = await fetch(req)
+        if (res && res.ok) { cache.put(abs('index.html'), res.clone()); return res }
+      } catch { /* offline */ }
+      const shell = await cache.match(abs('index.html'), { ignoreSearch: true })
+      if (shell) return shell
+      return fetch(req)
+    }
+    // Hashed assets are immutable, so cache-FIRST is safe and fast.
     const hit = await cache.match(req, { ignoreSearch: true })
     if (hit) return hit
-    try {
-      const res = await fetch(req)
-      if (res && res.ok && res.type === 'basic') cache.put(req, res.clone())
-      return res
-    } catch (err) {
-      // offline: fall back to the cached app shell for navigations
-      if (req.mode === 'navigate') {
-        const shell = await cache.match(abs('index.html'), { ignoreSearch: true })
-        if (shell) return shell
-      }
-      throw err
-    }
+    const res = await fetch(req)
+    if (res && res.ok && res.type === 'basic') cache.put(req, res.clone())
+    return res
   })())
 })
 `
