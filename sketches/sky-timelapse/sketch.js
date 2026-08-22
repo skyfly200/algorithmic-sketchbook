@@ -18,6 +18,9 @@ const params = rt.params({
   // Long-exposure star trails: the night sky wheels about the celestial pole
   // and each star smears into an arc. 0 = crisp points, 1 = long streaks.
   trails: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Star trails' },
+  // Off | Solar (the moon transits the sun → corona + darkening) | Lunar (a
+  // blood moon: the full moon reddens at culmination).
+  eclipse: { value: 'Off', type: 'select', options: ['Off', 'Solar', 'Lunar'], label: 'Eclipse' },
 })
 rt.mapInput('audio.level', 'wind', 0.4)
 
@@ -94,10 +97,55 @@ function resize() {
     hue: rt.random(200, 260), warm: rt.rng() < 0.25,
   })
 }
-// Celestial pole (upper area) the stars appear to rotate around, and the
-// accumulated rotation of the night sky.
-const pole = { x: 0.78, y: 0.06 }
-let starRot = 0
+// A warm sun disc with a soft glow.
+function drawSun(x, y, R) {
+  const col = [255, 235, 170]
+  const glow = ctx.createRadialGradient(x, y, 0, x, y, R * 6)
+  glow.addColorStop(0, `rgba(${col},0.85)`)
+  glow.addColorStop(0.5, `rgba(${col},0.12)`)
+  glow.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.globalCompositeOperation = 'lighter'
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H)
+  ctx.fillStyle = `rgb(${col})`
+  ctx.beginPath(); ctx.arc(x, y, R, 0, 6.28); ctx.fill()
+  ctx.globalCompositeOperation = 'source-over'
+}
+// The moon with a real phase terminator. ph: 0/1 = new, 0.5 = full. `blood`
+// reddens it (lunar eclipse); `corona` (0..1) draws the solar-eclipse corona
+// around the fully-dark disc that is transiting the sun.
+function drawMoon(x, y, R, ph, blood, corona = 0) {
+  const LIT = blood ? '198,86,66' : '235,238,245'
+  const DARK = blood ? '92,30,30' : '34,38,60'
+  if (corona > 0.6) { // bright corona ring/rays at/near totality
+    const k = (corona - 0.6) / 0.4
+    const g = ctx.createRadialGradient(x, y, R * 0.92, x, y, R * 3.4)
+    g.addColorStop(0, 'rgba(255,250,235,0)')
+    g.addColorStop(0.18, `rgba(255,248,228,${0.55 * k})`)
+    g.addColorStop(1, 'rgba(255,248,228,0)')
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+    ctx.globalCompositeOperation = 'source-over'
+  }
+  if (blood) { // soft red umbral glow around a blood moon
+    const g = ctx.createRadialGradient(x, y, 0, x, y, R * 3)
+    g.addColorStop(0, 'rgba(198,86,66,0.35)'); g.addColorStop(1, 'rgba(198,86,66,0)')
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+    ctx.globalCompositeOperation = 'source-over'
+  }
+  ctx.save(); ctx.translate(x, y)
+  ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fillStyle = `rgb(${DARK})`; ctx.fill()
+  // lit lune: a semicircle on the sunlit side closed by the terminator ellipse
+  const term = Math.cos(ph * Math.PI * 2) // +1 new … -1 full
+  const waxing = ph <= 0.5
+  ctx.fillStyle = `rgb(${LIT})`
+  ctx.beginPath()
+  if (waxing) ctx.arc(0, 0, R, -Math.PI / 2, Math.PI / 2, false)
+  else ctx.arc(0, 0, R, Math.PI / 2, -Math.PI / 2, false)
+  const ex = Math.abs(term) * R
+  if (waxing) ctx.ellipse(0, 0, ex, R, 0, Math.PI / 2, -Math.PI / 2, term > 0)
+  else ctx.ellipse(0, 0, ex, R, 0, -Math.PI / 2, Math.PI / 2, term > 0)
+  ctx.fill()
+  ctx.restore()
+}
 
 function drawClouds(img, ox, scale, alpha, tint) {
   const tile = Math.max(W, H) * scale
@@ -133,16 +181,23 @@ function frame(now) {
   ctx.fillStyle = g
   ctx.fillRect(0, 0, W, H)
 
-  // day factor (1 at noon, 0 at night) for stars + brightness
-  const dayF = Math.max(0, Math.sin((phase - 0.0) * Math.PI * 2 - Math.PI / 2) * 0.5 + 0.5)
+  // One celestial hub drives the whole sky: stars, sun and moon all turn about
+  // (cx,cy) at the day rate, so the stars stay locked to the sun/moon as they
+  // rise and set. Elliptical radii fit the arc to the frame.
+  const dayTurns = params.timeOfDay + clock
+  const dayAngle = dayTurns * Math.PI * 2
+  const cx = 0.5 * W, cy = 0.72 * H, RX = 0.42 * W, RY = 0.58 * H
+  const bodyAt = (th) => ({ x: cx - Math.cos(th) * RX, y: cy - Math.sin(th) * RY, alt: Math.sin(th) })
+  const sunTh = -Math.PI / 2 + dayAngle // altitude peaks at noon
+  const sun = bodyAt(sunTh)
+  // day factor from the sun's altitude (1 noon, ~0.5 horizon, 0 night)
+  const dayF = Math.max(0, Math.min(1, sun.alt * 0.5 + 0.5))
   const nightF = 1 - dayF
 
-  // stars wheel about the celestial pole, smearing into trails on a persistent
-  // buffer. Fade the buffer a touch each frame — a longer Trails setting fades
-  // slower (longer streaks); the buffer also clears out fast during daylight.
-  starRot += dt * params.speed * 0.06
-  const px = pole.x * W, py = pole.y * H
-  const c = Math.cos(starRot), s = Math.sin(starRot)
+  // stars wheel about the same hub, smearing into trails on a persistent buffer.
+  // A longer Trails setting fades the buffer slower (longer streaks); daylight
+  // clears it fast.
+  const c = Math.cos(dayAngle), s = Math.sin(dayAngle)
   const trailFade = (1 - params.trails) * 0.12 + 0.006 + dayF * 0.25
   trailCtx.globalCompositeOperation = 'destination-out'
   trailCtx.fillStyle = `rgba(0,0,0,${Math.min(1, trailFade)})`
@@ -150,9 +205,9 @@ function frame(now) {
   if (params.stars > 0.02 && nightF > 0.02) {
     trailCtx.globalCompositeOperation = 'lighter'
     for (const st of starList) {
-      const dx = st.x * W - px, dy = st.y * H - py
-      const sx = px + dx * c - dy * s
-      const sy = py + dx * s + dy * c
+      const dx = st.x * W - cx, dy = st.y * H - cy
+      const sx = cx + dx * c - dy * s
+      const sy = cy + dx * s + dy * c
       const a = params.stars * nightF * (0.35 + 0.65 * Math.abs(Math.sin(st.tw + t * st.sp)))
       const col = st.warm ? '255,220,190' : '225,232,255'
       trailCtx.fillStyle = `rgba(${col},${a})`
@@ -160,33 +215,35 @@ function frame(now) {
     }
   }
   trailCtx.globalCompositeOperation = 'source-over'
-  // composite the star layer over the sky
   ctx.globalCompositeOperation = 'lighter'
   ctx.drawImage(trailCv, 0, 0)
   ctx.globalCompositeOperation = 'source-over'
 
-  // sun / moon: travel a low arc across the sky. Angle from phase; the sun is
-  // up ~0.25..0.75, the moon opposite.
-  const bodyArc = (ph, warm) => {
-    const a = (ph - 0.25) * 2 * Math.PI // 0 at dawn(left) → π/2 noon → π at dusk(right); <0 or >π = night
-    const x = 0.5 * W + Math.cos(Math.PI - a) * 0.42 * W
-    const y = H * 0.72 - Math.sin(a) * H * 0.58
-    if (Math.sin(a) < -0.05) return // below horizon
-    const R = (warm ? 34 : 26) * params.sun * rt.pixelRatio
-    const glow = ctx.createRadialGradient(x, y, 0, x, y, R * 6)
-    const col = warm ? [255, 235, 170] : [220, 228, 245]
-    glow.addColorStop(0, `rgba(${col[0]},${col[1]},${col[2]},0.8)`)
-    glow.addColorStop(0.5, `rgba(${col[0]},${col[1]},${col[2]},0.12)`)
-    glow.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.fillStyle = glow
-    ctx.fillRect(0, 0, W, H)
-    ctx.fillStyle = `rgb(${col.join(',')})`
-    ctx.beginPath(); ctx.arc(x, y, R, 0, 6.28); ctx.fill()
-    ctx.globalCompositeOperation = 'source-over'
+  // --- sun, moon & eclipse --------------------------------------------------
+  const eclipse = params.eclipse
+  // Moon: normally opposite the sun; a Solar eclipse pulls it onto the sun so it
+  // slowly transits. Its own slow phase cycle gives crescents → full → crescent.
+  const moonTh = eclipse === 'Solar' ? sunTh + 0.9 * Math.sin(dayTurns * 5) : sunTh + Math.PI
+  const moon = bodyAt(moonTh)
+  const moonPh = ((dayTurns / 6) % 1 + 1) % 1
+  const sunR = 30 * params.sun * rt.pixelRatio
+  const moonR = 24 * params.sun * rt.pixelRatio
+
+  // how much the transiting moon covers the sun (screen overlap), for totality
+  let cover = 0
+  if (eclipse === 'Solar' && sun.alt > -0.05 && moon.alt > -0.05) {
+    cover = Math.max(0, Math.min(1, 1 - Math.hypot(moon.x - sun.x, moon.y - sun.y) / (sunR * 1.9)))
   }
-  bodyArc(phase, true)          // sun
-  bodyArc((phase + 0.5) % 1, false) // moon
+  if (sun.alt > -0.05) drawSun(sun.x, sun.y, sunR)
+  if (cover > 0.5) { // totality darkens the whole sky
+    const k = (cover - 0.5) / 0.5
+    ctx.fillStyle = `rgba(6,8,18,${0.78 * k})`
+    ctx.fillRect(0, 0, W, H)
+  }
+  if (moon.alt > -0.05) {
+    if (eclipse === 'Solar') drawMoon(moon.x, moon.y, sunR * 1.03, 0, false, cover) // dark disc over the sun + corona
+    else drawMoon(moon.x, moon.y, moonR, moonPh, eclipse === 'Lunar' && moon.alt > 0.55)
+  }
 
   // clouds drift on the wind, lit by the current horizon colour
   const drift = t * 20 * params.wind
