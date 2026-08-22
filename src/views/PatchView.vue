@@ -19,7 +19,8 @@ import { useSettingsStore } from '../stores/settings'
 import { PATCH_HANDOFF_KEY } from '../lib/mixToPatch'
 import { inputParams, groupInputSources } from '../lib/inputParams'
 import { parsePointFile, parseLas, finalizePoints } from '../lib/points.js'
-import { parseDesignerIntent, NL_TEXT_DEFAULTS, specNodeParams, callDesignerAI, resolveEffectMods } from '../lib/nlDesigner.js'
+import { NL_TEXT_DEFAULTS, specNodeParams, resolveEffectMods } from '../lib/nlDesigner.js'
+import NlDesigner from '../components/patch/NlDesigner.vue'
 import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTileUrl, decodeElev as demDecode } from '../lib/geoTiles.js'
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
@@ -528,23 +529,14 @@ function randomizeLook() {
 // text for known effect/filter names (plus a handful of synonyms), a source
 // (camera / text), a blend word and control cues, then lays the graph out as
 // sources → blends → filter chain → (mask) → Output. Locked/kept nodes survive.
-const nlOpen = ref(false)
-const nlText = ref('')
-const nlListening = ref(false)
+// The NL designer's panel + parse/AI/voice live in the <NlDesigner> add-in
+// (src/components/patch/NlDesigner.vue); it emits an intent or an AI spec and
+// the graph-building below turns that into nodes. nlLast is the panel's
+// "Last: …" summary; nlRef lets us close the panel after a successful build.
 const nlLast = ref('')
-const nlIntent = ref(null) // the editable parse result shown before building
-const nlModKeys = computed(() => Object.keys(nlIntent.value?.mods || {}))
-function nlDropMod(k) { if (nlIntent.value) delete nlIntent.value.mods[k] }
-// NL designer lexicons + the pure parser live in ../lib/nlDesigner.js.
-
-// Parse the prompt into an editable intent (does NOT build yet). The preview
-// shows this so you can drop anything it got wrong before committing.
-function parseIntent(raw) {
-  const prompt = (raw ?? nlText.value ?? '').trim()
-  if (!prompt) { nlIntent.value = null; showToast('Describe the look you want'); return }
-  nlText.value = prompt
-  nlIntent.value = parseDesignerIntent(prompt, effectOptions.value, filterOptions.value)
-}
+const nlRef = ref(null)
+function onBuildIntent(it) { if (buildFromIntent(it)) nlRef.value?.close() }
+function onBuildSpec(spec) { if (buildFromSpec(spec)) nlRef.value?.close() }
 
 // Queue adjective/colour mods for an effect/filter node, applied once its sketch
 // announces its schema (via onEffectMessage), so we know which params exist.
@@ -558,10 +550,10 @@ function applyNlMods(id, { mods, color }) {
   for (const [name, value] of resolveEffectMods(c.schema, mods, color)) setEffectParam(id, name, value)
 }
 
-// Build the graph from the (possibly edited) intent.
-function buildFromIntent() {
-  const it = nlIntent.value
-  if (!it) { parseIntent(nlText.value); return }
+// Build the graph from the (possibly edited) intent emitted by the designer.
+// Returns true on success so the caller can dismiss the panel.
+function buildFromIntent(it) {
+  if (!it) return false
 
   const keptIds = new Set(nodes.filter(protectedInReroll).map((n) => n.id))
   for (let k = edges.length - 1; k >= 0; k--) if (!keptIds.has(edges[k].from) || !keptIds.has(edges[k].to)) edges.splice(k, 1)
@@ -580,7 +572,7 @@ function buildFromIntent() {
   for (const e of it.effects.slice(0, Math.max(1, 3 - (it.camera ? 1 : 0)))) { const n = add('effect', { slug: e.slug, seed: randSeed() }, 0, sy); sources.push(n); queueNlMods(n, it); summary.push(e.title); sy += 210 }
   if (it.text.on && !it.mask) { sources.push(add('text', { ...NL_TEXT_DEFAULTS, ...colParams, text: (it.text.content || 'BRIGHT WAVES').toUpperCase() }, 0, sy)); summary.push('Text'); sy += 210 }
   if (!sources.length) { const def = effectOptions.value[0]; if (def) { const n = add('effect', { slug: def.slug, seed: randSeed() }, 0, 80); sources.push(n); queueNlMods(n, it); summary.push(def.title) } }
-  if (!sources.length) { showToast('No sources available'); return }
+  if (!sources.length) { showToast('No sources available'); return false }
 
   const mix = it.mods.amount > 0 ? 0.85 : it.mods.amount < 0 ? 0.35 : 0.6
   let col = 1, head = sources[0]
@@ -624,41 +616,15 @@ function buildFromIntent() {
   persist()
   showToast('Built: ' + nlLast.value)
   nextTick(() => layoutTick.value++)
-  nlOpen.value = false; nlIntent.value = null
-}
-
-// --- AI smart mode (opt-in) -----------------------------------------------
-// With the user's own Claude API key (Settings), send the description + the
-// catalog to the Anthropic API and build the structured graph it returns. This
-// understands relational/free-form language the offline parser can't. The key
-// stays in the browser and the request goes straight to Anthropic.
-const nlSmart = ref(settings.aiSmart)
-const nlBusy = ref(false)
-const nlAiSpec = ref(null) // the model's returned plan, shown before building
-watch(nlSmart, (v) => settings.setAiSmart(v))
-
-// The system prompt + the Anthropic call live in ../lib/nlDesigner.js.
-async function smartInterpret() {
-  const prompt = (nlText.value || '').trim()
-  if (!prompt) { showToast('Describe the look you want'); return }
-  if (!settings.aiKey) { showToast('Add a Claude API key in Settings for smart mode'); return }
-  nlBusy.value = true; nlAiSpec.value = null; nlIntent.value = null
-  try {
-    const spec = await callDesignerAI({ prompt, apiKey: settings.aiKey, model: settings.aiModel, effects: effectOptions.value, filters: filterOptions.value, inputs: INPUT_SOURCES })
-    if (!spec || !Array.isArray(spec.nodes) || !spec.nodes.length) throw new Error('empty patch')
-    nlAiSpec.value = spec
-  } catch (e) {
-    showToast('Smart mode failed: ' + (e.message || e))
-  } finally {
-    nlBusy.value = false
-  }
+  return true
 }
 
 // Lay the graph out left-to-right by dependency depth (longest path from a source).
 const layoutByDepth = (newIds) => layoutDepth(newIds, nodes, edges)
 
+// Build the graph from Claude's AI spec. Returns true on success.
 function buildFromSpec(spec) {
-  if (!spec || !Array.isArray(spec.nodes)) { showToast('AI returned no usable patch'); return }
+  if (!spec || !Array.isArray(spec.nodes)) { showToast('AI returned no usable patch'); return false }
   const specCtx = {
     effectSlugs: new Set(effectOptions.value.map((s) => s.slug)),
     filterSlugs: new Set(filterOptions.value.map((s) => s.slug)),
@@ -683,7 +649,7 @@ function buildFromSpec(spec) {
     const rn = reactive({ id: nextId++, type: n.type, x: 0, y: 0, params })
     nodes.push(rn); st(rn.id); idMap.set(n.id, rn.id); newIds.push(rn.id)
   }
-  if (!newIds.length) { showToast('AI returned no usable nodes'); return }
+  if (!newIds.length) { showToast('AI returned no usable nodes'); return false }
 
   for (const e of (spec.edges || [])) {
     const from = idMap.get(e.from), to = idMap.get(e.to)
@@ -716,31 +682,7 @@ function buildFromSpec(spec) {
   persist()
   showToast('Built: ' + (spec.notes || 'AI patch'))
   nextTick(() => layoutTick.value++)
-  nlOpen.value = false; nlAiSpec.value = null
-}
-
-// spoken input via the Web Speech API (Chromium); falls back with a toast
-let nlRecog = null
-function nlVoice() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-  if (!SR) { showToast('Voice input needs a Chromium browser'); return }
-  if (nlListening.value) { nlRecog?.stop(); return }
-  nlRecog = new SR()
-  nlRecog.lang = 'en-US'; nlRecog.interimResults = true; nlRecog.continuous = false
-  let finalTxt = ''
-  nlRecog.onresult = (e) => {
-    let interim = ''
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const r = e.results[i]
-      if (r.isFinal) finalTxt += r[0].transcript
-      else interim += r[0].transcript
-    }
-    nlText.value = (finalTxt + ' ' + interim).trim()
-  }
-  nlRecog.onerror = () => { nlListening.value = false }
-  nlRecog.onend = () => { nlListening.value = false }
-  nlListening.value = true
-  try { nlRecog.start() } catch { nlListening.value = false }
+  return true
 }
 
 // All nodes that feed (directly or transitively) into `id` via video edges.
@@ -3257,82 +3199,13 @@ onBeforeUnmount(() => {
         </v-menu>
         <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
         <v-spacer />
-        <v-menu v-model="nlOpen" :close-on-content-click="false" location="bottom">
-          <template #activator="{ props }">
-            <v-btn v-bind="props" icon="mdi-message-text-outline" variant="text" size="small" title="Describe a patch in words (or speak it) and wire it up" />
-          </template>
-          <v-card width="360" class="nl-card">
-            <div class="nl-title">
-              Describe a patch
-              <span class="nl-spacer" />
-              <button
-                class="nl-smart-toggle" :class="{ on: nlSmart }"
-                :title="settings.aiKey ? (nlSmart ? 'Smart mode on (Claude API) — click for the offline parser' : 'Use Claude to build free-form descriptions') : 'Add a Claude API key in Settings to enable smart mode'"
-                @click="settings.aiKey ? (nlSmart = !nlSmart) : router.push({ name: 'settings' })"
-              >✨ Smart</button>
-            </div>
-            <v-textarea
-              v-model="nlText"
-              rows="3" auto-grow variant="outlined" density="compact" hide-details autofocus
-              :placeholder="nlSmart ? 'e.g. my camera inside a spinning heart, over a slow plasma, glitchy' : 'e.g. dreamy underwater scene, slow, deep blue'"
-              @keydown.enter.exact.prevent="nlSmart ? smartInterpret() : parseIntent(nlText)"
-            />
-            <div class="nl-row">
-              <v-btn
-                :icon="nlListening ? 'mdi-microphone' : 'mdi-microphone-outline'"
-                :color="nlListening ? 'primary' : undefined"
-                variant="text" size="small" :title="nlListening ? 'Stop listening' : 'Speak your description'"
-                @click="nlVoice"
-              />
-              <div class="nl-spacer" />
-              <v-btn v-if="nlSmart" size="small" variant="tonal" color="primary" :loading="nlBusy" prepend-icon="mdi-creation" @click="smartInterpret">Smart build</v-btn>
-              <v-btn v-else size="small" variant="tonal" color="primary" prepend-icon="mdi-text-search-variant" @click="parseIntent(nlText)">Interpret</v-btn>
-            </div>
-
-            <!-- AI plan preview (smart mode) -->
-            <div v-if="nlAiSpec" class="nl-preview">
-              <div class="nl-pv-hint">✨ Claude's plan:</div>
-              <div class="nl-ai-notes">{{ nlAiSpec.notes || 'A patch' }}</div>
-              <div class="nl-pv-row">
-                <span class="nl-pv-key">nodes</span>
-                <span v-for="(n, i) in nlAiSpec.nodes" :key="i" class="nl-chip nl-chip--dim">{{ TYPES[n.type] ? (n.slug || TYPES[n.type].title) : ('?' + n.type) }}</span>
-              </div>
-              <v-btn size="small" variant="flat" color="primary" block prepend-icon="mdi-auto-fix" class="mt-2" @click="buildFromSpec(nlAiSpec)">Build this patch</v-btn>
-            </div>
-
-            <!-- editable interpretation: drop anything it got wrong, then build -->
-            <div v-if="nlIntent" class="nl-preview">
-              <div class="nl-pv-hint">Here's what I understood — click a chip to drop it, then build:</div>
-              <div v-if="nlIntent.camera || nlIntent.effects.length || (nlIntent.text.on && !nlIntent.mask)" class="nl-pv-row">
-                <span class="nl-pv-key">sources</span>
-                <button v-if="nlIntent.camera" class="nl-chip" @click="nlIntent.camera = false">📷 Camera ✕</button>
-                <button v-for="(e, i) in nlIntent.effects" :key="e.slug" class="nl-chip" @click="nlIntent.effects.splice(i, 1)">{{ e.title }} ✕</button>
-                <button v-if="nlIntent.text.on && !nlIntent.mask" class="nl-chip" @click="nlIntent.text.on = false">T {{ nlIntent.text.content ? ('“' + nlIntent.text.content + '”') : 'Text' }} ✕</button>
-              </div>
-              <div v-if="nlIntent.filters.length" class="nl-pv-row">
-                <span class="nl-pv-key">filters</span>
-                <button v-for="(f, i) in nlIntent.filters" :key="f.slug" class="nl-chip nl-chip--f" @click="nlIntent.filters.splice(i, 1)">{{ f.title }} ✕</button>
-              </div>
-              <div v-if="nlIntent.mask || nlIntent.audio || nlIntent.mouse || nlModKeys.length || nlIntent.color || (nlIntent.effects.length + (nlIntent.camera ? 1 : 0) + (nlIntent.text.on && !nlIntent.mask ? 1 : 0)) > 1" class="nl-pv-row">
-                <span class="nl-pv-key">also</span>
-                <button v-if="(nlIntent.effects.length + (nlIntent.camera ? 1 : 0) + (nlIntent.text.on && !nlIntent.mask ? 1 : 0)) > 1" class="nl-chip nl-chip--dim">{{ nlIntent.blend }} blend</button>
-                <button v-if="nlIntent.mask" class="nl-chip" @click="nlIntent.mask = false">mask ✕</button>
-                <button v-if="nlIntent.audio" class="nl-chip" @click="nlIntent.audio = false">audio→mix ✕</button>
-                <button v-if="nlIntent.mouse" class="nl-chip" @click="nlIntent.mouse = false">mouse→mix ✕</button>
-                <button v-for="k in nlModKeys" :key="k" class="nl-chip nl-chip--dim" @click="nlDropMod(k)">{{ k }} {{ nlIntent.mods[k] > 0 ? '▲' : '▼' }} ✕</button>
-                <button v-if="nlIntent.color" class="nl-chip nl-chip--dim" @click="nlIntent.color = null">colour: {{ nlIntent.color.name }} ✕</button>
-              </div>
-              <div v-if="nlIntent.ignored.length" class="nl-ignored" title="Words I couldn't map to anything — try renaming them to an effect/filter or a mood word">didn't use: {{ nlIntent.ignored.join(', ') }}</div>
-              <v-btn size="small" variant="flat" color="primary" block prepend-icon="mdi-auto-fix" class="mt-2" @click="buildFromIntent">Build this patch</v-btn>
-            </div>
-
-            <div class="nl-examples">
-              <span class="nl-ex-label">Try:</span>
-              <button v-for="ex in NL_EXAMPLES" :key="ex" class="nl-ex" @click="nlText = ex; parseIntent(ex)">{{ ex }}</button>
-            </div>
-            <div v-if="nlLast" class="nl-last">Last: {{ nlLast }}</div>
-          </v-card>
-        </v-menu>
+        <NlDesigner
+          ref="nlRef"
+          :effects="effectOptions" :filters="filterOptions" :types="TYPES" :examples="NL_EXAMPLES"
+          :ai-key="settings.aiKey" :ai-model="settings.aiModel" :smart="settings.aiSmart" :last="nlLast"
+          @update:smart="settings.setAiSmart" @build-intent="onBuildIntent" @build-spec="onBuildSpec"
+          @open-settings="router.push({ name: 'settings' })" @toast="showToast"
+        />
         <v-btn data-tour="patch-random" icon="mdi-dice-multiple" variant="text" size="small" title="New random patch — deal out a whole new graph (undoable)" @click="randomPatch" />
         <!-- what a reroll does with a locked/pinned node that isn't wired in -->
         <v-menu>
@@ -4459,37 +4332,7 @@ onBeforeUnmount(() => {
 .wiz-card small { font-size: 0.64rem; color: #8a90a0; }
 .wiz-card--dim { opacity: 0.7; }
 .wiz-note { font-size: 0.66rem; color: #737b93; padding: 0 12px 12px; }
-.nl-card { padding: 12px; background: #14161e; }
-.nl-title { font-size: 0.82rem; font-weight: 600; color: #cdd3e6; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
-.nl-smart-toggle {
-  font-size: 0.66rem; color: #9aa4c0; background: #1c1f2b; border: 1px solid #333;
-  border-radius: 10px; padding: 2px 9px; cursor: pointer;
-}
-.nl-smart-toggle.on { background: rgba(124,140,255,0.18); border-color: #7c8cff; color: #b7c1ff; }
-.nl-ai-notes { font-size: 0.74rem; color: #cdd3e6; margin: 2px 0 8px; font-style: italic; }
-.nl-row { display: flex; align-items: center; margin-top: 8px; }
-.nl-spacer { flex: 1; }
-.nl-preview { margin-top: 10px; padding: 8px; border: 1px solid rgba(124,140,255,0.2); border-radius: 8px; background: rgba(124,140,255,0.05); }
-.nl-pv-hint { font-size: 0.68rem; color: #9aa4c0; margin-bottom: 6px; }
-.nl-pv-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 5px; }
-.nl-pv-key { font-size: 0.6rem; color: #737b93; flex: 0 0 auto; min-width: 46px; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.02em; }
-.nl-chip {
-  font-size: 0.7rem; color: #cdd3e6; background: #2a2f42; border: 1px solid #3a4055;
-  border-radius: 10px; padding: 2px 8px; cursor: pointer;
-}
-.nl-chip:hover { border-color: #ff8a8a; color: #fff; }
-.nl-chip--f { background: rgba(201,140,255,0.16); }
-.nl-chip--dim { background: #1c1f2b; color: #9aa4c0; cursor: default; }
-.nl-chip--dim:hover { border-color: #3a4055; color: #cdd3e6; }
-.nl-ignored { font-size: 0.66rem; color: #b08a5a; margin-top: 4px; }
-.nl-examples { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
-.nl-ex-label { font-size: 0.68rem; color: #7f879c; }
-.nl-ex {
-  text-align: left; font-size: 0.72rem; color: #9db0ff; background: rgba(124,140,255,0.08);
-  border: 1px solid rgba(124,140,255,0.18); border-radius: 6px; padding: 4px 7px; cursor: pointer;
-}
-.nl-ex:hover { background: rgba(124,140,255,0.16); }
-.nl-last { margin-top: 10px; font-size: 0.7rem; color: #7f879c; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px; }
+/* NL designer styles moved into src/components/patch/NlDesigner.vue */
 .toolbar {
   position: absolute; top: 0; left: 0; right: 0; z-index: 30;
   display: flex; flex-direction: column; gap: 2px; padding: 6px 12px 8px;
