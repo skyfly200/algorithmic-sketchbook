@@ -55,3 +55,18 @@ describe('settings effect-pool model', () => {
     expect(s2.isFavorite('microbes')).toBe(true)
   })
 })
+
+describe('orphan policy', () => {
+  beforeEach(() => { localStorage.clear(); setActivePinia(createPinia()) })
+  it('defaults to ditch and validates + persists a choice', () => {
+    const s = useSettingsStore()
+    expect(s.orphanPolicy).toBe('ditch')
+    s.setOrphanPolicy('reintegrate')
+    expect(s.orphanPolicy).toBe('reintegrate')
+    s.setOrphanPolicy('bogus') // invalid → falls back to ditch
+    expect(s.orphanPolicy).toBe('ditch')
+    setActivePinia(createPinia())
+    s.setOrphanPolicy('keep')
+    expect(useSettingsStore().orphanPolicy).toBe('keep') // survived reload
+  })
+})

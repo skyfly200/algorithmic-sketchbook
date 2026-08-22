@@ -52,6 +52,10 @@ export const useSettingsStore = defineStore('settings', {
       mapKey: s.mapKey ?? '',
       mapProvider: s.mapProvider ?? 'maptiler',
       googleClientId: s.googleClientId ?? '', // OAuth client id for Google Photos import
+      // What a Patch reroll does with a locked/pinned node that isn't wired into
+      // the graph: 'reintegrate' folds it into the new patch, 'keep' leaves it
+      // sitting disconnected, 'ditch' clears it with the rest.
+      orphanPolicy: s.orphanPolicy ?? 'ditch',
     }
   },
   getters: {
@@ -67,6 +71,7 @@ export const useSettingsStore = defineStore('settings', {
         highPerformance: this.highPerformance,
         aiKey: this.aiKey, aiModel: this.aiModel, aiSmart: this.aiSmart,
         mapKey: this.mapKey, mapProvider: this.mapProvider, googleClientId: this.googleClientId,
+        orphanPolicy: this.orphanPolicy,
       }
       if (this.effectOff !== null) data.effectOff = this.effectOff
       else if (this.legacyIn) data.effectPool = this.legacyIn // keep legacy until migrated
@@ -97,6 +102,7 @@ export const useSettingsStore = defineStore('settings', {
     setMapKey(k) { this.mapKey = (k || '').trim(); this.persist() },
     setMapProvider(p) { this.mapProvider = p || 'maptiler'; this.persist() },
     setGoogleClientId(id) { this.googleClientId = (id || '').trim(); this.persist() },
+    setOrphanPolicy(p) { this.orphanPolicy = ['keep', 'reintegrate', 'ditch'].includes(p) ? p : 'ditch'; this.persist() },
     // Wipe the editors' working state (but not the saved library). The editors
     // read their state at mount, so a reload gives them a clean slate.
     clearSession() {

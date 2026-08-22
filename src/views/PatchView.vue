@@ -335,7 +335,13 @@ function pruneOrphans() {
 // actually wired in — a locked node left disconnected is clutter, so it's
 // cleared with the rest instead of being dragged into (and re-integrated with)
 // every new patch. (Locking still protects a used node from manual removal.)
-function protectedInReroll(n) { return (n.locked || n.keep) && usedInGraph(n.id, edges, links) }
+// Whether a locked/pinned node survives a reroll. Under the 'ditch' orphan
+// policy it must also be wired into the graph (a disconnected orphan is cleared);
+// under 'keep'/'reintegrate' every locked/pinned node is protected.
+function protectedInReroll(n) {
+  if (!(n.locked || n.keep)) return false
+  return settings.orphanPolicy === 'ditch' ? usedInGraph(n.id, edges, links) : true
+}
 // Masks, when used, cut a picture to a proper matte (a Polygon or Text), not a
 // second picture. Goes through persist(), so it's a single undo step. Drives
 // both the RNG dice and the Patch auto-reroll.
@@ -385,11 +391,14 @@ function randomPatch() {
   // into the mix as extra heads so locked/pinned nodes (and blocks) actually
   // appear in the new routing instead of being left dangling. A kept output is
   // reused as the sink; drop its stale inputs so we can rewire it to the mix.
+  // Only under the 'reintegrate' policy — 'keep' leaves orphans where they are.
   const PRODUCER = new Set(['effect', 'filter', 'media', 'text', 'portal', 'blend', 'vcam', 'mask'])
   const keptOut = keptNodes.find((n) => n.type === 'output')
   if (keptOut) { for (let i = edges.length - 1; i >= 0; i--) if (edges[i].to === keptOut.id) edges.splice(i, 1) }
-  for (const kn of keptNodes) {
-    if (PRODUCER.has(kn.type) && !edges.some((e) => e.from === kn.id)) heads.push(kn)
+  if (settings.orphanPolicy === 'reintegrate') {
+    for (const kn of keptNodes) {
+      if (PRODUCER.has(kn.type) && !edges.some((e) => e.from === kn.id)) heads.push(kn)
+    }
   }
 
   let c = maxCol + 1
@@ -3644,6 +3653,18 @@ onBeforeUnmount(() => {
           </v-card>
         </v-menu>
         <v-btn data-tour="patch-random" icon="mdi-dice-multiple" variant="text" size="small" title="New random patch — deal out a whole new graph (undoable)" @click="randomPatch" />
+        <!-- what a reroll does with a locked/pinned node that isn't wired in -->
+        <v-menu>
+          <template #activator="{ props }">
+            <v-btn v-bind="props" icon="mdi-pin-outline" variant="text" size="small" :title="`Orphaned locked nodes on reroll: ${settings.orphanPolicy}`" />
+          </template>
+          <v-list density="compact" width="290">
+            <v-list-subheader>Locked/pinned nodes not wired in…</v-list-subheader>
+            <v-list-item :active="settings.orphanPolicy === 'reintegrate'" prepend-icon="mdi-vector-link" title="Reintegrate" subtitle="fold them into the new patch" @click="settings.setOrphanPolicy('reintegrate')" />
+            <v-list-item :active="settings.orphanPolicy === 'keep'" prepend-icon="mdi-pin" title="Keep" subtitle="leave them where they are, disconnected" @click="settings.setOrphanPolicy('keep')" />
+            <v-list-item :active="settings.orphanPolicy === 'ditch'" prepend-icon="mdi-delete-outline" title="Ditch" subtitle="clear them with the rest" @click="settings.setOrphanPolicy('ditch')" />
+          </v-list>
+        </v-menu>
         <v-btn icon="mdi-shuffle-variant" variant="text" size="small" title="Randomize the look — reseed & shuffle every node's params, keep the wiring (undoable)" @click="randomizeLook" />
         <v-btn icon="mdi-delete-sweep" variant="text" size="small" title="Clear graph" @click="clearAll" />
         <v-btn icon="mdi-undo" variant="text" size="small" title="Undo (Ctrl/Cmd+Z)" :disabled="!undoStack.length" @click="undo" />
