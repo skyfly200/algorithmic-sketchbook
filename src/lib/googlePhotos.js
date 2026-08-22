@@ -41,18 +41,32 @@ function loadGis() {
 
 let tokenClient = null
 let accessToken = ''
+let pendingReject = null
 function getToken() {
   return new Promise((resolve, reject) => {
+    pendingReject = reject
     const cb = (resp) => {
-      if (resp.error) reject(new Error(resp.error))
+      if (resp.error) reject(new Error(resp.error_description || resp.error))
       else { accessToken = resp.access_token; resolve(accessToken) }
     }
     if (!tokenClient) {
-      tokenClient = window.google.accounts.oauth2.initTokenClient({ client_id: cid(), scope: SCOPE, callback: cb })
+      // A stable error_callback (routed to the current call's reject) means a
+      // closed or blocked consent popup fails fast instead of leaving the caller
+      // to retry — the usual cause of the sign-in "looping".
+      tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: cid(), scope: SCOPE, callback: cb,
+        error_callback: (err) => pendingReject?.(new Error(
+          err?.type === 'popup_closed' ? 'Sign-in was closed before finishing.'
+            : err?.type === 'popup_failed_to_open' ? 'Sign-in popup was blocked — allow pop-ups for this site.'
+              : (err?.message || 'Google sign-in failed — check the client ID and that this site’s origin is an Authorized JavaScript origin.'),
+        )),
+      })
     } else {
       tokenClient.callback = cb
     }
-    tokenClient.requestAccessToken({ prompt: accessToken ? '' : 'consent' })
+    // Don't force prompt:'consent' every time — GIS re-prompts on its own only
+    // when it actually needs to, so a granted app won't re-ask on each import.
+    tokenClient.requestAccessToken({ prompt: '' })
   })
 }
 
@@ -77,7 +91,10 @@ export async function pickFromGooglePhotos(onStatus = () => {}) {
 
   onStatus('Opening the Google Photos picker')
   const session = await api('sessions', { method: 'POST', body: '{}' })
-  window.open(session.pickerUri, '_blank', 'noopener')
+  // Open WITHOUT noopener so a blocked popup returns null and we can report it
+  // (rather than silently polling a session the user never sees).
+  const win = window.open(session.pickerUri, '_blank')
+  if (!win) throw new Error('The picker pop-up was blocked — allow pop-ups for this site and try again.')
 
   // poll the session until the user finishes selecting
   const interval = secs(session.pollingConfig?.pollInterval, 2)
