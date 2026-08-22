@@ -3514,30 +3514,57 @@ onBeforeUnmount(() => {
       <div class="toolbar-row">
         <v-btn icon="mdi-arrow-left" variant="text" size="small" :to="{ name: 'gallery' }" />
         <span class="text-subtitle-2 mr-2">Patch</span>
-        <!-- add-node buttons: icons tinted with each node type's colour -->
-        <v-btn data-tour="patch-add" icon="mdi-creation" variant="tonal" size="small" title="Add Effect (generator sketch)" :style="{ color: TYPES.effect.color }" @click="addNode('effect')" />
-        <v-btn icon="mdi-image-filter-vintage" variant="tonal" size="small" title="Add Filter (processes its video input)" :style="{ color: TYPES.filter.color }" @click="addNode('filter')" />
-        <v-btn icon="mdi-image-multiple" variant="tonal" size="small" title="Add Media (camera · files · clips)" :style="{ color: TYPES.media.color }" @click="addNode('media')" />
-        <v-btn icon="mdi-earth" variant="tonal" size="small" title="Add Geodata (live map / satellite imagery)" :style="{ color: TYPES.geodata.color }" @click="addNode('geodata')" />
-        <v-btn icon="mdi-tray-arrow-down" variant="text" size="small" title="Import wizard — bring in media, URLs, screen, Google Photos, point clouds, maps &amp; terrain" @click="wizOpen = true" />
-        <v-btn icon="mdi-vector-intersection" variant="tonal" size="small" title="Add Mask (content × matte)" :style="{ color: TYPES.mask.color }" @click="addNode('mask')" />
-        <v-btn icon="mdi-vector-polygon" variant="tonal" size="small" title="Add Polygon (an editable matte shape — wire into a Mask)" :style="{ color: TYPES.polygon.color }" @click="addNode('polygon')" />
-        <v-btn icon="mdi-shape-outline" variant="tonal" size="small" title="Add Portal (remap a region elsewhere)" :style="{ color: TYPES.portal.color }" @click="addNode('portal')" />
-        <v-btn icon="mdi-circle-half-full" variant="tonal" size="small" title="Add Blend (composite two streams)" :style="{ color: TYPES.blend.color }" @click="addNode('blend')" />
-        <v-btn icon="mdi-cube-outline" variant="tonal" size="small" title="Add Geometry (a mesh in vertex space)" :style="{ color: TYPES.geo.color }" @click="addNode('geo')" />
-        <v-btn icon="mdi-camera-control" variant="tonal" size="small" title="Add Camera (render geometry to pixels)" :style="{ color: TYPES.vcam.color }" @click="addNode('vcam')" />
+        <!-- add nodes, grouped by role so the toolbar stays compact; each menu's
+             activator is tinted with the group's node-type colour -->
         <v-menu>
           <template #activator="{ props }">
-            <v-btn v-bind="props" icon="mdi-tune-variant" variant="tonal" size="small" title="Add a control node (Input · XY Pad · Tracker)" :style="{ color: TYPES.input.color }" />
+            <v-btn v-bind="props" data-tour="patch-add" icon="mdi-creation" variant="tonal" size="small" title="Add a source" :style="{ color: TYPES.effect.color }" />
           </template>
           <v-list density="compact">
-            <v-list-item prepend-icon="mdi-sine-wave" title="Input (audio · midi · …)" @click="addNode('input')" />
-            <v-list-item prepend-icon="mdi-gesture-tap" title="XY Pad (touch surface)" @click="addNode('xy')" />
-            <v-list-item prepend-icon="mdi-target" title="Tracker (video tracking)" @click="addNode('tracker')" />
+            <v-list-subheader>Sources</v-list-subheader>
+            <v-list-item prepend-icon="mdi-creation" title="Effect" subtitle="generator sketch" @click="addNode('effect')" />
+            <v-list-item prepend-icon="mdi-image-filter-vintage" title="Filter" subtitle="processes its video input" @click="addNode('filter')" />
+            <v-list-item prepend-icon="mdi-image-multiple" title="Media" subtitle="camera · files · clips" @click="addNode('media')" />
+            <v-list-item prepend-icon="mdi-earth" title="Geodata" subtitle="live map / satellite imagery" @click="addNode('geodata')" />
+            <v-list-item prepend-icon="mdi-format-text" title="Text" subtitle="mappable font" @click="addNode('text')" />
+            <v-list-item prepend-icon="mdi-image-move" title="Sprite" subtitle="image placed & animated in space" @click="addNode('sprite')" />
+            <v-divider class="my-1" />
+            <v-list-item prepend-icon="mdi-tray-arrow-down" title="Import wizard…" subtitle="media · URL · screen · Photos · point cloud · maps · terrain" @click="wizOpen = true" />
           </v-list>
         </v-menu>
-        <v-btn icon="mdi-format-text" variant="tonal" size="small" title="Add Text (mappable font)" :style="{ color: TYPES.text.color }" @click="addNode('text')" />
-        <v-btn icon="mdi-image-move" variant="tonal" size="small" title="Add Sprite (an image/sprite-sheet placed &amp; animated in space)" :style="{ color: TYPES.sprite.color }" @click="addNode('sprite')" />
+        <v-menu>
+          <template #activator="{ props }">
+            <v-btn v-bind="props" icon="mdi-vector-polygon" variant="tonal" size="small" title="Compose (blend · mask · shape · portal)" :style="{ color: TYPES.blend.color }" />
+          </template>
+          <v-list density="compact">
+            <v-list-subheader>Compose</v-list-subheader>
+            <v-list-item prepend-icon="mdi-circle-half-full" title="Blend" subtitle="composite two streams" @click="addNode('blend')" />
+            <v-list-item prepend-icon="mdi-vector-intersection" title="Mask" subtitle="content × matte" @click="addNode('mask')" />
+            <v-list-item prepend-icon="mdi-vector-polygon" title="Polygon" subtitle="editable matte shape — wire into a Mask" @click="addNode('polygon')" />
+            <v-list-item prepend-icon="mdi-shape-outline" title="Portal" subtitle="remap a region elsewhere" @click="addNode('portal')" />
+          </v-list>
+        </v-menu>
+        <v-menu>
+          <template #activator="{ props }">
+            <v-btn v-bind="props" icon="mdi-cube-outline" variant="tonal" size="small" title="3D (geometry · camera)" :style="{ color: TYPES.geo.color }" />
+          </template>
+          <v-list density="compact">
+            <v-list-subheader>3D</v-list-subheader>
+            <v-list-item prepend-icon="mdi-cube-outline" title="Geometry" subtitle="a mesh in vertex space" @click="addNode('geo')" />
+            <v-list-item prepend-icon="mdi-camera-control" title="Camera" subtitle="render geometry to pixels" @click="addNode('vcam')" />
+          </v-list>
+        </v-menu>
+        <v-menu>
+          <template #activator="{ props }">
+            <v-btn v-bind="props" icon="mdi-tune-variant" variant="tonal" size="small" title="Control (input · XY · tracker)" :style="{ color: TYPES.input.color }" />
+          </template>
+          <v-list density="compact">
+            <v-list-subheader>Control</v-list-subheader>
+            <v-list-item prepend-icon="mdi-sine-wave" title="Input" subtitle="audio · midi · …" @click="addNode('input')" />
+            <v-list-item prepend-icon="mdi-gesture-tap" title="XY Pad" subtitle="touch surface" @click="addNode('xy')" />
+            <v-list-item prepend-icon="mdi-target" title="Tracker" subtitle="video tracking" @click="addNode('tracker')" />
+          </v-list>
+        </v-menu>
         <v-btn icon="mdi-monitor" variant="tonal" size="small" title="Add Output (fullscreen stage)" @click="addNode('output')" />
         <v-spacer />
         <v-menu v-model="nlOpen" :close-on-content-click="false" location="bottom">
