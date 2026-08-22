@@ -153,7 +153,10 @@ export function createRenderers({ cover, inputCanvas, pval, mediaEl, spriteImg, 
     const mask = inputCanvas(node, 1)
     if (content) octx.drawImage(content, 0, 0, W, H)
     if (content && mask) {
-      const mw = Math.min(360, W), mh = Math.max(1, Math.round((mw * H) / W))
+      // Key the matte near the output resolution so crisp vector mattes (a Text
+      // outline, a Polygon) stay sharp — a low cap made their edges pixelated
+      // once upscaled. Still bounded so a huge native canvas can't stall.
+      const mw = Math.min(1280, W), mh = Math.max(1, Math.round((mw * H) / W))
       const t = s.matte || (s.matte = document.createElement('canvas'))
       if (t.width !== mw || t.height !== mh) { t.width = mw; t.height = mh }
       const tx = s.matteCtx || (s.matteCtx = t.getContext('2d', { willReadFrequently: true }))

@@ -269,7 +269,7 @@ function addNode(type) {
                   : type === 'media'
                     ? { mode: 'camera', mediaId: null }
                     : type === 'geodata'
-                      ? { layer: 'Satellite', lat: 36.06, lon: -112.14, zoom: 12, drift: 0.15 }
+                      ? { layer: 'Satellite', lat: 36.06, lon: -112.14, zoom: 12, driftX: 0.15, driftY: 0, driftRandom: false }
                     : type === 'text'
                       ? { text: 'BRIGHT WAVES', font: 'sans-serif', size: 0.18, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false, seqMode: 'off', lyrics: '', lineDur: 3, loopSeq: true, transition: 'None', transDur: 0.4 }
                       : type === 'sprite'
@@ -2182,9 +2182,22 @@ function drawGeodata(node, octx) {
   const n2 = 2 ** z
   const now = performance.now()
   const dt = node._geoLast ? Math.min(0.05, (now - node._geoLast) / 1000) : 0.016; node._geoLast = now
-  node._geoPan = (node._geoPan ?? 0) + (p.drift ?? 0) * dt * 0.12 // slow east/west drift, in tiles
-  const cxT = lonToTileX(p.lon ?? 0, z) + node._geoPan
-  const cyT = latToTileY(p.lat ?? 0, z)
+  // Independent east/west (X) and north/south (Y) drift, in tiles. `drift` is the
+  // legacy single-axis value → east/west. Random mode wanders both axes via a
+  // damped random walk scaled by the drift magnitudes.
+  const dvx = p.driftX ?? p.drift ?? 0, dvy = p.driftY ?? 0
+  if (p.driftRandom) {
+    const amt = Math.max(Math.abs(dvx), Math.abs(dvy), 0.2)
+    node._geoVX = (node._geoVX ?? 0) * 0.98 + (Math.random() - 0.5) * amt * 0.05
+    node._geoVY = (node._geoVY ?? 0) * 0.98 + (Math.random() - 0.5) * amt * 0.05
+    node._geoPanX = (node._geoPanX ?? 0) + node._geoVX * dt * 0.12
+    node._geoPanY = (node._geoPanY ?? 0) + node._geoVY * dt * 0.12
+  } else {
+    node._geoPanX = (node._geoPanX ?? 0) + dvx * dt * 0.12
+    node._geoPanY = (node._geoPanY ?? 0) + dvy * dt * 0.12
+  }
+  const cxT = lonToTileX(p.lon ?? 0, z) + node._geoPanX
+  const cyT = latToTileY(p.lat ?? 0, z) + node._geoPanY
   const tile = Math.max(256, Math.round(Math.min(W, H) / 2)) // scale tiles to the compositor size
   octx.fillStyle = '#0a0e14'; octx.fillRect(0, 0, W, H)
   const halfCols = Math.ceil((W / tile) / 2) + 1
@@ -2213,7 +2226,7 @@ function drawGeodata(node, octx) {
   }
 }
 
-function geoGoto(node, key) { const g = GEO_PLACES[key]; if (g) { Object.assign(node.params, g); node._geoPan = 0; persist() } }
+function geoGoto(node, key) { const g = GEO_PLACES[key]; if (g) { Object.assign(node.params, g); node._geoPanX = 0; node._geoPanY = 0; node._geoVX = 0; node._geoVY = 0; persist() } }
 
 // Per-node-type renderers live in ../lib/patch/renderers.js. Bind them to the
 // view's live compositor helpers once; geo/vcam/geodata keep their own
@@ -4064,7 +4077,9 @@ onBeforeUnmount(() => {
             <label>latitude <NumSlider :min="-85" :max="85" :step="0.01" :model-value="n.params.lat" @update:model-value="n.params.lat = $event" @commit="persist" /></label>
             <label>longitude <NumSlider :min="-180" :max="180" :step="0.01" :model-value="n.params.lon" @update:model-value="n.params.lon = $event" @commit="persist" /></label>
             <label>zoom <NumSlider :min="1" :max="19" :step="1" :model-value="n.params.zoom" @update:model-value="n.params.zoom = $event" @commit="persist" /></label>
-            <label>drift <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.drift" @update:model-value="n.params.drift = $event" @commit="persist" /></label>
+            <label>drift X <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.driftX ?? n.params.drift ?? 0" @update:model-value="n.params.driftX = $event" @commit="persist" /></label>
+            <label>drift Y <NumSlider :min="-1" :max="1" :step="0.02" :model-value="n.params.driftY ?? 0" @update:model-value="n.params.driftY = $event" @commit="persist" /></label>
+            <label class="chk"><input type="checkbox" :checked="!!n.params.driftRandom" @change="n.params.driftRandom = $event.target.checked; persist()" @pointerdown.stop /> random drift (wander)</label>
             <div class="shape-row">
               <button class="shape-btn" title="Jump to a preset place" @pointerdown.stop @click="geoGoto(n, 'grand')">Grand Canyon</button>
               <button class="shape-btn" @pointerdown.stop @click="geoGoto(n, 'alps')">Alps</button>
@@ -4328,7 +4343,9 @@ onBeforeUnmount(() => {
 }
 .toast-fade-enter-active, .toast-fade-leave-active { transition: opacity 0.35s ease, transform 0.35s ease; }
 .toast-fade-enter-from, .toast-fade-leave-to { opacity: 0; transform: translateY(10px); }
-.wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 11; }
+/* overflow:visible so wires to nodes dragged past the viewport box aren't
+   clipped to the SVG's rect (the root <svg> clips by default). */
+.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 11; }
 .wire { pointer-events: stroke; cursor: pointer; opacity: 0.9; }
 .wire:hover { stroke-width: 4; }
 .node {
