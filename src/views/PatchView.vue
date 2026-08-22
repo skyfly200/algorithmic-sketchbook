@@ -21,6 +21,7 @@ import { inputParams, groupInputSources } from '../lib/inputParams'
 import { parsePointFile, parseLas, finalizePoints } from '../lib/points.js'
 import { NL_TEXT_DEFAULTS, specNodeParams, resolveEffectMods } from '../lib/nlDesigner.js'
 import NlDesigner from '../components/patch/NlDesigner.vue'
+import MediaWizard from '../components/patch/MediaWizard.vue'
 import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTileUrl, decodeElev as demDecode } from '../lib/geoTiles.js'
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
@@ -4266,43 +4267,12 @@ onBeforeUnmount(() => {
     <div v-show="!outputOnly" class="hint">Drag a node's right port to another node's left port to wire it. Drag an Input node's ▣ output to any param's ▣ jack to modulate it. Click a wire to remove it.</div>
 
     <!-- media ingest wizard -->
-    <div v-if="wizOpen" class="wiz-backdrop" @pointerdown.self="wizOpen = false">
-      <div class="wiz" @pointerdown.stop>
-        <div class="wiz-head">
-          <v-icon icon="mdi-tray-arrow-down" size="18" class="mr-2" />
-          <span class="wiz-title">Import content</span>
-          <span class="show-spacer" />
-          <v-btn icon="mdi-close" size="x-small" variant="text" @click="wizOpen = false" />
-        </div>
-        <div class="wiz-grid">
-          <button class="wiz-card" @click="wizUploadFiles">
-            <v-icon icon="mdi-file-image-outline" size="26" /><span>Images / Video</span><small>Files → Media / Sprite</small>
-          </button>
-          <button class="wiz-card" @click="wizFromUrl">
-            <v-icon icon="mdi-link-variant" size="26" /><span>From URL</span><small>Paste an image/video link</small>
-          </button>
-          <button class="wiz-card" @click="wizScreenLive">
-            <v-icon icon="mdi-monitor-share" size="26" /><span>Screen capture</span><small>Live window/screen source</small>
-          </button>
-          <button class="wiz-card" @click="wizScreenGrab">
-            <v-icon icon="mdi-monitor-screenshot" size="26" /><span>Screen snapshot</span><small>One still frame → Media</small>
-          </button>
-          <button class="wiz-card" :class="{ 'wiz-card--dim': !wizHasGoogle }" @click="wizHasGoogle ? wizGoogle() : router.push({ name: 'settings' })">
-            <v-icon icon="mdi-google-photos" size="26" /><span>Google Photos</span><small>{{ wizHasGoogle ? 'Pick from your library' : 'Add a client ID in Settings' }}</small>
-          </button>
-          <button class="wiz-card" @click="wizPointCloud">
-            <v-icon icon="mdi-dots-hexagon" size="26" /><span>Point cloud / LiDAR</span><small>.ply / .las / .xyz / .pts → Geometry</small>
-          </button>
-          <button class="wiz-card" @click="wizGeodata">
-            <v-icon icon="mdi-map" size="26" /><span>Map / Satellite</span><small>Live tiles → Geodata node</small>
-          </button>
-          <button class="wiz-card" @click="wizTerrain">
-            <v-icon icon="mdi-terrain" size="26" /><span>3D Terrain</span><small>Elevation → Geometry / Camera</small>
-          </button>
-        </div>
-        <div class="wiz-note">Point clouds accept common LiDAR exports (.ply/.xyz/.pts). Maps &amp; terrain use free public tiles; add a provider key in Settings for higher quality.</div>
-      </div>
-    </div>
+    <MediaWizard
+      v-model="wizOpen" :has-google="wizHasGoogle"
+      @upload="wizUploadFiles" @url="wizFromUrl" @screen-live="wizScreenLive" @screen-grab="wizScreenGrab"
+      @google="wizGoogle" @point-cloud="wizPointCloud" @geodata="wizGeodata" @terrain="wizTerrain"
+      @open-settings="router.push({ name: 'settings' })"
+    />
 
     <transition name="toast-fade">
       <div v-if="toast" class="save-toast"><v-icon icon="mdi-check-circle" size="16" class="mr-1" />{{ toast }}</div>
@@ -4317,21 +4287,7 @@ onBeforeUnmount(() => {
 .stage { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
 .sources { position: absolute; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none; }
 .sources iframe, .sources video { width: 384px; height: 216px; border: 0; }
-.wiz-backdrop { position: fixed; inset: 0; z-index: 4000; background: rgba(5,6,10,0.6); display: flex; align-items: center; justify-content: center; }
-.wiz { width: min(560px, 92vw); background: #14161e; border: 1px solid #2a2f40; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.6); overflow: hidden; }
-.wiz-head { display: flex; align-items: center; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.07); color: #cdd3e6; }
-.wiz-title { font-weight: 600; font-size: 0.9rem; }
-.wiz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding: 12px; }
-.wiz-card {
-  display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center;
-  padding: 14px 8px; border-radius: 10px; cursor: pointer; color: #cdd3e6;
-  background: #1a1d28; border: 1px solid #2a2f40;
-}
-.wiz-card:hover { border-color: #7c8cff; background: rgba(124,140,255,0.1); }
-.wiz-card span { font-size: 0.78rem; font-weight: 600; margin-top: 4px; }
-.wiz-card small { font-size: 0.64rem; color: #8a90a0; }
-.wiz-card--dim { opacity: 0.7; }
-.wiz-note { font-size: 0.66rem; color: #737b93; padding: 0 12px 12px; }
+/* Import-wizard styles moved into src/components/patch/MediaWizard.vue */
 /* NL designer styles moved into src/components/patch/NlDesigner.vue */
 .toolbar {
   position: absolute; top: 0; left: 0; right: 0; z-index: 30;
