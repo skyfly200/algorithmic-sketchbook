@@ -22,6 +22,8 @@ import { parsePointFile, parseLas, finalizePoints } from '../lib/points.js'
 import { NL_TEXT_DEFAULTS, specNodeParams, resolveEffectMods } from '../lib/nlDesigner.js'
 import NlDesigner from '../components/patch/NlDesigner.vue'
 import MediaWizard from '../components/patch/MediaWizard.vue'
+import AutopilotBar from '../components/patch/AutopilotBar.vue'
+import { useAutopilot } from '../composables/useAutopilot.js'
 import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTileUrl, decodeElev as demDecode } from '../lib/geoTiles.js'
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
@@ -727,112 +729,24 @@ function rerollUpstream(node) {
 }
 
 // --- autopilot mode: auto-evolve the graph -----------------------------------
-// A hands-free mode that mutates the graph on a timer, the same idea as the
-// Autopilot view but operating on THIS node network: it swaps effect/filter
-// sketches, restyles blends, and occasionally regrows a whole upstream branch —
-// always leaving locked nodes alone. Toggle it to jump between hand-editing
-// (manual) and letting it drive (autopilot).
-const autoOn = ref(false)
-const autoEverySec = ref(12)   // dwell between moves
-const autoFpsFloor = ref(15)   // if the composite drops below this, cheapen the graph
-const autoBudget = ref(12)     // keep the graph's total render cost under this
-let autoTimer = 0
-// Transport state — parity with the Autopilot view: a per-second countdown so
-// we can draw the ring, a pause that holds the clock without dropping out of
-// autopilot, and a panel ("tab") that surfaces the transport + countdown.
-const autoPaused = ref(false)
-const autoPanelOpen = ref(false)
-const autoLeft = ref(0)        // whole seconds until the next move
-const autoTotal = ref(1)       // length of the current dwell, for the ring
-const autoProgress = computed(() => Math.min(1, Math.max(0, 1 - autoLeft.value / Math.max(1, autoTotal.value))))
-function autoResetClock() { autoTotal.value = Math.max(2, autoEverySec.value); autoLeft.value = autoTotal.value }
-// Per-sketch render cost (higher = slower), same model as the Autopilot view.
+// The transport state + move engine live in ../composables/useAutopilot.js and
+// the panel in <AutopilotBar>; `ap` (created below, once its graph-mutating deps
+// exist) is the instance. The per-sketch cost model it uses stays here.
 const slugCost = (slug) => costOfSlug(slug, perfScores)
 const graphCost = () => costOfGraph(nodes, perfScores)
 function slugPool(n) {
   const base = n.type === 'filter' ? filterOptions.value : settings.filterToPool(effectOptions.value)
   return base.length ? base : (n.type === 'filter' ? filterOptions.value : effectOptions.value)
 }
-// Would autopilot ever mutate this node? (swap a slug, restyle a blend, or
-// reroll its upstream branch) — only those get the "keep" pin.
-function autoCanTouch(n) {
-  if (n.type === 'output') return false
-  return n.type === 'effect' || n.type === 'filter' || n.type === 'blend' || TYPES[n.type].ins > 0
-}
-function autoStep() {
-  if (!autoOn.value) return
-  const swappable = nodes.filter((n) => (n.type === 'effect' || n.type === 'filter') && !n.locked && !n.keep)
-
-  // Perf watchdog: if the frame rate is under the floor, don't add churn — swap
-  // the most expensive unlocked node for a cheaper sketch and stop for this tick.
-  if (fps.value > 0 && fps.value < autoFpsFloor.value && swappable.length) {
-    const heavy = [...swappable].sort((a, b) => slugCost(b.params.slug) - slugCost(a.params.slug))[0]
-    const cheaper = slugPool(heavy).filter((o) => slugCost(o.slug) < slugCost(heavy.params.slug))
-    if (cheaper.length) {
-      cheaper.sort((a, b) => slugCost(a.slug) - slugCost(b.slug))
-      heavy.params.slug = cheaper[Math.floor(Math.random() * Math.min(3, cheaper.length))].slug
-      persist()
-      return
-    }
-  }
-
-  const blends = nodes.filter((n) => n.type === 'blend' && !n.locked && !n.keep)
-  const branchable = nodes.filter((n) => TYPES[n.type].ins > 0 && !n.locked && !n.keep && edges.some((e) => e.to === n.id))
-  // weight gentle moves (slug swap, blend restyle) over the drastic branch reroll
-  const bag = []
-  if (swappable.length) bag.push('swap', 'swap', 'swap')
-  if (blends.length) bag.push('blend', 'blend')
-  if (branchable.length) bag.push('branch')
-  if (!bag.length) { randomPatch(); return }
-  const move = bag[Math.floor(Math.random() * bag.length)]
-  if (move === 'swap') {
-    const n = swappable[Math.floor(Math.random() * swappable.length)]
-    const opts = slugPool(n)
-    if (!opts.length) return
-    // respect the perf budget: prefer replacements that keep total cost in check
-    const headroom = autoBudget.value - (graphCost() - slugCost(n.params.slug))
-    let pool = opts.filter((o) => slugCost(o.slug) <= Math.max(2, headroom))
-    if (!pool.length) pool = [...opts].sort((a, b) => slugCost(a.slug) - slugCost(b.slug)).slice(0, Math.max(1, Math.ceil(opts.length * 0.3)))
-    let s = n.params.slug
-    for (let k = 0; k < 6 && s === n.params.slug; k++) s = pool[Math.floor(Math.random() * pool.length)]?.slug ?? s
-    n.params.slug = s
-    persist()
-  } else if (move === 'blend') {
-    const n = blends[Math.floor(Math.random() * blends.length)]
-    n.params.mode = BLENDS[Math.floor(Math.random() * BLENDS.length)]
-    n.params.mix = +(0.35 + Math.random() * 0.6).toFixed(2)
-    persist()
-  } else {
-    rerollUpstream(branchable[Math.floor(Math.random() * branchable.length)])
-  }
-}
-// A 1 Hz clock drives the countdown ring; when it reaches zero we make a move
-// and re-arm. Pausing stops the decrement but keeps autopilot engaged.
-function armAuto() {
-  clearInterval(autoTimer)
-  if (!autoOn.value) return
-  autoResetClock()
-  autoTimer = setInterval(() => {
-    if (autoPaused.value) return
-    autoLeft.value--
-    if (autoLeft.value <= 0) { autoStep(); autoResetClock() }
-  }, 1000)
-}
-function toggleAuto() {
-  autoOn.value = !autoOn.value
-  if (autoOn.value) {
-    autoPaused.value = false
-    if (!nodes.some((n) => n.type === 'effect' || n.type === 'filter')) randomPatch()
-    autoPanelOpen.value = true // surface the transport tab when it engages
-  }
-  armAuto()
-}
-// Transport — feature parity with the Autopilot page's controls.
-function autoPlayPause() { autoPaused.value = !autoPaused.value }
-function autoNextNow() { if (!autoOn.value) return; autoStep(); autoResetClock() } // jump the next move forward
-function autoPrev() { undo() }                                                     // step back through the changes
-function autoReroll() { randomPatch(); autoResetClock() }                          // deal a whole fresh graph
-watch(autoEverySec, () => { if (autoOn.value) armAuto() })
+// The autopilot instance — its deps (randomPatch/rerollUpstream/undo/persist are
+// hoisted functions; fps is a ref declared later, so it's read via a getter).
+const ap = useAutopilot({
+  nodes, edges, TYPES, BLENDS,
+  fps: () => fps.value,
+  slugPool, slugCost, graphCost, persist, randomPatch, rerollUpstream, undo,
+})
+// The node card shows a "keep" pin only on nodes autopilot might touch.
+const autoCanTouch = ap.canTouch
 
 // Jump to the full Autopilot view (its own evolving-mix mode).
 function openAutopilot() { router.push({ name: 'autopilot' }) }
@@ -3241,20 +3155,20 @@ onBeforeUnmount(() => {
       <div class="toolbar-row">
       <!-- Autopilot: auto-evolve this graph; jump between manual and autopilot -->
       <v-btn
-        :prepend-icon="autoOn ? 'mdi-robot' : 'mdi-robot-outline'"
+        :prepend-icon="ap.state.on ? 'mdi-robot' : 'mdi-robot-outline'"
         size="small"
-        :variant="autoOn ? 'flat' : 'tonal'"
-        :color="autoOn ? 'primary' : undefined"
-        :title="autoOn ? 'Autopilot on — the graph is evolving itself; click to take over' : 'Autopilot — let it auto-evolve this graph'"
-        @click="toggleAuto"
-      >{{ autoOn ? 'Autopilot' : 'Manual' }}</v-btn>
+        :variant="ap.state.on ? 'flat' : 'tonal'"
+        :color="ap.state.on ? 'primary' : undefined"
+        :title="ap.state.on ? 'Autopilot on — the graph is evolving itself; click to take over' : 'Autopilot — let it auto-evolve this graph'"
+        @click="ap.toggle()"
+      >{{ ap.state.on ? 'Autopilot' : 'Manual' }}</v-btn>
       <v-btn
         icon="mdi-cog-outline"
         variant="text"
         size="x-small"
-        :color="autoPanelOpen ? 'primary' : undefined"
+        :color="ap.state.panelOpen ? 'primary' : undefined"
         title="Autopilot transport &amp; options"
-        @click="autoPanelOpen = !autoPanelOpen"
+        @click="ap.state.panelOpen = !ap.state.panelOpen"
       />
 
       <!-- Save: name + store the current graph as a routing -->
@@ -3654,49 +3568,9 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- Autopilot panel: transport + countdown ring + options, surfaced as its
-         own tab when autopilot is engaged. Parity with the Autopilot view, but
-         the graph stays hand-editable — add nodes from the toolbar any time. -->
-    <div v-if="autoPanelOpen" class="auto-panel" @pointerdown.stop @wheel.stop>
-      <div class="show-head">
-        <span class="show-title">Autopilot</span>
-        <div class="show-modes">
-          <button :class="{ on: autoOn }" @click="!autoOn && toggleAuto()">Auto</button>
-          <button :class="{ on: !autoOn }" @click="autoOn && toggleAuto()">Manual</button>
-        </div>
-        <span class="show-spacer" />
-        <span class="auto-fps" :class="{ low: fps > 0 && fps < autoFpsFloor }">{{ fps }} fps</span>
-        <v-btn icon="mdi-close" size="x-small" variant="text" @click="autoPanelOpen = false" />
-      </div>
-
-      <!-- transport: previous · play/pause · next-now · countdown ring · reroll -->
-      <div class="show-transport">
-        <v-btn icon="mdi-skip-previous" size="small" variant="text" :disabled="!undoStack.length" title="Step back (undo the last change)" @click="autoPrev" />
-        <v-btn :icon="autoOn && !autoPaused ? 'mdi-pause' : 'mdi-play'" size="small" variant="text" :title="!autoOn ? 'Engage autopilot' : autoPaused ? 'Resume' : 'Pause (holds autopilot)'" @click="autoOn ? autoPlayPause() : toggleAuto()" />
-        <v-btn icon="mdi-skip-next" size="small" variant="text" :disabled="!autoOn" title="Next move now" @click="autoNextNow" />
-        <span class="countdown-ring" :title="autoOn ? (autoPaused ? 'Paused' : 'Time until the next change') : 'Autopilot is off'">
-          <svg viewBox="0 0 36 36">
-            <circle class="ring-bg" cx="18" cy="18" r="15.5" />
-            <circle class="ring-fg" cx="18" cy="18" r="15.5" :stroke-dasharray="97.4" :stroke-dashoffset="97.4 * (1 - autoProgress)" />
-          </svg>
-          <span class="ring-num">{{ autoOn ? (autoPaused ? '‖' : autoLeft) : '–' }}</span>
-        </span>
-        <v-btn icon="mdi-dice-5-outline" size="small" variant="text" title="Full reroll — deal a fresh graph" @click="autoReroll" />
-        <span class="show-spacer" />
-        <v-btn icon="mdi-robot-outline" size="small" variant="text" title="Open the full Autopilot view" @click="openAutopilot" />
-      </div>
-
-      <!-- options -->
-      <div class="auto-opts">
-        <div class="auto-row">Change every {{ autoEverySec }}s</div>
-        <v-slider v-model="autoEverySec" :min="3" :max="60" :step="1" hide-details density="compact" class="mb-1" @pointerdown.stop />
-        <div class="auto-row">Perf budget: {{ autoBudget }} — bigger is richer &amp; heavier</div>
-        <v-slider v-model="autoBudget" :min="4" :max="30" :step="1" hide-details density="compact" class="mb-1" @pointerdown.stop />
-        <div class="auto-row">FPS floor: {{ autoFpsFloor }} — cheapen the graph below this</div>
-        <v-slider v-model="autoFpsFloor" :min="10" :max="50" :step="1" hide-details density="compact" @pointerdown.stop />
-        <p class="auto-hint">Autopilot swaps effects, restyles blends and regrows branches on the clock. Locked nodes are never touched — lock anything you want to keep, and keep adding nodes from the toolbar while it runs.</p>
-      </div>
-    </div>
+    <!-- Autopilot transport + options — surfaced when engaged; the graph stays
+         hand-editable while it runs. -->
+    <AutopilotBar :ap="ap" :fps="fps" :undo-depth="undoStack.length" @open-full="openAutopilot" />
 
     <!-- node board -->
     <div
@@ -4431,18 +4305,7 @@ onBeforeUnmount(() => {
 .show-spacer { flex: 1; }
 .show-transport { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); }
 /* Autopilot control panel — a floating tab with transport + countdown + opts. */
-.auto-panel {
-  position: absolute; right: 12px; top: 96px; z-index: 42; width: 280px;
-  display: flex; flex-direction: column; border-radius: 10px; overflow: hidden;
-  background: rgba(12, 14, 20, 0.97); border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5); backdrop-filter: blur(6px);
-  font: 12px system-ui, sans-serif; color: #cdd3e0;
-}
-.auto-fps { font: 11px ui-monospace, monospace; color: #9aa4c0; }
-.auto-fps.low { color: #ff8a6a; }
-.auto-opts { padding: 8px 12px 10px; }
-.auto-row { font: 11px system-ui; color: #9aa4c0; margin-top: 4px; }
-.auto-hint { font: 10px system-ui; color: #8a90a0; line-height: 1.4; margin: 8px 0 0; }
+/* Autopilot-panel styles moved into src/components/patch/AutopilotBar.vue */
 /* Countdown number wrapped in a circular progress ring (mirrors Autopilot). */
 .countdown-ring { display: inline-grid; place-items: center; width: 34px; height: 34px; }
 .countdown-ring svg { grid-area: 1 / 1; width: 34px; height: 34px; transform: rotate(-90deg); }
