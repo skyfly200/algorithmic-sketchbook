@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   normalizeNodes, migrateGraph, evalOrder, ancestorsOf, freeSpot, layoutByDepth,
-  slugCost, graphCost, topoMatch, applyRamp, applyCurve,
+  slugCost, graphCost, topoMatch, applyRamp, applyCurve, usedInGraph,
 } from '../src/lib/patch/graph.js'
 
 // tiny helpers to keep the graph fixtures readable
@@ -189,5 +189,20 @@ describe('applyCurve (input response)', () => {
     expect(applyCurve(0.4, 'step')).toBe(0)
     expect(applyCurve(0.6, 'step')).toBe(1)
     expect(applyCurve(0.7, 'unknown')).toBe(0.7) // default passthrough
+  })
+})
+
+describe('usedInGraph (reroll orphan guard)', () => {
+  const edges = [edge(1, 2), edge(2, 3)]
+  const links = [{ from: 4, srcPort: 0, node: 2, param: 'mix' }]
+  it('is true for nodes touched by an edge or a link', () => {
+    expect(usedInGraph(1, edges, links)).toBe(true)  // edge source
+    expect(usedInGraph(3, edges, links)).toBe(true)  // edge target
+    expect(usedInGraph(4, edges, links)).toBe(true)  // link source
+    expect(usedInGraph(2, edges, links)).toBe(true)  // link target + edges
+  })
+  it('is false for a disconnected orphan', () => {
+    expect(usedInGraph(9, edges, links)).toBe(false)
+    expect(usedInGraph(9, [], [])).toBe(false)
   })
 })

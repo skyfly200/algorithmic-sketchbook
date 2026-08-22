@@ -73,6 +73,11 @@ export function evalOrder(nodes, edges) {
   for (const n of nodes) if (!seen.has(n.id)) order.push(n) // cyclic remainder
   return order
 }
+// Whether a node participates in any video edge or control link (i.e. it's
+// actually wired into the routing, not a disconnected orphan).
+export function usedInGraph(id, edges, links = []) {
+  return edges.some((e) => e.from === id || e.to === id) || links.some((l) => l.from === id || l.node === id)
+}
 // Every node id upstream of `id` (transitively feeding it).
 export function ancestorsOf(id, edges) {
   const anc = new Set()

@@ -24,7 +24,7 @@ import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTil
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
 import { NODE_W, HEAD_H, THUMB_H, RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, PRESET_BLOCKS, NL_EXAMPLES, PATCH_TOUR_STEPS } from '../lib/patch/constants.js'
-import { normalizeNodes, migrateGraph, topoMatch, applyCurve, evalOrder as orderGraph, ancestorsOf as ancestorsIn, applyRamp as rampParams, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
+import { normalizeNodes, migrateGraph, topoMatch, applyCurve, usedInGraph, evalOrder as orderGraph, ancestorsOf as ancestorsIn, applyRamp as rampParams, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
 import { loadJson, saveJson, fileSlug, downloadJson, pickJsonFile, captureBlockData, stampBlock, fillPreset, buildPatchFile, buildShowFile, parsePatchImport, parseShowImport } from '../lib/patch/library.js'
 import TourOverlay from '../components/TourOverlay.vue'
 import NumSlider from '../components/NumSlider.vue'
@@ -330,6 +330,12 @@ function pruneOrphans() {
 // Builds a fresh random-but-sensible graph: 1–3 effect sources, each pushed
 // through a random filter chain, the streams folded together with random
 // blends, an Output at the end, and a control node wired into a blend mix.
+// A node is "used in the graph" when it participates in any video edge or
+// control link. A reroll/rebuild protects a locked or pinned node only when it's
+// actually wired in — a locked node left disconnected is clutter, so it's
+// cleared with the rest instead of being dragged into (and re-integrated with)
+// every new patch. (Locking still protects a used node from manual removal.)
+function protectedInReroll(n) { return (n.locked || n.keep) && usedInGraph(n.id, edges, links) }
 // Masks, when used, cut a picture to a proper matte (a Polygon or Text), not a
 // second picture. Goes through persist(), so it's a single undo step. Drives
 // both the RNG dice and the Patch auto-reroll.
@@ -339,7 +345,7 @@ function randomPatch() {
 
   // Keep locked / kept nodes (and any wiring purely among them); randomize the
   // rest. "keep" (pin) protects from reshuffle without locking editing.
-  const keptIds = new Set(nodes.filter((n) => n.locked || n.keep).map((n) => n.id))
+  const keptIds = new Set(nodes.filter(protectedInReroll).map((n) => n.id))
   const keptNodes = nodes.filter((n) => keptIds.has(n.id))
   const keptEdges = edges.filter((e) => keptIds.has(e.from) && keptIds.has(e.to))
   const keptLinks = links.filter((l) => keptIds.has(l.from) && keptIds.has(l.to))
@@ -547,7 +553,7 @@ function buildFromIntent() {
   const it = nlIntent.value
   if (!it) { parseIntent(nlText.value); return }
 
-  const keptIds = new Set(nodes.filter((n) => n.locked || n.keep).map((n) => n.id))
+  const keptIds = new Set(nodes.filter(protectedInReroll).map((n) => n.id))
   for (let k = edges.length - 1; k >= 0; k--) if (!keptIds.has(edges[k].from) || !keptIds.has(edges[k].to)) edges.splice(k, 1)
   for (let k = links.length - 1; k >= 0; k--) if (!keptIds.has(links[k].from) || !keptIds.has(links[k].node)) links.splice(k, 1)
   for (let k = nodes.length - 1; k >= 0; k--) if (!keptIds.has(nodes[k].id)) { const id = nodes[k].id; nodes.splice(k, 1); disposeRuntime(id); rtState.delete(id); effectControls.delete(id); nlPendingMods.delete(id) }
@@ -653,7 +659,7 @@ function buildFromSpec(spec) {
   }
 
   // clear everything except locked / kept nodes
-  const keptIds = new Set(nodes.filter((n) => n.locked || n.keep).map((n) => n.id))
+  const keptIds = new Set(nodes.filter(protectedInReroll).map((n) => n.id))
   for (let k = edges.length - 1; k >= 0; k--) if (!keptIds.has(edges[k].from) || !keptIds.has(edges[k].to)) edges.splice(k, 1)
   for (let k = links.length - 1; k >= 0; k--) if (!keptIds.has(links[k].from) || !keptIds.has(links[k].node)) links.splice(k, 1)
   for (let k = nodes.length - 1; k >= 0; k--) if (!keptIds.has(nodes[k].id)) { const id = nodes[k].id; nodes.splice(k, 1); disposeRuntime(id); rtState.delete(id); effectControls.delete(id); nlPendingMods.delete(id) }
