@@ -23,14 +23,16 @@ import { NL_TEXT_DEFAULTS, specNodeParams, resolveEffectMods } from '../lib/nlDe
 import NlDesigner from '../components/patch/NlDesigner.vue'
 import MediaWizard from '../components/patch/MediaWizard.vue'
 import AutopilotBar from '../components/patch/AutopilotBar.vue'
+import ShowPanel from '../components/patch/ShowPanel.vue'
 import { useAutopilot } from '../composables/useAutopilot.js'
+import { useShow } from '../composables/useShow.js'
 import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTileUrl, decodeElev as demDecode } from '../lib/geoTiles.js'
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
 import { createRenderers } from '../lib/patch/renderers.js'
 import { NODE_W, HEAD_H, THUMB_H, RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, PRESET_BLOCKS, NL_EXAMPLES, PATCH_TOUR_STEPS } from '../lib/patch/constants.js'
-import { normalizeNodes, migrateGraph, topoMatch, applyCurve, usedInGraph, evalOrder as orderGraph, ancestorsOf as ancestorsIn, applyRamp as rampParams, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
-import { loadJson, saveJson, fileSlug, downloadJson, pickJsonFile, captureBlockData, stampBlock, fillPreset, buildPatchFile, buildShowFile, parsePatchImport, parseShowImport } from '../lib/patch/library.js'
+import { normalizeNodes, migrateGraph, applyCurve, usedInGraph, evalOrder as orderGraph, ancestorsOf as ancestorsIn, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
+import { loadJson, saveJson, fileSlug, downloadJson, pickJsonFile, captureBlockData, stampBlock, fillPreset, buildPatchFile, parsePatchImport } from '../lib/patch/library.js'
 import TourOverlay from '../components/TourOverlay.vue'
 import NumSlider from '../components/NumSlider.vue'
 import ColorField from '../components/ColorField.vue'
@@ -2218,7 +2220,7 @@ function loop(ts) {
   const now = ts ?? performance.now()
   if (renderPaused.value) { raf = requestAnimationFrame(loop); return } // held — keep the editor snappy
   broadcastBeat(now)
-  if (showMode.value === 'timeline' && showPlaying.value) tickShow(now)
+  if (show.state.mode === 'timeline' && show.state.playing) show.tickShow(now)
   applyLinks(now) // drive params from Input nodes first
   if (skipLeft > 0) {
     skipLeft--
@@ -2247,11 +2249,7 @@ function loop(ts) {
         }
       }
       // Cue crossfade: the frozen previous frame fades out over the new one.
-      if (xfade) {
-        const a = 1 - (performance.now() - xfade.t0) / xfade.dur
-        if (a <= 0) xfade = null
-        else { cx.globalAlpha = a; cx.drawImage(xfade.img, 0, 0, cnv.width, cnv.height); cx.globalAlpha = 1 }
-      }
+      show.drawXfade(cx, cnv)
     }
     blitPopup()
     passCost = passCost * 0.85 + (performance.now() - t0) * 0.15
@@ -2503,53 +2501,14 @@ function clearSvgShape(id) {
   persist()
 }
 
-// --- show sequencer: a cue list you can jump through or run on a timeline ---
-// A cue is a full snapshot of the patch (graph + effect params) with a name,
-// a timeline `time`, and a `fade`. Two modes: "cues" fires them on demand like
-// a lighting console's cue stack; "timeline" plays them at their times and,
-// when two adjacent cues share the same node topology, ramps their numeric
-// params between them so variables (mask corners, a portal's position, text
-// rotation, blend mix…) move smoothly over the show.
-const SHOW_KEY = 'sketchbook-patch-show'
-function loadShow() {
-  try { return JSON.parse(localStorage.getItem(SHOW_KEY)) || [] } catch { return [] }
-}
-const cues = reactive(loadShow())
-const showOpen = ref(false)
-const showMode = ref('cues') // 'cues' | 'timeline'
-const activeCue = ref(-1)
-const showPlaying = ref(false)
-const showLoop = ref(false)
-const playhead = ref(0) // seconds
-function persistShow() { localStorage.setItem(SHOW_KEY, JSON.stringify(cues)) }
-
+// Effect scenes: each effect sketch's own param values + input mappings, keyed
+// by node id. Captured with the patch (cues, saved routings, autosave) and
+// re-applied to the live iframes. Shared by the show sequencer and file I/O.
 function currentEffects() {
   const out = {}
   for (const [id, c] of effectControls) out[id] = { values: { ...c.values }, mappings: c.mappings.map((m) => ({ ...m })), state: c.state ?? null }
   return out
 }
-function captureCueAt(t) {
-  cues.push({ id: Date.now().toString(36), name: `Cue ${cues.length + 1}`, time: +Math.max(0, t).toFixed(1), fade: 1, snap: JSON.parse(snapshot()), effects: currentEffects() })
-  activeCue.value = cues.length - 1
-  persistShow()
-}
-function captureCue() {
-  captureCueAt(cues.length ? Math.max(...cues.map((c) => c.time || 0)) + 8 : 0)
-}
-function updateCue(i) { cues[i].snap = JSON.parse(snapshot()); cues[i].effects = currentEffects(); persistShow() }
-function deleteCue(i) {
-  cues.splice(i, 1)
-  if (activeCue.value >= cues.length) activeCue.value = cues.length - 1
-  persistShow()
-}
-function moveCue(i, d) {
-  const j = i + d
-  if (j < 0 || j >= cues.length) return
-  const [c] = cues.splice(i, 1)
-  cues.splice(j, 0, c)
-  persistShow()
-}
-
 // Re-apply captured effect-sketch param values once each effect iframe is live
 // (reloaded effects announce ready; ones that didn't reload get it immediately).
 let pendingEffects = null
@@ -2566,143 +2525,25 @@ function applyPendingEffects() {
   }
   if (!Object.keys(pendingEffects).length) pendingEffects = null
 }
-function applyCueState(cue) {
-  applySnap(JSON.stringify(cue.snap))
-  pendingEffects = { ...(cue.effects || {}) }
-  nextTick(applyPendingEffects)
-}
-// Crossfade: freeze the current stage, swap the patch, fade the frozen frame
-// out — hides the black flash while new effect iframes boot.
-let xfade = null // { img, t0, dur }
-function goCue(i, opts = {}) {
-  if (i < 0 || i >= cues.length) return
-  const cue = cues[i]
-  const dur = ((opts.fade != null ? opts.fade : cue.fade) || 0) * 1000
-  const cnv = stage.value
-  if (dur > 0 && cnv && cnv.width) {
-    const img = document.createElement('canvas')
-    img.width = cnv.width; img.height = cnv.height
-    img.getContext('2d').drawImage(cnv, 0, 0)
-    xfade = { img, t0: performance.now(), dur }
-  }
-  applyCueState(cue)
-  activeCue.value = i
-}
-function nextCue() { goCue(Math.min(cues.length - 1, activeCue.value + 1)) }
-function prevCue() { goCue(Math.max(0, activeCue.value - 1)) }
+// Queue a set of effect scenes to re-apply once their iframes are live (used
+// by cue playback, saved-routing loads and the autosave restore).
+function queueEffects(fx) { pendingEffects = { ...(fx || {}) }; nextTick(applyPendingEffects) }
 
-// --- timeline playback ------------------------------------------------------
-function showLength() { return cues.length ? Math.max(...cues.map((c) => c.time || 0)) : 0 }
-let lastShowTs = 0
-let curSeg = -1
-function playShow() { if (!cues.length) return; showPlaying.value = true; lastShowTs = performance.now(); curSeg = -1 }
-function pauseShow() { showPlaying.value = false }
-function stopShow() { showPlaying.value = false; playhead.value = 0; curSeg = -1 }
-function seekShow(t) { playhead.value = Math.max(0, Math.min(showLength(), t)); curSeg = -1 }
-// topoMatch (same-shape check) lives in ../lib/patch/graph.js.
-// Ramp the live graph's numeric params (and point arrays) from cue A→B by f.
-const applyRamp = (a, b, f) => rampParams(nodes, a, b, f)
-// Ramp each effect sketch's *internal* params between two cues by streaming
-// set-param to the live iframe. Only animates params that actually differ
-// between the cues, and throttles the postMessage traffic.
-let lastEffectRamp = 0
-function rampEffects(a, b, f) {
-  const now = performance.now()
-  if (now - lastEffectRamp < 45) return // ~22 Hz is plenty for a smooth ramp
-  lastEffectRamp = now
-  const ae = a.effects || {}, be = b.effects || {}
-  for (const idStr of Object.keys(ae)) {
-    if (!be[idStr]) continue
-    const av = ae[idStr].values || {}, bv = be[idStr].values || {}
-    const ec = effectControls.get(+idStr)
-    for (const k of Object.keys(av)) {
-      const x = av[k], y = bv[k]
-      if (typeof x === 'number' && typeof y === 'number' && x !== y) {
-        const v = x + (y - x) * f
-        postToEffect(+idStr, { type: 'sketch:set-param', name: k, value: v })
-        if (ec) ec.values[k] = v
-      }
-    }
-  }
-}
-function tickShow(now) {
-  const dt = (now - lastShowTs) / 1000
-  lastShowTs = now
-  playhead.value += dt
-  const end = showLength()
-  if (playhead.value >= end) {
-    if (showLoop.value && end > 0) { playhead.value = 0; curSeg = -1 }
-    else { playhead.value = end; showPlaying.value = false }
-  }
-  processTimeline()
-}
-function processTimeline() {
-  if (!cues.length) return
-  const sorted = [...cues].sort((a, b) => (a.time || 0) - (b.time || 0))
-  let i = -1
-  for (let k = 0; k < sorted.length; k++) { if ((sorted[k].time || 0) <= playhead.value + 1e-6) i = k; else break }
-  if (i < 0) return
-  if (i !== curSeg) {
-    // Skip the reload when we're flowing forward through a ramped, same-topology
-    // segment (the graph is already sitting at this cue from the last ramp).
-    const rampedAdjacent = i === curSeg + 1 && curSeg >= 0 && topoMatch(sorted[curSeg].snap, sorted[i].snap)
-    if (rampedAdjacent) activeCue.value = cues.indexOf(sorted[i])
-    else goCue(cues.indexOf(sorted[i]), { fade: sorted[i].fade })
-    curSeg = i
-  }
-  const next = sorted[i + 1]
-  if (next && topoMatch(sorted[i].snap, next.snap)) {
-    const span = (next.time || 0) - (sorted[i].time || 0)
-    const f = span > 0 ? Math.min(1, Math.max(0, (playhead.value - (sorted[i].time || 0)) / span)) : 0
-    applyRamp(sorted[i].snap, next.snap, f)
-    rampEffects(sorted[i], next, f)
-  }
-}
-// Timeline strip: a little headroom past the last cue so its marker is draggable.
-const tlSpan = computed(() => Math.max(showLength() + 4, 20))
-function pct(t) { return (t / tlSpan.value) * 100 }
-function fmtTime(t) {
-  t = Math.round(t)
-  return t >= 60 ? `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}` : `${t}s`
-}
-// Evenly spaced ruler ticks at a "nice" interval (~8 across the span).
-const tlTicks = computed(() => {
-  const span = tlSpan.value
-  const steps = [1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600]
-  const step = steps.find((s) => s >= span / 8) || 1200
-  const ticks = []
-  for (let t = 0; t <= span + 1e-6; t += step) ticks.push({ t, pct: (t / span) * 100 })
-  return ticks
+// The cue list, timeline playback engine and saved-show library live in
+// ../composables/useShow.js; <ShowPanel> renders them. The graph/effect-touch
+// primitives it needs are injected here.
+const show = useShow({
+  nodes,
+  snapshot,
+  applySnap,
+  currentEffects,
+  queueEffects,
+  effectControls,
+  postToEffect,
+  stage,
+  showToast,
+  alertBadFile,
 })
-function tlSeek(e) {
-  const r = e.currentTarget.getBoundingClientRect()
-  seekShow(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * tlSpan.value)
-}
-// Double-click an empty spot on the timeline to capture a cue (keyframe) there.
-function tlAddCueAt(e) {
-  const r = e.currentTarget.getBoundingClientRect()
-  const t = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * tlSpan.value
-  captureCueAt(t)
-}
-let tlDrag = null
-function tlCueMove(e) {
-  if (!tlDrag) return
-  const r = tlDrag.track.getBoundingClientRect()
-  const f = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
-  cues[tlDrag.i].time = +(f * tlSpan.value).toFixed(1)
-}
-function tlCueUp() {
-  if (!tlDrag) return
-  tlDrag = null
-  persistShow()
-  window.removeEventListener('pointermove', tlCueMove)
-  window.removeEventListener('pointerup', tlCueUp)
-}
-function tlCueDown(i, e) {
-  tlDrag = { i, track: e.currentTarget.parentElement }
-  window.addEventListener('pointermove', tlCueMove)
-  window.addEventListener('pointerup', tlCueUp)
-}
 
 // --- saved routings: named snapshots of the node graph in localStorage ----
 const SAVED_KEY = 'sketchbook-patch-saved'
@@ -2877,10 +2718,10 @@ function deleteRouting(r) {
   }
 }
 
-// --- file import / export: patches and shows as .json -----------------------
+// --- file import / export: patches as .json ---------------------------------
 // The serialization/validation core (fileSlug, downloadJson, pickJsonFile,
-// buildPatchFile, buildShowFile, parsePatchImport, parseShowImport) lives in
-// ../lib/patch/library.js; here we wire it to the live reactive graph.
+// buildPatchFile, parsePatchImport) lives in ../lib/patch/library.js; here we
+// wire it to the live reactive graph. Show file I/O lives in useShow().
 function exportPatch() {
   const name = newName.value.trim() || 'patch'
   downloadJson(buildPatchFile({ name, resolution: resLabel.value, nodes, edges, links, effects: currentEffects() }), `${fileSlug(name)}.patch.json`)
@@ -2903,51 +2744,8 @@ async function importPatch() {
   savedRoutings.value.push({ id: Date.now().toString(36), name: parsed.name, nodes: patch.nodes, edges: patch.edges || [], links: patch.links || [] })
   persistSaved()
 }
-function exportShow(show = null) {
-  downloadJson(buildShowFile({ name: show?.name || 'show', mode: show?.mode ?? showMode.value, cues: show && show.cues ? show.cues : cues }), `${fileSlug(show?.name || 'show')}.show.json`)
-}
-async function importShow() {
-  const arr = parseShowImport(await pickJsonFile())
-  if (!arr) { alertBadFile(); return }
-  cues.splice(0, cues.length, ...arr)
-  activeCue.value = -1
-  curSeg = -1
-  persistShow()
-}
 function alertBadFile() {
   console.warn('Patch: could not read that JSON file')
-}
-
-// --- named show files: save a set of cues (+ mode) to a persisted library ---
-const SHOWS_KEY = 'sketchbook-patch-shows'
-const savedShows = ref(loadJson(SHOWS_KEY, []))
-const newShowName = ref('')
-function persistShows() { saveJson(SHOWS_KEY, savedShows.value) }
-function saveShowAs() {
-  if (!cues.length) { showToast('No cues to save yet'); return }
-  const name = newShowName.value.trim() || `Show ${savedShows.value.length + 1}`
-  savedShows.value.push({
-    id: Date.now().toString(36),
-    name,
-    mode: showMode.value,
-    cues: JSON.parse(JSON.stringify(cues)),
-  })
-  persistShows()
-  newShowName.value = ''
-  showToast(`Saved show “${name}”`)
-}
-function loadShowFile(s) {
-  cues.splice(0, cues.length, ...JSON.parse(JSON.stringify(s.cues || [])))
-  if (s.mode) showMode.value = s.mode
-  activeCue.value = -1
-  curSeg = -1
-  stopShow()
-  persistShow()
-  showToast(`Loaded show “${s.name}”`)
-}
-function deleteShowFile(s) {
-  const i = savedShows.value.findIndex((x) => x.id === s.id)
-  if (i >= 0) { savedShows.value.splice(i, 1); persistShows() }
 }
 
 // --- guided tour -------------------------------------------------------------
@@ -3384,9 +3182,9 @@ onBeforeUnmount(() => {
         data-tour="patch-show"
         icon="mdi-movie-open-play-outline"
         variant="text" size="small"
-        :color="showOpen ? 'primary' : undefined"
+        :color="show.state.open ? 'primary' : undefined"
         title="Show — plan cues and run them manually or on a timeline"
-        @click="showOpen = !showOpen"
+        @click="show.state.open = !show.state.open"
       />
       <v-btn
         :icon="renderPaused ? 'mdi-motion-play-outline' : 'mdi-motion-pause-outline'"
@@ -3443,9 +3241,9 @@ onBeforeUnmount(() => {
       />
       <v-btn
         icon="mdi-movie-open-play-outline" size="small" variant="flat"
-        :color="showOpen ? 'primary' : undefined"
+        :color="show.state.open ? 'primary' : undefined"
         title="Show — run cues / timeline"
-        @click="showOpen = !showOpen"
+        @click="show.state.open = !show.state.open"
       />
       <v-btn :icon="isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'" size="small" variant="flat" :title="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="fullscreen" />
     </div>
@@ -3477,96 +3275,7 @@ onBeforeUnmount(() => {
     </svg>
 
     <!-- show sequencer: cue list (manual) or timeline (auto + param ramps) -->
-    <div v-if="showOpen" class="show-panel" @pointerdown.stop @wheel.stop>
-      <div class="show-head">
-        <span class="show-title">Show</span>
-        <div class="show-modes">
-          <button :class="{ on: showMode === 'cues' }" @click="showMode = 'cues'">Cues</button>
-          <button :class="{ on: showMode === 'timeline' }" @click="showMode = 'timeline'">Timeline</button>
-        </div>
-        <button class="show-capture" title="Capture the current patch as a new cue" @click="captureCue">＋ Capture cue</button>
-        <span class="show-spacer" />
-        <!-- Named show files: save the current cue set to a persisted library -->
-        <v-menu :close-on-content-click="false" location="bottom end">
-          <template #activator="{ props }">
-            <v-btn v-bind="props" size="x-small" variant="tonal" prepend-icon="mdi-content-save-outline" class="mr-1">Shows</v-btn>
-          </template>
-          <v-card class="pa-2" min-width="260">
-            <div class="d-flex ga-1 mb-2">
-              <v-text-field v-model="newShowName" density="compact" hide-details placeholder="Name this show" @keyup.enter="saveShowAs" />
-              <v-btn size="small" variant="tonal" :disabled="!cues.length" prepend-icon="mdi-content-save" @click="saveShowAs">Save</v-btn>
-            </div>
-            <v-list density="compact" max-height="300">
-              <v-list-item v-for="s in savedShows" :key="s.id" :title="s.name" :subtitle="`${s.cues.length} cue${s.cues.length === 1 ? '' : 's'} · ${s.mode}`" @click="loadShowFile(s)">
-                <template #append>
-                  <v-icon icon="mdi-download" size="16" class="mr-2" title="Export this show as a file" @click.stop="exportShow(s)" />
-                  <v-icon icon="mdi-delete" size="16" title="Delete" @click.stop="deleteShowFile(s)" />
-                </template>
-              </v-list-item>
-              <v-list-item v-if="!savedShows.length" title="No saved shows yet" disabled />
-            </v-list>
-          </v-card>
-        </v-menu>
-        <v-btn icon="mdi-download" size="x-small" variant="text" :disabled="!cues.length" title="Export current show as a .json file" @click="exportShow()" />
-        <v-btn icon="mdi-upload" size="x-small" variant="text" title="Import a show .json file" @click="importShow" />
-        <v-btn icon="mdi-close" size="x-small" variant="text" @click="showOpen = false" />
-      </div>
-
-      <!-- transport: manual GO stack, or timeline play/scrub -->
-      <div v-if="showMode === 'cues'" class="show-transport">
-        <v-btn icon="mdi-skip-previous" size="small" variant="text" :disabled="activeCue <= 0" title="Previous cue" @click="prevCue" />
-        <button class="go-btn" :disabled="!cues.length" title="Go to the next cue" @click="activeCue < 0 ? goCue(0) : nextCue()">GO</button>
-        <v-btn icon="mdi-skip-next" size="small" variant="text" :disabled="activeCue >= cues.length - 1" title="Next cue" @click="nextCue" />
-        <span class="show-hint">Click a cue to jump to it. GO steps through in order.</span>
-      </div>
-      <div v-else class="show-transport show-transport--tl">
-        <div class="tl-controls">
-          <v-btn :icon="showPlaying ? 'mdi-pause' : 'mdi-play'" size="small" variant="text" @click="showPlaying ? pauseShow() : playShow()" />
-          <v-btn icon="mdi-stop" size="small" variant="text" title="Stop and rewind" @click="stopShow" />
-          <v-btn :icon="showLoop ? 'mdi-repeat' : 'mdi-repeat-off'" size="small" variant="text" :color="showLoop ? 'primary' : undefined" title="Loop the show" @click="showLoop = !showLoop" />
-          <span class="show-clock">{{ playhead.toFixed(1) }}s / {{ showLength().toFixed(1) }}s</span>
-          <span class="tl-hint">double-click the timeline to drop a keyframe cue · drag a marker to retime it</span>
-        </div>
-        <!-- ruler + keyframe lane: cues are keyframes; params ramp between them -->
-        <div class="tl-timeline">
-          <div class="tl-ruler">
-            <div v-for="tk in tlTicks" :key="tk.t" class="tl-tick" :style="{ left: tk.pct + '%' }"><span>{{ fmtTime(tk.t) }}</span></div>
-          </div>
-          <div class="tl-track tl-track--tall" @pointerdown="tlSeek($event)" @dblclick="tlAddCueAt($event)">
-            <div v-for="tk in tlTicks" :key="'g' + tk.t" class="tl-grid" :style="{ left: tk.pct + '%' }" />
-            <div class="tl-fill" :style="{ width: pct(playhead) + '%' }" />
-            <div class="tl-playhead" :style="{ left: pct(playhead) + '%' }" />
-            <div
-              v-for="(c, i) in cues" :key="c.id"
-              class="tl-cue tl-cue--tall" :class="{ on: activeCue === i }"
-              :style="{ left: pct(c.time) + '%' }"
-              :title="c.name + ' @ ' + c.time + 's — drag to retime'"
-              @pointerdown.stop="tlCueDown(i, $event)"
-              @dblclick.stop="goCue(i)"
-            ><span class="tl-cue-lbl">{{ i + 1 }}</span></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- cue list -->
-      <div class="cue-list">
-        <div v-if="!cues.length" class="show-empty">No cues yet. Set up the patch, then “＋ Capture cue”. Capture a few and step or time them into a show.</div>
-        <div v-for="(c, i) in cues" :key="c.id" class="cue" :class="{ on: activeCue === i }" @click="goCue(i)">
-          <span class="cue-idx">{{ i + 1 }}</span>
-          <input class="cue-name" :value="c.name" @click.stop @change="c.name = $event.target.value; persistShow()" />
-          <label v-if="showMode === 'timeline'" class="cue-num" title="Start time (s)" @click.stop>
-            @<input type="number" min="0" step="0.5" :value="c.time" @change="c.time = Math.max(0, +$event.target.value); persistShow()" />s
-          </label>
-          <label class="cue-num" title="Crossfade (s)" @click.stop>
-            ↝<input type="number" min="0" step="0.1" :value="c.fade" @change="c.fade = Math.max(0, +$event.target.value); persistShow()" />s
-          </label>
-          <button class="cue-mini" title="Update this cue to the current patch" @click.stop="updateCue(i)">⟳</button>
-          <button class="cue-mini" title="Move up" @click.stop="moveCue(i, -1)">↑</button>
-          <button class="cue-mini" title="Move down" @click.stop="moveCue(i, 1)">↓</button>
-          <button class="cue-mini" title="Delete cue" @click.stop="deleteCue(i)">✕</button>
-        </div>
-      </div>
-    </div>
+    <ShowPanel :show="show" />
 
     <!-- Autopilot transport + options — surfaced when engaged; the graph stays
          hand-editable while it runs. -->
@@ -4288,64 +3997,8 @@ onBeforeUnmount(() => {
 .portal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 6px; align-items: center; }
 .portal-lbl { grid-column: 1 / -1; font: 600 10px system-ui; color: #9aa4c0; text-transform: uppercase; margin-top: 2px; }
 
-/* --- show sequencer panel (bottom sheet) --- */
-.show-panel {
-  position: absolute; left: 0; right: 0; bottom: 0; z-index: 41;
-  max-height: 42vh; display: flex; flex-direction: column;
-  background: rgba(12, 14, 20, 0.96); border-top: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(6px); font: 12px system-ui, sans-serif; color: #cdd3e0;
-}
-.show-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-.show-title { font-weight: 600; color: #e8ecf5; }
-.show-modes { display: flex; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
-.show-modes button { font: 11px system-ui; color: #9aa4c0; background: transparent; border: 0; padding: 3px 12px; cursor: pointer; }
-.show-modes button.on { background: rgba(124,140,255,0.25); color: #fff; }
-.show-capture { font: 11px system-ui; color: #cdd3e0; background: #1a1d28; border: 1px solid #3a4056; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
-.show-capture:hover { border-color: #7c8cff; }
-.show-spacer { flex: 1; }
-.show-transport { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-/* Autopilot control panel — a floating tab with transport + countdown + opts. */
-/* Autopilot-panel styles moved into src/components/patch/AutopilotBar.vue */
-/* Countdown number wrapped in a circular progress ring (mirrors Autopilot). */
-.countdown-ring { display: inline-grid; place-items: center; width: 34px; height: 34px; }
-.countdown-ring svg { grid-area: 1 / 1; width: 34px; height: 34px; transform: rotate(-90deg); }
-.countdown-ring .ring-bg { fill: none; stroke: rgba(255,255,255,0.12); stroke-width: 3; }
-.countdown-ring .ring-fg { fill: none; stroke: #7c8cff; stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 0.9s linear; }
-.countdown-ring .ring-num { grid-area: 1 / 1; font: 600 10px/1 ui-monospace, monospace; color: #cdd3e0; }
-.go-btn { font: 700 12px system-ui; color: #0a0b0f; background: #a0e060; border: 0; border-radius: 6px; padding: 5px 18px; cursor: pointer; letter-spacing: 0.08em; }
-.go-btn:disabled { opacity: 0.4; cursor: default; }
-.show-hint { font: 11px system-ui; color: #8a90a0; margin-left: 6px; }
-.show-clock { font: 11px ui-monospace, monospace; color: #9aa4c0; min-width: 96px; }
-.tl-track { position: relative; flex: 1; height: 22px; margin-left: 6px; border-radius: 6px; background: #1a1d28; border: 1px solid #2a2f40; cursor: pointer; overflow: hidden; }
-.tl-fill { position: absolute; top: 0; bottom: 0; left: 0; background: rgba(124,140,255,0.22); }
-.tl-cue { position: absolute; top: -1px; bottom: -1px; width: 3px; margin-left: -1.5px; background: #a0e060; cursor: ew-resize; }
-.tl-cue.on { background: #fff; box-shadow: 0 0 6px rgba(255,255,255,0.7); }
-/* Expanded timeline view: a labelled ruler over a taller keyframe lane. */
-.show-transport--tl { flex-direction: column; align-items: stretch; gap: 6px; }
-.tl-controls { display: flex; align-items: center; gap: 6px; }
-.tl-hint { font: 10px system-ui; color: #737b93; margin-left: auto; }
-.tl-timeline { position: relative; padding-top: 14px; }
-.tl-ruler { position: absolute; top: 0; left: 6px; right: 0; height: 12px; }
-.tl-tick { position: absolute; top: 0; transform: translateX(-50%); font: 9px ui-monospace, monospace; color: #808aa6; white-space: nowrap; }
-.tl-tick::after { content: ''; position: absolute; left: 50%; top: 11px; width: 1px; height: 4px; background: #3a4055; }
-.tl-track--tall { height: 40px; }
-.tl-grid { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.05); }
-.tl-playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: #ffd166; box-shadow: 0 0 4px rgba(255,209,102,0.8); }
-.tl-cue--tall { width: 4px; margin-left: -2px; border-radius: 2px; }
-.tl-cue-lbl { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); font: 9px ui-monospace, monospace; color: #0a0b0f; background: #a0e060; border-radius: 3px; padding: 0 3px; pointer-events: none; }
-.tl-cue--tall.on .tl-cue-lbl { background: #fff; }
-.cue-list { overflow-y: auto; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; }
-.show-empty { color: #8a90a0; font: 11px system-ui; padding: 10px 4px; line-height: 1.5; }
-.cue { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; background: #14171f; border: 1px solid transparent; cursor: pointer; }
-.cue:hover { border-color: #3a4056; }
-.cue.on { border-color: #a0e060; background: rgba(160,224,96,0.08); }
-.cue-idx { font: 11px ui-monospace, monospace; color: #7a8090; min-width: 16px; text-align: right; }
-.cue-name { flex: 1; min-width: 60px; background: transparent; border: 0; color: #e8ecf5; font: 12px system-ui; padding: 2px 4px; border-radius: 4px; }
-.cue-name:focus { background: #12141c; outline: 1px solid #3a4056; }
-.cue-num { display: inline-flex; align-items: center; gap: 1px; font: 10px system-ui; color: #9aa4c0; }
-.cue-num input { width: 42px; background: #12141c; color: #cdd3e0; border: 1px solid #333; border-radius: 4px; font: 10px ui-monospace, monospace; padding: 1px 3px; }
-.cue-mini { width: 20px; height: 20px; border-radius: 4px; background: #12141c; color: #cdd3e0; border: 1px solid #333; cursor: pointer; font-size: 11px; line-height: 1; }
-.cue-mini:hover { border-color: #7c8cff; }
+/* Show-sequencer panel + Autopilot-panel styles now live in their
+   components (src/components/patch/ShowPanel.vue, AutopilotBar.vue). */
 .portal-cell { font-size: 10px; }
 .node-thumb { width: 100%; background: #000; }
 .pad-grip {
