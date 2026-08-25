@@ -25,9 +25,62 @@ rt.mapInput('audio.volume', 'density', 1.2)
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 // A persistent pigment buffer we spray onto and let renew, so the surface is
-// alive without redrawing thousands of specks from scratch each frame.
+// alive without redrawing thousands of specks from scratch each frame. Soft
+// marks (airbrush mist, blotches, squiggles) live here and may overlap.
 const buf = document.createElement('canvas')
 const bctx = buf.getContext('2d')
+// The hard specks (the discrete dots) live on their own transparent layer over
+// the buffer, kept strictly non-overlapping: a new speck that lands on an
+// existing one erases it and takes its place ("replace instead of overlap").
+const dot = document.createElement('canvas')
+const dctx = dot.getContext('2d')
+// Spatial hash of placed marks for fast neighbour lookup. A mark is registered
+// in every cell its bounding box covers, so a big blotch is still found by a
+// tiny speck landing anywhere beneath it (marks vary hugely in size, so a fixed
+// 3×3 scan wouldn't reach across a large one).
+let cell = 12
+let grid = new Map()
+const cellKey = (cx, cy) => cx + ',' + cy
+function gridReset() { grid = new Map(); dctx.clearRect(0, 0, W, H) }
+function eachCell(x, y, r, fn) {
+  const x0 = Math.floor((x - r) / cell), x1 = Math.floor((x + r) / cell)
+  const y0 = Math.floor((y - r) / cell), y1 = Math.floor((y + r) / cell)
+  for (let gx = x0; gx <= x1; gx++) for (let gy = y0; gy <= y1; gy++) fn(cellKey(gx, gy))
+}
+function register(x, y, r) {
+  const m = { x, y, r, keys: [] }
+  eachCell(x, y, r, (k) => { m.keys.push(k); const arr = grid.get(k); if (arr) arr.push(m); else grid.set(k, [m]) })
+}
+function forget(m) {
+  for (const k of m.keys) { const arr = grid.get(k); if (!arr) continue; const i = arr.indexOf(m); if (i >= 0) arr.splice(i, 1) }
+}
+// Erase (and forget) every placed mark whose footprint the incoming one of
+// radius r at (x,y) would touch — the "replace" half of no-overlap.
+function clearOverlaps(x, y, r) {
+  const gap = rt.pixelRatio * 0.6, hit = new Set()
+  eachCell(x, y, r, (k) => {
+    const arr = grid.get(k); if (!arr) return
+    for (const m of arr) {
+      if (hit.has(m)) continue
+      const dx = m.x - x, dy = m.y - y, reach = r + m.r + gap
+      if (dx * dx + dy * dy < reach * reach) hit.add(m)
+    }
+  })
+  for (const m of hit) {
+    dctx.save(); dctx.globalCompositeOperation = 'destination-out'
+    dctx.beginPath(); dctx.arc(m.x, m.y, m.r + 1, 0, Math.PI * 2); dctx.fill(); dctx.restore()
+    forget(m)
+  }
+}
+// Drop a round speck, replacing any mark it would overlap.
+function placeDot(x, y, r, color, alpha) {
+  clearOverlaps(x, y, r)
+  dctx.globalAlpha = alpha
+  dctx.fillStyle = color
+  dctx.beginPath(); dctx.arc(x, y, r, 0, Math.PI * 2); dctx.fill()
+  dctx.globalAlpha = 1
+  register(x, y, r)
+}
 
 // Clutch presets: shell colour(s) + pigment palette + which marks dominate.
 const CLUTCH = {
@@ -80,21 +133,22 @@ function tint(hex) {
 }
 
 function resize() {
-  W = buf.width = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = buf.height = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
+  W = buf.width = dot.width = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
+  H = buf.height = dot.height = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
   minDim = Math.min(W, H)
+  cell = Math.max(8, Math.round(6 * rt.pixelRatio)) // bucket size (perf only)
+  gridReset() // setting dot.width already cleared the layer; reset the hash too
   paintShell()
 }
 
 function pig(cfg) { return cfg.pig ? tint(rt.pick(cfg.pig)) : '#000' }
 
-// A fine speck — a hard little fleck, occasionally soft-edged like a wet spot.
+// A fine speck — a hard little fleck. Placed on the non-overlapping dot layer,
+// so if it lands on an existing fleck it replaces it rather than piling up.
 function speck(cfg) {
   const x = rt.random(0, W), y = rt.random(0, H)
   const r = (0.4 + rt.random(0, 1.6) * (1.2 - params.fineness)) * rt.pixelRatio
-  bctx.globalAlpha = rt.random(0.4, 0.95)
-  bctx.fillStyle = pig(cfg)
-  bctx.beginPath(); bctx.arc(x, y, r, 0, Math.PI * 2); bctx.fill()
+  placeDot(x, y, r, pig(cfg), rt.random(0.4, 0.95))
 }
 // A soft airbrush bloom — a cluster of low-alpha micro-dots, the spray look.
 function mist(cfg) {
@@ -110,17 +164,23 @@ function mist(cfg) {
     bctx.beginPath(); bctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, r, 0, Math.PI * 2); bctx.fill()
   }
 }
-// A larger irregular blotch — several overlapping blobs, semi-transparent.
+// A larger irregular blotch — lobes clustered into one mark. It goes on the
+// dot layer as a single non-overlapping unit (extent ≈ 2·base), so blotches
+// clear and replace whatever they land on rather than piling into clumps; the
+// lobes still overlap *within* the blotch to give it a ragged, dense-cored edge.
 function blotch(cfg) {
   const cx = rt.random(0, W), cy = rt.random(0, H)
   const base = (0.01 + cfg.big * 0.03 + rt.random(0, 0.02)) * minDim
-  bctx.fillStyle = pig(cfg)
-  bctx.globalAlpha = rt.random(0.3, 0.7)
+  clearOverlaps(cx, cy, base * 2)
+  dctx.fillStyle = pig(cfg)
+  dctx.globalAlpha = rt.random(0.3, 0.7)
   const lobes = 3 + (rt.rng() * 4) | 0
   for (let i = 0; i < lobes; i++) {
     const a = rt.random(0, Math.PI * 2), d = rt.random(0, base)
-    bctx.beginPath(); bctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, base * rt.random(0.5, 1), 0, Math.PI * 2); bctx.fill()
+    dctx.beginPath(); dctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, base * rt.random(0.5, 1), 0, Math.PI * 2); dctx.fill()
   }
+  dctx.globalAlpha = 1
+  register(cx, cy, base * 2)
 }
 // A squiggle — a short wandering stroke, the ink-scrawl markings on some eggs.
 function squiggle(cfg) {
@@ -161,7 +221,7 @@ function frame(now) {
   rt.tick(now)
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
   lastNow = now
-  if (params.species !== lastSpecies) { lastSpecies = params.species; paintShell() }
+  if (params.species !== lastSpecies) { lastSpecies = params.species; paintShell(); gridReset() }
 
   // Slow renewal: veil the buffer with a faint wash of the shell so old marks
   // fade and the surface keeps turning over. Cheap and keeps it "alive".
@@ -177,7 +237,8 @@ function frame(now) {
   acc -= n
   spray(n)
 
-  ctx.drawImage(buf, 0, 0)
+  ctx.drawImage(buf, 0, 0)  // shell + soft marks
+  ctx.drawImage(dot, 0, 0)  // non-overlapping specks on top
   requestAnimationFrame(frame)
 }
 
@@ -188,10 +249,8 @@ canvas.addEventListener('pointerdown', (e) => {
   const cx = e.clientX * rt.pixelRatio, cy = e.clientY * rt.pixelRatio
   for (let i = 0; i < 40; i++) {
     const a = rt.random(0, Math.PI * 2), d = Math.pow(rt.rng(), 0.5) * minDim * 0.06
-    bctx.globalAlpha = rt.random(0.3, 0.85); bctx.fillStyle = pig(cfg)
-    bctx.beginPath(); bctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, rt.random(0.5, 2) * rt.pixelRatio, 0, Math.PI * 2); bctx.fill()
+    placeDot(cx + Math.cos(a) * d, cy + Math.sin(a) * d, rt.random(0.5, 2) * rt.pixelRatio, pig(cfg), rt.random(0.3, 0.85))
   }
-  bctx.globalAlpha = 1
 })
 
 window.addEventListener('resize', resize)
