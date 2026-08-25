@@ -138,10 +138,15 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== self.location.origin) return // let cross-origin pass through
   e.respondWith((async () => {
     const cache = await caches.open(CACHE)
-    // Navigations (the HTML shell): network-FIRST. The shell names the current
-    // hashed entry chunks, so it must never be stale — fetch fresh, refresh the
-    // cached copy, and fall back to cache only when offline.
-    if (req.mode === 'navigate') {
+    // The SPA shell (a route path with no real file) is served network-FIRST so
+    // it always names the current hashed entry chunks — fetch fresh, refresh the
+    // cached copy, fall back to cache only when offline. A sketch page is a real
+    // file under /sketches/<slug>/index.html and the viewer iframes it as its own
+    // navigation; it must NOT go through the shell path, or its HTML gets cached
+    // under 'index.html' and the next shell load renders a bare sketch instead of
+    // the app. Sketch pages are precached, so they fall through to cache-first.
+    const isSketchPage = url.pathname.includes('/sketches/') && url.pathname.endsWith('.html')
+    if (req.mode === 'navigate' && !isSketchPage) {
       try {
         const res = await fetch(req)
         if (res && res.ok) { cache.put(abs('index.html'), res.clone()); return res }
@@ -150,7 +155,8 @@ self.addEventListener('fetch', (e) => {
       if (shell) return shell
       return fetch(req)
     }
-    // Hashed assets are immutable, so cache-FIRST is safe and fast.
+    // Precached files (hashed assets + sketch pages) are immutable per deploy, so
+    // cache-FIRST is safe and fast.
     const hit = await cache.match(req, { ignoreSearch: true })
     if (hit) return hit
     const res = await fetch(req)
