@@ -2743,7 +2743,7 @@ async function importPatch() {
   const parsed = parsePatchImport(await pickJsonFile(), RESOLUTIONS.map((r) => r.label))
   if (!parsed) { alertBadFile(); return }
   if (parsed.kind === 'routings') {
-    for (const r of parsed.routings) savedRoutings.value.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: r.name || 'Imported', nodes: r.nodes, edges: r.edges || [], links: r.links || [] })
+    for (const r of parsed.routings) savedRoutings.value.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: r.name || 'Imported', nodes: r.nodes, edges: r.edges || [], links: r.links || [], effects: r.effects || {} })
     persistSaved()
     return
   }
@@ -2751,7 +2751,7 @@ async function importPatch() {
   if (parsed.resolution) applyResolution(parsed.resolution)
   loadRouting(patch)
   // keep it around in the saved list too
-  savedRoutings.value.push({ id: Date.now().toString(36), name: parsed.name, nodes: patch.nodes, edges: patch.edges || [], links: patch.links || [] })
+  savedRoutings.value.push({ id: Date.now().toString(36), name: parsed.name, nodes: patch.nodes, edges: patch.edges || [], links: patch.links || [], effects: patch.effects || {} })
   persistSaved()
 }
 function alertBadFile() {
