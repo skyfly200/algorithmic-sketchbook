@@ -24,6 +24,7 @@ import NlDesigner from '../components/patch/NlDesigner.vue'
 import MediaWizard from '../components/patch/MediaWizard.vue'
 import AutopilotBar from '../components/patch/AutopilotBar.vue'
 import ShowPanel from '../components/patch/ShowPanel.vue'
+import ShapeTracer from '../components/patch/ShapeTracer.vue'
 import { useAutopilot } from '../composables/useAutopilot.js'
 import { useShow } from '../composables/useShow.js'
 import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTileUrl, decodeElev as demDecode } from '../lib/geoTiles.js'
@@ -2478,6 +2479,37 @@ function applyPolyShape(id, name) {
   persist()
 }
 
+// --- trace shapes from a photo → Polygon matte node(s) ---------------------
+// The camera/upload + contour tracing lives in <ShapeTracer> (pure extractor in
+// ../lib/patch/traceShapes.js); here we drop what it finds into the graph.
+const shapeTracerOpen = ref(false)
+const shapeTracerMode = ref('add') // 'add' → a node per shape · 'fill' → one node's points
+let shapeTracerNodeId = null
+function openShapeTracer(nodeId = null) {
+  shapeTracerNodeId = nodeId
+  shapeTracerMode.value = nodeId != null ? 'fill' : 'add'
+  shapeTracerOpen.value = true
+}
+function onTraceShapes(picks) {
+  if (!picks?.length) return
+  if (shapeTracerMode.value === 'fill' && shapeTracerNodeId != null) {
+    const n = nodes.find((x) => x.id === shapeTracerNodeId)
+    if (n) { n.params.points = picks[0].points.map((p) => [...p]); delete n.params.svg; persist(); showToast('Traced the shape into the polygon') }
+    shapeTracerNodeId = null
+    return
+  }
+  for (const s of picks) {
+    const n = wizNode('polygon')
+    const spot = freeSpot(n.x, n.y)
+    n.x = spot.x; n.y = spot.y
+    n.params.points = s.points.map((p) => [...p])
+    n.params.feather = 0
+  }
+  persist()
+  showToast(`Added ${picks.length} polygon${picks.length === 1 ? '' : 's'} from the photo`)
+  nextTick(() => layoutTick.value++)
+}
+
 // --- SVG import for the Polygon (matte-shape) node -------------------------
 // An imported SVG becomes a filled matte: all of its shapes are flattened into
 // one path (holes preserved via even-odd fill) and stored as { d, bbox }. The
@@ -2909,6 +2941,7 @@ onBeforeUnmount(() => {
             <v-list-item prepend-icon="mdi-circle-half-full" title="Blend" subtitle="composite two streams" @click="addNode('blend')" />
             <v-list-item prepend-icon="mdi-vector-intersection" title="Mask" subtitle="content × matte" @click="addNode('mask')" />
             <v-list-item prepend-icon="mdi-vector-polygon" title="Polygon" subtitle="editable matte shape — wire into a Mask" @click="addNode('polygon')" />
+            <v-list-item prepend-icon="mdi-shape-plus" title="Trace shapes from a photo" subtitle="camera / image → Polygon mattes" @click="openShapeTracer()" />
             <v-list-item prepend-icon="mdi-shape-outline" title="Portal" subtitle="remap a region elsewhere" @click="addNode('portal')" />
           </v-list>
         </v-menu>
@@ -3768,6 +3801,7 @@ onBeforeUnmount(() => {
             <div class="shape-row">
               <button v-if="!n.params.svg" class="shape-btn" :class="{ on: maskEdit }" @pointerdown.stop @click="maskEdit = !maskEdit">{{ maskEdit ? 'editing points' : 'edit points' }}</button>
               <button class="shape-btn" @pointerdown.stop @click="importSvgToShape(n.id)">import SVG</button>
+              <button class="shape-btn" @pointerdown.stop @click="openShapeTracer(n.id)">trace photo</button>
               <button v-if="n.params.svg" class="shape-btn" @pointerdown.stop @click="clearSvgShape(n.id)">clear SVG</button>
               <button class="shape-btn" @pointerdown.stop @click="resetShape(n.id)">reset</button>
             </div>
@@ -3881,6 +3915,8 @@ onBeforeUnmount(() => {
       @google="wizGoogle" @point-cloud="wizPointCloud" @geodata="wizGeodata" @terrain="wizTerrain"
       @open-settings="router.push({ name: 'settings' })"
     />
+
+    <ShapeTracer v-model="shapeTracerOpen" :mode="shapeTracerMode" @apply="onTraceShapes" />
 
     <transition name="toast-fade">
       <div v-if="toast" class="save-toast"><v-icon icon="mdi-check-circle" size="16" class="mr-1" />{{ toast }}</div>
