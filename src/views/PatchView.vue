@@ -1786,8 +1786,17 @@ function onEffectMessage(e) {
     }
   }
 }
+// postMessage can't structured-clone a Vue reactive proxy, and effect payloads
+// (values/mappings/state) come straight from the reactive effectControls store.
+// JSON round-trip yields a plain deep copy — exact here, since every effect
+// payload is scene/param data that already survives JSON (it's what we persist).
+const plain = (x) => JSON.parse(JSON.stringify(x))
 function postToEffect(id, msg) {
-  rtState.get(id)?.iframe?.contentWindow?.postMessage(msg, '*')
+  const win = rtState.get(id)?.iframe?.contentWindow
+  if (!win) return
+  // Fast path for primitive-carrying messages (set-param streams every frame);
+  // only pay the clone cost when a reactive proxy actually blocks the post.
+  try { win.postMessage(msg, '*') } catch { win.postMessage(plain(msg), '*') }
 }
 // Effect sliders stream update:model-value on every drag frame, so coalesce the
 // autosave write instead of hammering localStorage each pixel.
@@ -2518,7 +2527,8 @@ function applyPendingEffects() {
     const win = rtState.get(+idStr)?.iframe?.contentWindow
     if (!win) continue
     const pe = pendingEffects[idStr]
-    win.postMessage({ type: 'sketch:apply-scene', values: pe.values, mappings: pe.mappings, state: pe.state ?? null }, '*')
+    // plain() strips reactive proxies so the scene survives structured-clone.
+    win.postMessage(plain({ type: 'sketch:apply-scene', values: pe.values, mappings: pe.mappings, state: pe.state ?? null }), '*')
     const ec = effectControls.get(+idStr)
     if (ec) { ec.values = { ...pe.values }; ec.mappings = pe.mappings.map((m) => ({ ...m })); ec.state = pe.state ?? null }
     delete pendingEffects[idStr]
