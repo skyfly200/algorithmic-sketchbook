@@ -1,7 +1,7 @@
 {
   "title": "Slime Mold",
-  "description": "A continuous Physarum plasmodium — no agents, no dots. Two coupled fields drive it: the body's local mass and a food chemoattractant. By default the colony explores outward as irregular amoeboid lobes and fingers (a self-reinforcing foraging front over a random substrate terrain), reaching and engulfing scattered food resources from a distance; a finite-protoplasm density cap keeps it a spreading network rather than a solid flood, and chem flux thickens the routes that found food. Click to drop more food (a red berry) the colony reaches toward and consumes. Forage, chemotaxis, prune, vein sharpening, reach, and a grow/recede pulse (up to timelapse speed) are live and audio-mappable.",
-  "tags": ["simulation", "physarum", "reaction-diffusion", "generative", "audio-reactive"],
+  "description": "A Physarum polycephalum plasmodium grown from an agent model: tens of thousands of virtual protoplasm streams each sniff the trail ahead (left / centre / right), steer toward the strongest scent and lay their own trail, which diffuses and evaporates. From those three rules a full-dish reticulated vein web self-organises — loops, anastomosis and an ever-reconfiguring network that never settles. A vein-sharpening feedback pulls flux into the strong routes so thick golden transport trunks emerge and taper to fine twigs, and the render lights it as a real plasmodium: green at the faint foraging mesh, gold along the tubes, a wet cream sheen down the biggest trunks, all glowing over dark agar. Click to drop an oat flake the colony reaches toward and consumes. Density, sensing, foraging drive, vein sharpening, sheen and glow are all live and audio-mappable.",
+  "tags": ["simulation", "physarum", "agent-based", "generative", "audio-reactive"],
   "tech": ["canvas2d"],
   "created": "2026-07-14"
 }

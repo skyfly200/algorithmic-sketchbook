@@ -11,19 +11,27 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  density: { value: 0.9, min: 0.2, max: 2, step: 0.05, label: 'Colony density' },
+  density: { value: 1.2, min: 0.2, max: 2, step: 0.05, label: 'Colony density' },
   speed: { value: 1, min: 0.2, max: 3, step: 0.05, label: 'Crawl speed' },
-  sensorDist: { value: 9, min: 3, max: 24, step: 0.5, label: 'Sensor distance' },
+  sensorDist: { value: 7, min: 3, max: 24, step: 0.5, label: 'Sensor distance' },
   sensorAngle: { value: 32, min: 8, max: 70, step: 1, label: 'Sensor angle°' },
   turn: { value: 38, min: 5, max: 80, step: 1, label: 'Turn°' },
   wiggle: { value: 0.14, min: 0, max: 1, step: 0.02, label: 'Wander (chaos)' },
-  deposit: { value: 1, min: 0.2, max: 2, step: 0.05, label: 'Trail deposit' },
-  decay: { value: 0.06, min: 0.02, max: 0.3, step: 0.005, label: 'Evaporation' },
+  deposit: { value: 1.1, min: 0.2, max: 2, step: 0.05, label: 'Trail deposit' },
+  decay: { value: 0.05, min: 0.02, max: 0.3, step: 0.005, label: 'Evaporation' },
   // Outward foraging drive: how hard the colony pushes its frontier out from
   // the inoculation point, so it advances as a lobed fan trailing a vein net
   // (like a real Physarum spreading across a dish) rather than milling in place.
-  spread: { value: 0.5, min: 0, max: 1.5, step: 0.05, label: 'Foraging drive' },
-  hue: { value: 0.25, min: 0, max: 1, step: 0.01, label: 'Hue' },
+  spread: { value: 0.32, min: 0, max: 1.5, step: 0.05, label: 'Foraging drive' },
+  // Vein sharpening: a gentle unsharp feedback that pulls a little protoplasm out
+  // of the faint mesh into the strong routes, so thick transport trunks emerge
+  // and taper to fine twigs — the vein *hierarchy* real Physarum shows — while
+  // the reticulated net behind the front survives. Push it high to prune toward
+  // a few bold tubes; keep it low for a dense, lacy web.
+  sharpen: { value: 0.32, min: 0, max: 1, step: 0.02, label: 'Vein sharpening' },
+  glisten: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Wet sheen' },
+  bloom: { value: 0.3, min: 0, max: 1, step: 0.02, label: 'Glow' },
+  hue: { value: 0.44, min: 0, max: 1, step: 0.01, label: 'Tint (gold ↔ green)' },
 })
 // Music: beats surge the crawl, loudness thickens the trails.
 rt.mapInput('audio.pulse', 'speed', 0.5)
@@ -41,7 +49,7 @@ const foods = [] // { x, y, born } in grid coords, emit trail so the colony seek
 function wantAgents() { return Math.min(120000, Math.round(W * H * 0.14 * params.density * rt.detail)) }
 
 function build() {
-  const long = Math.min(Math.max(window.innerWidth, window.innerHeight), 520)
+  const long = Math.min(Math.max(window.innerWidth, window.innerHeight), 600)
   const ar = window.innerWidth / window.innerHeight
   W = ar >= 1 ? long : Math.round(long * ar)
   H = ar >= 1 ? Math.round(long / ar) : long
@@ -56,23 +64,18 @@ function seedAgents() {
   nAgents = wantAgents()
   agents = new Float32Array(nAgents * 3)
   srcX = W / 2; srcY = H / 2
-  for (let i = 0; i < nAgents; i++) respawn(i * 3)
-  // Break the perfect central symmetry so the colony fans out organically
-  // instead of collapsing onto the four grid axes (the classic "cross"): scatter
-  // a few faint trail specks for the first agents to chase in random directions.
-  if (trail) { trail.fill(0); for (let i = 0; i < W * H; i++) if (rt.rng() < 0.03) trail[i] = rt.rng() * rt.rng() * 0.5 }
-}
-// (Re)seat an agent at the inoculation point, facing outward — used to launch
-// the colony and to recycle explorers that reach the dish edge, so a steady
-// stream keeps feeding veins out from the source.
-function respawn(o) {
-  const a = rt.random(0, Math.PI * 2)
-  const r = Math.sqrt(rt.rng()) * Math.min(W, H) * 0.06
-  agents[o] = srcX + Math.cos(a) * r
-  agents[o + 1] = srcY + Math.sin(a) * r
-  // face roughly outward but with a wide spread, so they don't all march along
-  // the radial axes and lock into a cross
-  agents[o + 2] = a + (rt.rng() - 0.5) * 1.8
+  // Scatter agents across the whole dish, each facing a random way. This is what
+  // grows a full-frame reticulated web (loops, anastomosis, a real vein
+  // hierarchy) instead of a handful of radial spokes shooting from a single
+  // seed. Sensor-following + deposition does the rest.
+  for (let i = 0; i < nAgents; i++) {
+    const o = i * 3
+    agents[o] = rt.random(0, W)
+    agents[o + 1] = rt.random(0, H)
+    agents[o + 2] = rt.random(0, Math.PI * 2)
+  }
+  // faint noise so the first steps have something to break symmetry against
+  if (trail) { trail.fill(0); for (let i = 0; i < W * H; i++) if (rt.rng() < 0.04) trail[i] = rt.rng() * rt.rng() * 0.4 }
 }
 function resize() {
   canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
@@ -154,8 +157,13 @@ function step() {
     }
     x += Math.cos(h) * sp
     y += Math.sin(h) * sp
-    // reached the dish edge → recycle back to the source to keep feeding veins
-    if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) { respawn(o); continue }
+    // Bounce off the dish rim (reflect the heading) so agents keep weaving the
+    // network across the whole frame instead of being teleported back to a
+    // central seed — that reflection is what lets the web fill the dish.
+    if (x < 1) { x = 1; h = Math.PI - h }
+    else if (x >= W - 1) { x = W - 2; h = Math.PI - h }
+    if (y < 1) { y = 1; h = -h }
+    else if (y >= H - 1) { y = H - 2; h = -h }
     agents[o] = x; agents[o + 1] = y; agents[o + 2] = h
     trail[(y | 0) * W + (x | 0)] += dep
   }
@@ -179,9 +187,11 @@ function emitFood(now) {
   }
 }
 
-// diffuse (3x3 box blur) + evaporate
+// diffuse (Gaussian 3x3) + vein-sharpening feedback + evaporate
+const CAP = 6 // protoplasm density ceiling — keeps sharpening from running away
 function diffuse() {
   const dk = 1 - params.decay
+  const sh = params.sharpen
   for (let y = 0; y < H; y++) {
     const y0 = ((y - 1 + H) % H) * W, y1 = y * W, y2 = ((y + 1) % H) * W
     for (let x = 0; x < W; x++) {
@@ -191,7 +201,14 @@ function diffuse() {
       const s = trail[y0 + x0] + 2 * trail[y0 + x] + trail[y0 + x2] +
         2 * trail[y1 + x0] + 4 * trail[y1 + x] + 2 * trail[y1 + x2] +
         trail[y2 + x0] + 2 * trail[y2 + x] + trail[y2 + x2]
-      tmp[y1 + x] = (s / 16) * dk
+      const blur = s / 16
+      const c = trail[y1 + x]
+      // Unsharp mask: add back a fraction of the high-frequency detail (c − blur)
+      // so ridges gain and hollows lose — but scale it by how much protoplasm is
+      // actually here (min(1, c·2)) so the empty agar stays smooth instead of
+      // sparkling. This is what carves the thick-trunk / fine-twig hierarchy.
+      const v = blur + sh * (c - blur) * Math.min(1, c)
+      tmp[y1 + x] = Math.max(0, Math.min(CAP, v * dk))
     }
   }
   trail.set(tmp)
@@ -203,23 +220,32 @@ function hsl(h, s, l) {
   const f = (n) => Math.round((l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))) * 255)
   return [f(0), f(8), f(4)]
 }
-// The neutral petri-dish grey the plasmodium grows on, so the reticulated veins
-// read as a translucent chartreuse net over the dish (as in real Physarum).
-const DISH = [76, 80, 78]
+const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+// The dark, faintly warm agar the plasmodium grows on (as in the macro shots):
+// near-black so the plasmodium reads as glowing gold veins, greenish at the fine
+// foraging mesh and paling to a wet cream sheen along the thick transport tubes.
+const DISH = [10, 13, 9]
 function render() {
-  // hue centred on chartreuse-green (~82°), user-tunable across yellow→green
-  const hDeg = 60 + params.hue * 90
+  const tint = (params.hue - 0.5) * 40 // <0 warmer/gold · >0 cooler/green
+  const glis = params.glisten
   const d = img.data
   for (let i = 0; i < W * H; i++) {
-    const v = Math.min(1, trail[i] * 0.6)
+    const v = Math.min(1, trail[i] * 0.26)
     const j = i * 4
-    if (v < 0.008) { d[j] = DISH[0]; d[j + 1] = DISH[1]; d[j + 2] = DISH[2]; d[j + 3] = 255; continue }
-    // translucent plasmodium: faint at the fine veins, brightening and paling
-    // to a creamy chartreuse at the dense advancing fan.
-    const a = Math.min(1, 0.25 + v * 1.5)
-    const light = Math.min(0.9, 0.32 + v * v * 0.4 + Math.pow(v, 5) * 0.35)
-    const sat = 0.72 - v * 0.35
-    const [r, g, b] = hsl(hDeg, sat, light)
+    if (v < 0.006) { d[j] = DISH[0]; d[j + 1] = DISH[1]; d[j + 2] = DISH[2]; d[j + 3] = 255; continue }
+    // Colour by vein weight: the faint frontier mesh runs green (~95°), thick
+    // trunks swing to gold (~46°). Lightness climbs with weight; a steep core
+    // term paints the wet, near-white sheen down the middle of the biggest tubes
+    // only, so fine twigs stay dim and dark and the hierarchy reads.
+    const mix = smooth(0.1, 0.7, v)
+    const hDeg = (88 - 44 * mix) + tint
+    const sat = 0.98 - 0.34 * v
+    const light = 0.06 + 0.5 * Math.pow(v, 0.7)
+    let [r, g, b] = hsl(hDeg, sat, light)
+    const gloss = Math.pow(v, 5) * glis
+    r += (252 - r) * gloss; g += (247 - g) * gloss; b += (205 - b) * gloss
+    // frontier mesh stays translucent over the agar; trunks go opaque
+    const a = Math.min(1, 0.1 + v * 2.6)
     d[j] = Math.round(DISH[0] * (1 - a) + r * a)
     d[j + 1] = Math.round(DISH[1] * (1 - a) + g * a)
     d[j + 2] = Math.round(DISH[2] * (1 - a) + b * a)
@@ -227,7 +253,19 @@ function render() {
   }
   sctx.putImageData(img, 0, 0)
   ctx.imageSmoothingEnabled = true
+  ctx.globalCompositeOperation = 'source-over'
   ctx.drawImage(sim, 0, 0, canvas.width, canvas.height)
+  // Bloom: a blurred, additive re-draw so the bright veins bleed a soft glow
+  // into the agar — the luminous wet look of a lit plasmodium.
+  if (params.bloom > 0.001) {
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.globalAlpha = params.bloom
+    try { ctx.filter = `blur(${Math.max(2, Math.max(canvas.width, canvas.height) * 0.004)}px)` } catch { /* older browsers: plain additive */ }
+    ctx.drawImage(sim, 0, 0, canvas.width, canvas.height)
+    ctx.filter = 'none'
+    ctx.restore()
+  }
   // the food: a single oat flake at each drop point, being eaten over time
   const kx = canvas.width / W, ky = canvas.height / H
   const oatR = Math.min(canvas.width, canvas.height) * 0.03
