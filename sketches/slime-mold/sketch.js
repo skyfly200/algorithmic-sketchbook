@@ -19,10 +19,9 @@ const params = rt.params({
   wiggle: { value: 0.14, min: 0, max: 1, step: 0.02, label: 'Wander (chaos)' },
   deposit: { value: 1.1, min: 0.2, max: 2, step: 0.05, label: 'Trail deposit' },
   decay: { value: 0.05, min: 0.02, max: 0.3, step: 0.005, label: 'Evaporation' },
-  // Outward foraging drive: how hard the colony pushes its frontier out from
-  // the inoculation point, so it advances as a lobed fan trailing a vein net
-  // (like a real Physarum spreading across a dish) rather than milling in place.
-  spread: { value: 0.32, min: 0, max: 1.5, step: 0.05, label: 'Foraging drive' },
+  // How fast the colonised region (and so the fan-shaped growing margin) advances
+  // out from the inoculation point. The dense reticulated web builds inside it.
+  grow: { value: 1, min: 0.1, max: 3, step: 0.05, label: 'Fan advance' },
   // Vein sharpening: a gentle unsharp feedback that pulls a little protoplasm out
   // of the faint mesh into the strong routes, so thick transport trunks emerge
   // and taper to fine twigs — the vein *hierarchy* real Physarum shows — while
@@ -44,6 +43,7 @@ let W, H, trail, tmp, img, sim, sctx
 let agents = null // Float32Array packed [x, y, heading] * N
 let nAgents = 0
 let srcX = 0, srcY = 0 // the inoculation point the colony grows out from
+let reach = 0, reachMax = 0 // radius of the colonised region; grows over time
 const foods = [] // { x, y, born } in grid coords, emit trail so the colony seeks them
 
 function wantAgents() { return Math.min(120000, Math.round(W * H * 0.14 * params.density * rt.detail)) }
@@ -63,19 +63,22 @@ function build() {
 function seedAgents() {
   nAgents = wantAgents()
   agents = new Float32Array(nAgents * 3)
-  srcX = W / 2; srcY = H / 2
-  // Scatter agents across the whole dish, each facing a random way. This is what
-  // grows a full-frame reticulated web (loops, anastomosis, a real vein
-  // hierarchy) instead of a handful of radial spokes shooting from a single
-  // seed. Sensor-following + deposition does the rest.
+  // Inoculate at the bottom-centre. Agents are pre-scattered across the whole
+  // dish at the target density (so the web is properly dense everywhere), but
+  // they only LAY trail inside a radius `reach` of the source that grows over
+  // time — so the dense reticulated web forms progressively from the bottom up,
+  // a fan-shaped colonised region advancing out across the dish, exactly the way
+  // a real plasmodium sweeps a fan (see the reference macros).
+  srcX = W / 2; srcY = H - 1
+  reachMax = Math.hypot(W, H)    // enough to eventually cover the frame
+  reach = Math.min(W, H) * 0.05  // small starting colony
   for (let i = 0; i < nAgents; i++) {
     const o = i * 3
     agents[o] = rt.random(0, W)
     agents[o + 1] = rt.random(0, H)
     agents[o + 2] = rt.random(0, Math.PI * 2)
   }
-  // faint noise so the first steps have something to break symmetry against
-  if (trail) { trail.fill(0); for (let i = 0; i < W * H; i++) if (rt.rng() < 0.04) trail[i] = rt.rng() * rt.rng() * 0.4 }
+  if (trail) trail.fill(0)
 }
 function resize() {
   canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
@@ -131,41 +134,42 @@ function step() {
   const sp = params.speed
   const dep = params.deposit * 0.6
   const wig = params.wiggle
-  const drive = params.spread
   for (let i = 0; i < nAgents; i++) {
     const o = i * 3
     let x = agents[o], y = agents[o + 1], h = agents[o + 2]
+    // How raw is the ground here? 1 at the untouched advancing edge, →0 inside an
+    // established vein. This is what separates the two behaviours: at the front
+    // the fan spreads and pushes out; behind it, agents lock onto veins.
+    const here = trail[(y | 0) * W + (x | 0)]
+    const front = Math.max(0, 1 - here * 1.3)
     const c = sample(x + Math.cos(h) * SD, y + Math.sin(h) * SD)
     const l = sample(x + Math.cos(h - SA) * SD, y + Math.sin(h - SA) * SD)
     const r = sample(x + Math.cos(h + SA) * SD, y + Math.sin(h + SA) * SD)
+    // Chemotaxis, damped at the front so agents there DON'T all funnel onto the
+    // first thread (which is what collapses a fan into a few radial spokes) —
+    // they stay a broad advancing sheet, and consolidate into veins only once the
+    // ground behind them has thickened.
+    const chemo = TA * (1 - front * 0.7)
     if (c > l && c > r) { /* straight on */ }
-    else if (c < l && c < r) h += (rt.rng() < 0.5 ? -1 : 1) * TA // valley → pick a side
-    else if (l < r) h += TA
-    else if (r < l) h -= TA
-    h += (rt.rng() - 0.5) * wig // a little wander keeps it organic + evolving
-    // Foraging drive: nudge the heading outward from the source, but only where
-    // the trail is still faint (the frontier) — established veins hold their
-    // shape, so the fan advances while the network behind it stays put.
-    if (drive > 0) {
-      const here = trail[(y | 0) * W + (x | 0)]
-      const w = drive * 0.08 * Math.max(0, 1 - here * 0.7)
-      if (w > 0.0005) {
-        let d = Math.atan2(y - srcY, x - srcX) - h
-        d = Math.atan2(Math.sin(d), Math.cos(d))
-        h += d * w
-      }
-    }
+    else if (c < l && c < r) h += (rt.rng() < 0.5 ? -1 : 1) * chemo // valley → pick a side
+    else if (l < r) h += chemo
+    else if (r < l) h -= chemo
+    // Wander, widened at the front so the just-reached margin splays sideways and
+    // fills its arc as a fine mesh instead of running as straight fingers.
+    h += (rt.rng() - 0.5) * wig * (1 + front * 3)
     x += Math.cos(h) * sp
     y += Math.sin(h) * sp
-    // Bounce off the dish rim (reflect the heading) so agents keep weaving the
-    // network across the whole frame instead of being teleported back to a
-    // central seed — that reflection is what lets the web fill the dish.
+    // Never leave the dish (reflect off the rim).
     if (x < 1) { x = 1; h = Math.PI - h }
     else if (x >= W - 1) { x = W - 2; h = Math.PI - h }
     if (y < 1) { y = 1; h = -h }
     else if (y >= H - 1) { y = H - 2; h = -h }
     agents[o] = x; agents[o + 1] = y; agents[o + 2] = h
-    trail[(y | 0) * W + (x | 0)] += dep
+    // Only lay trail inside the colonised radius. Agents beyond it still roam
+    // (staying evenly spread, ready), but no web forms there until the advancing
+    // margin reaches them — so the fan grows dense from the bottom out.
+    const ddx = x - srcX, ddy = y - srcY
+    if (ddx * ddx + ddy * ddy <= reach * reach) trail[(y | 0) * W + (x | 0)] += dep
   }
 }
 
@@ -276,9 +280,15 @@ function render() {
   }
 }
 
+let lastNow = 0
 function frame(now) {
   rt.tick(now)
   if (nAgents !== wantAgents()) seedAgents()
+  // Advance the colonised margin. Beat pulse gives it a surge, so the fan lurches
+  // forward on the music; it stops once it has covered the dish.
+  const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
+  lastNow = now
+  reach = Math.min(reachMax, reach + params.grow * Math.min(W, H) * 0.12 * (0.7 + rt.beat.state.pulse) * dt)
   emitFood(now)
   step()
   diffuse()
