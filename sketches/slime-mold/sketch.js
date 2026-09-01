@@ -19,9 +19,12 @@ const params = rt.params({
   wiggle: { value: 0.14, min: 0, max: 1, step: 0.02, label: 'Wander (chaos)' },
   deposit: { value: 1.1, min: 0.2, max: 2, step: 0.05, label: 'Trail deposit' },
   decay: { value: 0.05, min: 0.02, max: 0.3, step: 0.005, label: 'Evaporation' },
-  // How fast the colonised region (and so the fan-shaped growing margin) advances
-  // out from the inoculation point. The dense reticulated web builds inside it.
-  grow: { value: 1, min: 0.1, max: 3, step: 0.05, label: 'Fan advance' },
+  // The colonised region breathes: it advances out from the inoculation point at
+  // `grow`, and once it has reached full spread it pulls back in at `recede`
+  // (the abandoned outer web stops being fed and evaporates), then grows again —
+  // a living plasmodium that never fully settles. recede: 0 = grow once and hold.
+  grow: { value: 1, min: 0.05, max: 3, step: 0.05, label: 'Fan advance (grow)' },
+  recede: { value: 0.35, min: 0, max: 3, step: 0.05, label: 'Fan pull-back (recede)' },
   // Vein sharpening: a gentle unsharp feedback that pulls a little protoplasm out
   // of the faint mesh into the strong routes, so thick transport trunks emerge
   // and taper to fine twigs — the vein *hierarchy* real Physarum shows — while
@@ -43,7 +46,7 @@ let W, H, trail, tmp, img, sim, sctx
 let agents = null // Float32Array packed [x, y, heading] * N
 let nAgents = 0
 let srcX = 0, srcY = 0 // the inoculation point the colony grows out from
-let reach = 0, reachMax = 0 // radius of the colonised region; grows over time
+let reach = 0, reachMin = 0, reachMax = 0, reachDir = 1 // colonised radius; breathes in/out
 const foods = [] // { x, y, born } in grid coords, emit trail so the colony seeks them
 
 function wantAgents() { return Math.min(120000, Math.round(W * H * 0.14 * params.density * rt.detail)) }
@@ -63,15 +66,17 @@ function build() {
 function seedAgents() {
   nAgents = wantAgents()
   agents = new Float32Array(nAgents * 3)
-  // Inoculate at the bottom-centre. Agents are pre-scattered across the whole
-  // dish at the target density (so the web is properly dense everywhere), but
-  // they only LAY trail inside a radius `reach` of the source that grows over
-  // time — so the dense reticulated web forms progressively from the bottom up,
-  // a fan-shaped colonised region advancing out across the dish, exactly the way
-  // a real plasmodium sweeps a fan (see the reference macros).
-  srcX = W / 2; srcY = H - 1
-  reachMax = Math.hypot(W, H)    // enough to eventually cover the frame
-  reach = Math.min(W, H) * 0.05  // small starting colony
+  // Inoculate at the centre. Agents are pre-scattered across the whole dish at
+  // the target density (so the web is properly dense everywhere), but they only
+  // LAY trail inside a radius `reach` of the source that grows over time — so the
+  // dense reticulated web forms progressively outward from the centre, a
+  // colonised region spreading across the dish, the way a real plasmodium fans
+  // out (see the reference macros).
+  srcX = W / 2; srcY = H / 2
+  reachMax = Math.hypot(W, H) * 0.52 // reaches the corners from the centre
+  reachMin = Math.min(W, H) * 0.05   // the core it pulls back to
+  reach = reachMin                   // small starting colony
+  reachDir = 1
   for (let i = 0; i < nAgents; i++) {
     const o = i * 3
     agents[o] = rt.random(0, W)
@@ -284,11 +289,19 @@ let lastNow = 0
 function frame(now) {
   rt.tick(now)
   if (nAgents !== wantAgents()) seedAgents()
-  // Advance the colonised margin. Beat pulse gives it a surge, so the fan lurches
-  // forward on the music; it stops once it has covered the dish.
+  // Breathe the colonised margin: grow out to full spread, then (if recede > 0)
+  // pull back to the core and grow again. Beat pulse surges the outward phase, so
+  // the fan lurches forward on the music.
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
   lastNow = now
-  reach = Math.min(reachMax, reach + params.grow * Math.min(W, H) * 0.12 * (0.7 + rt.beat.state.pulse) * dt)
+  const base = Math.min(W, H) * 0.12
+  if (reachDir > 0) {
+    reach += params.grow * base * (0.7 + rt.beat.state.pulse) * dt
+    if (reach >= reachMax) { reach = reachMax; if (params.recede > 0.001) reachDir = -1 }
+  } else {
+    reach -= params.recede * base * dt
+    if (reach <= reachMin) { reach = reachMin; reachDir = 1 }
+  }
   emitFood(now)
   step()
   diffuse()
