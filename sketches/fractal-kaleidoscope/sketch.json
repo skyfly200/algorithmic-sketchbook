@@ -1,0 +1,7 @@
+{
+  "title": "Fractal Kaleidoscope",
+  "description": "A neon fractal bloom: space is folded in on itself a few times with the classic fract(uv·k)−0.5 domain repeat, and each fold draws thin glowing rings lit by an Inigo Quilez cosine palette. Stacked, the folds make an infinitely detailed flower of light that drifts through the spectrum and pulses with the music. Fold layers, fold zoom, ring frequency, glow, contrast, palette speed and hue are all live params — loudness drives the palette and beats flare the glow. Adapted to WebGL2 from the well-known Shadertoy by kishimisu, with the iq palette.",
+  "tags": ["shader", "fractal", "kaleidoscope", "generative", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-09-03"
+}

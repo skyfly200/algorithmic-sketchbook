@@ -1,0 +1,7 @@
+{
+  "title": "Mandelbulb",
+  "description": "The canonical 3D fractal, ray-marched in real time. The polar power map z → zⁿ + c folds space into a bulbous, coral-like solid whose surface crawls with self-similar detail; a camera orbits it while an orbit trap tints the shell through an Inigo Quilez cosine palette and grazing rays build a soft coloured halo. Power (bulb order), fractal detail, orbit speed, camera distance, hue and glow are live params — raise the power to morph between smooth blobs and spiky urchins. Loudness nudges the orbit, beats flare the halo. Distance estimator after Daniel White / Paul Nylander.",
+  "tags": ["shader", "fractal", "3d", "raymarching", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-09-03"
+}

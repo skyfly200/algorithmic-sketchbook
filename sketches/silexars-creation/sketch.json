@@ -1,0 +1,7 @@
+{
+  "title": "Creation",
+  "description": "The famous four-line \"Creation by Silexars\" shader, alive and tweakable. Three time-offset slices of a radial ripple field — one per colour channel — are pushed through a mod() lattice, so the whole plane fills with concentric travelling waves that bloom, split into RGB fringes and wash across each other. Speed, per-channel offset, ripple frequency, tiling and brightness are live params; loudness speeds the ripples and beats brighten them. Original by Danilo Guanabara, adapted to WebGL2.",
+  "tags": ["shader", "demoscene", "psychedelic", "generative", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-09-03"
+}
