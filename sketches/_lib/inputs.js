@@ -130,6 +130,34 @@ export function createArtnetInput() {
   return { state, start }
 }
 
+// REMOTE — phone / OSC control surface via the local relay (`npm run remote`,
+// scripts/remote-server.mjs). The relay serves the app and re-broadcasts phone
+// and OSC input as { type:'control', name, value } over SSE; here we read those
+// into `remote.<name>` sources (any name resolves, like midi.ccN). The built-in
+// controller sends x, y, p1…p8, a/b/c, tiltx, tilty; OSC keys pass through too.
+export function createRemoteInput() {
+  const state = {}
+  let started = false, handler = null
+  function start() { if (started) return; started = true; connect() }
+  function connect() {
+    let es
+    try { es = new EventSource('/remote-hub/events?role=app') } catch { return }
+    es.onmessage = (e) => {
+      let m
+      try { m = JSON.parse(e.data) } catch { return }
+      if (m.type === 'control' && typeof m.value === 'number') state[m.name] = m.value
+      else handler?.(m) // set-param / hello — the runtime bridge handles these
+    }
+    es.onerror = () => { es.close(); setTimeout(connect, 5000) } // relay may be off
+  }
+  // Publish a message back up to the hub (schema, param echo). Fire-and-forget.
+  function send(msg) {
+    try { fetch('/remote-hub/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg), keepalive: true }) } catch { /* offline */ }
+  }
+  function onMessage(cb) { handler = cb }
+  return { state, start, send, onMessage }
+}
+
 function clamp01(v) {
   return Math.min(1, Math.max(0, v))
 }

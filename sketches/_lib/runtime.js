@@ -34,7 +34,7 @@
  * Everything is opt-in — sketches that ignore all of this still work.
  */
 import { createBeatDetector } from './beat.js'
-import { createMidiInput, createLeapInput, createArtnetInput } from './inputs.js'
+import { createMidiInput, createLeapInput, createArtnetInput, createRemoteInput } from './inputs.js'
 
 // GPU power hint. When the app asks for it (?gpu=high, driven by the global
 // "High performance GPU" setting), inject powerPreference:'high-performance'
@@ -101,6 +101,19 @@ export const INPUT_SOURCES = [
   'artnet.ch2',
   'artnet.ch3',
   'artnet.ch4',
+  'remote.x', // phone / OSC control surface via `npm run remote` (any remote.* resolves)
+  'remote.y',
+  'remote.p1',
+  'remote.p2',
+  'remote.p3',
+  'remote.p4',
+  'remote.p5',
+  'remote.p6',
+  'remote.a', // buttons (0/1)
+  'remote.b',
+  'remote.c',
+  'remote.tiltx', // phone orientation
+  'remote.tilty',
 ]
 
 const QUALITY = {
@@ -301,6 +314,7 @@ export function createRuntime() {
   const midi = createMidiInput()
   const leap = createLeapInput()
   const artnet = createArtnetInput()
+  const remote = createRemoteInput()
 
   // --- param engine ------------------------------------------------------
   const schema = {}
@@ -426,6 +440,7 @@ export function createRuntime() {
     // listed in INPUT_SOURCES.
     if (s.startsWith('midi.cc')) return midi.state.cc[parseInt(s.slice(7), 10)] ?? 0
     if (s.startsWith('artnet.ch')) return artnet.state.ch[parseInt(s.slice(9), 10) - 1] ?? 0
+    if (s.startsWith('remote.')) return remote.state[s.slice(7)] ?? 0 // phone / OSC (any key)
     const aud = (x) => Math.min(1, x * audioGain) // input sensitivity on the bands
     switch (s) {
       case 'audio.pulse': return beat.state.pulse
@@ -514,6 +529,7 @@ export function createRuntime() {
     if (mappings.some((m) => m.source.startsWith('midi.'))) midi.start()
     if (mappings.some((m) => m.source.startsWith('leap.'))) leap.start()
     if (mappings.some((m) => m.source.startsWith('artnet.'))) artnet.start()
+    if (mappings.some((m) => m.source.startsWith('remote.'))) remote.start()
   }
 
   function readyMsg() {
@@ -547,10 +563,46 @@ export function createRuntime() {
       beat.configure({ threshold: 1.6 - audioSens * 0.54, minEnergy: 0.2 - audioSens * 0.18 })
     }
   }
+  // --- phone / OSC remote bridge ---------------------------------------------
+  // The standalone viewer publishes its param schema to the local relay so the
+  // phone controller auto-follows the current sketch, and applies the values it
+  // sends back. Gated to the standalone viewer (Patch's preview iframes never
+  // publish) and to the local relay origin (never the deployed https site).
+  // See scripts/remote-server.mjs.
+  function isLanHttp() {
+    if (location.protocol !== 'http:') return false
+    const h = location.hostname
+    return h === 'localhost' || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)
+  }
+  const remoteOn = !preview && urlParams.get('remote') !== '0' && (urlParams.get('remote') === '1' || isLanHttp())
+  function remoteSchemaMsg() {
+    const list = Object.entries(schema).map(([name, sp]) => ({
+      name, label: sp.label ?? name, type: sp.type ?? 'range',
+      min: sp.min ?? 0, max: sp.max ?? 1, step: sp.step ?? 0.01, options: sp.options ?? null,
+      value: base[name] ?? sp.value ?? 0,
+    }))
+    return { type: 'schema', title: document.title || 'Sketch', params: list }
+  }
+  let remoteInit = false
+  function initRemote() {
+    if (remoteInit || !remoteOn) return
+    remoteInit = true
+    remote.start()
+    remote.onMessage((m) => {
+      if (m.type === 'set-param' && m.name in base) {
+        base[m.name] = m.value
+        applyModulation(performance.now())
+        remote.send({ type: 'param', name: m.name, value: m.value }) // sync other phones
+      } else if (m.type === 'hello') {
+        remote.send(remoteSchemaMsg())
+      }
+    })
+    remote.send(remoteSchemaMsg())
+  }
   function announce() {
     if (announced) return
     announced = true
-    queueMicrotask(() => { window.parent?.postMessage(readyMsg(), '*') })
+    queueMicrotask(() => { window.parent?.postMessage(readyMsg(), '*'); initRemote() })
   }
 
   window.addEventListener('message', (e) => {

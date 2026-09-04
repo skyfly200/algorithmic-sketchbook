@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d1017" />
+  <title>Bright Waves — Remote</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0d1017; --panel:#161b26; --line:#2a3040; --txt:#cdd3e0; --dim:#8a90a0; --accent:#7c8cff; --accent2:#4dd0c4; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--txt); font: 15px/1.4 system-ui, sans-serif; overscroll-behavior: none; }
+    body { display: flex; flex-direction: column; }
+    header { display: flex; align-items: center; gap: 10px; padding: 10px 14px calc(10px + env(safe-area-inset-top)); padding-top: calc(10px + env(safe-area-inset-top)); border-bottom: 1px solid var(--line); }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #d0453c; transition: background .3s; flex: 0 0 auto; }
+    .dot.on { background: #57c46a; }
+    .title { font-weight: 600; }
+    .sub { color: var(--dim); font-size: 12px; margin-left: auto; text-align: right; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tabs { display: flex; border-bottom: 1px solid var(--line); }
+    .tabs button { flex: 1; background: none; border: 0; color: var(--dim); font: 600 14px system-ui; padding: 12px; cursor: pointer; border-bottom: 2px solid transparent; }
+    .tabs button.on { color: var(--txt); border-bottom-color: var(--accent); }
+    main { flex: 1; overflow-y: auto; padding: 14px calc(14px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left)); -webkit-overflow-scrolling: touch; }
+    .row { margin-bottom: 16px; }
+    .row label { display: flex; justify-content: space-between; font-size: 13px; color: var(--dim); margin-bottom: 6px; }
+    .row label b { color: var(--txt); font-weight: 600; }
+    .row .val { font: 12px ui-monospace, monospace; color: var(--accent2); }
+    input[type=range] { width: 100%; height: 34px; accent-color: var(--accent); }
+    select { width: 100%; padding: 10px; background: #12141c; color: var(--txt); border: 1px solid var(--line); border-radius: 8px; font: 15px system-ui; }
+    .toggle { display: inline-flex; align-items: center; gap: 8px; }
+    .sw { width: 46px; height: 28px; border-radius: 999px; background: #2a3040; position: relative; transition: background .15s; }
+    .sw.on { background: var(--accent); }
+    .sw::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: left .15s; }
+    .sw.on::after { left: 21px; }
+    button.act { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--line); background: #1a1d28; color: var(--txt); font: 600 14px system-ui; }
+    .empty { color: var(--dim); text-align: center; padding: 40px 20px; line-height: 1.6; }
+    /* pad surface */
+    .pad { position: relative; width: 100%; aspect-ratio: 1; background: radial-gradient(circle at 50% 50%, #1a2030, #10131c); border: 1px solid var(--line); border-radius: 14px; touch-action: none; overflow: hidden; }
+    .pad .knob { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 24px rgba(124,140,255,.7); left: 50%; top: 50%; pointer-events: none; }
+    .pad .cross { position: absolute; background: rgba(255,255,255,.06); }
+    .faders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 16px 0; }
+    .fader { text-align: center; }
+    .fader input { writing-mode: vertical-lr; direction: rtl; width: 34px; height: 130px; accent-color: var(--accent2); }
+    .fader span { display: block; font-size: 12px; color: var(--dim); margin-top: 4px; }
+    .btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .btns button { padding: 18px; border-radius: 10px; border: 1px solid var(--line); background: #1a1d28; color: var(--txt); font: 700 16px system-ui; user-select: none; }
+    .btns button.down { background: var(--accent); color: #0a0b0f; }
+    .tiltrow { display: flex; align-items: center; gap: 10px; margin-top: 18px; color: var(--dim); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="dot" id="dot"></span>
+    <span class="title">Remote</span>
+    <span class="sub" id="sub">connecting…</span>
+  </header>
+  <div class="tabs">
+    <button id="tab-sketch" class="on">Sketch</button>
+    <button id="tab-pad">Pad</button>
+  </div>
+  <main id="sketch"></main>
+  <main id="pad" hidden></main>
+
+  <script>
+  // --- transport: SSE down, POST up (matches scripts/remote-server.mjs) -------
+  const dot = document.getElementById('dot'), sub = document.getElementById('sub')
+  const outbox = new Map() // name -> latest message, coalesced per frame
+  function post(msg) { fetch('/remote-hub/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg), keepalive: true }).catch(() => {}) }
+  function queue(key, msg) { outbox.set(key, msg) }
+  ;(function flush() { for (const m of outbox.values()) post(m); outbox.clear(); requestAnimationFrame(flush) })()
+
+  let es
+  function connect() {
+    try { es = new EventSource('/remote-hub/events?role=phone') } catch { return }
+    es.onopen = () => { dot.classList.add('on'); sub.textContent = 'connected'; post({ type: 'hello' }) }
+    es.onmessage = (e) => { let m; try { m = JSON.parse(e.data) } catch { return }; onMessage(m) }
+    es.onerror = () => { dot.classList.remove('on'); sub.textContent = 'reconnecting…'; es.close(); setTimeout(connect, 2000) }
+  }
+  function onMessage(m) {
+    if (m.type === 'schema') renderSketch(m)
+    else if (m.type === 'param') { const el = controls.get(m.name); if (el) setControl(el, m.value) }
+  }
+
+  // --- Sketch tab: auto-follow the current sketch's params -------------------
+  const sketchEl = document.getElementById('sketch')
+  const controls = new Map() // param name -> input element
+  function setControl(el, v) {
+    if (el.type === 'range') { el.value = v; el.oninput && el.parentEl_valEl && (el.parentEl_valEl.textContent = fmt(v)) }
+    else if (el.dataset.kind === 'bool') el.classList.toggle('on', !!v)
+    else if (el.tagName === 'SELECT') el.value = v
+  }
+  const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(2) : (+v).toFixed(3))
+  function renderSketch(m) {
+    sub.textContent = m.title || 'Sketch'
+    sketchEl.innerHTML = ''
+    controls.clear()
+    if (!m.params || !m.params.length) { sketchEl.innerHTML = '<div class="empty">No adjustable params on this sketch.<br>Use the <b>Pad</b> tab and map remote.* in the app.</div>'; return }
+    for (const p of m.params) {
+      const row = document.createElement('div'); row.className = 'row'
+      if (p.type === 'bool') {
+        const lab = document.createElement('label'); lab.innerHTML = `<b>${esc(p.label)}</b>`
+        const wrap = document.createElement('div'); wrap.className = 'toggle'
+        const sw = document.createElement('div'); sw.className = 'sw' + (p.value ? ' on' : ''); sw.dataset.kind = 'bool'
+        sw.onclick = () => { const on = !sw.classList.contains('on'); sw.classList.toggle('on', on); post({ type: 'set-param', name: p.name, value: on ? 1 : 0 }) }
+        wrap.appendChild(sw); row.append(lab, wrap); controls.set(p.name, sw)
+      } else if (p.type === 'select' && p.options) {
+        const lab = document.createElement('label'); lab.innerHTML = `<b>${esc(p.label)}</b>`
+        const sel = document.createElement('select')
+        for (const o of p.options) { const opt = document.createElement('option'); opt.value = o; opt.textContent = o; sel.appendChild(opt) }
+        sel.value = p.value
+        sel.onchange = () => post({ type: 'set-param', name: p.name, value: sel.value })
+        row.append(lab, sel); controls.set(p.name, sel)
+      } else if (p.type === 'action') {
+        const b = document.createElement('button'); b.className = 'act'; b.textContent = p.label
+        b.onclick = () => post({ type: 'set-param', name: p.name, value: 1 })
+        row.appendChild(b)
+      } else {
+        const lab = document.createElement('label'); const valEl = document.createElement('span'); valEl.className = 'val'; valEl.textContent = fmt(p.value)
+        lab.innerHTML = `<b>${esc(p.label)}</b>`; lab.appendChild(valEl)
+        const r = document.createElement('input'); r.type = 'range'; r.min = p.min; r.max = p.max; r.step = p.step || 0.001; r.value = p.value
+        r.parentEl_valEl = valEl
+        r.oninput = () => { valEl.textContent = fmt(+r.value); queue(p.name, { type: 'set-param', name: p.name, value: +r.value }) }
+        row.append(lab, r); controls.set(p.name, r)
+      }
+      sketchEl.appendChild(row)
+    }
+  }
+  const esc = (s) => String(s).replace(/[<&>]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))
+
+  // --- Pad tab: generic surface → remote.* controls --------------------------
+  const padEl = document.getElementById('pad')
+  padEl.innerHTML = `
+    <div class="pad" id="xy"><div class="cross" style="left:0;top:50%;right:0;height:1px"></div><div class="cross" style="top:0;left:50%;bottom:0;width:1px"></div><div class="knob" id="knob"></div></div>
+    <div class="faders">${[1,2,3].map(i=>`<div class="fader"><input type="range" min="0" max="1" step="0.001" value="0" data-p="p${i}"><span>p${i}</span></div>`).join('')}</div>
+    <div class="faders">${[4,5,6].map(i=>`<div class="fader"><input type="range" min="0" max="1" step="0.001" value="0" data-p="p${i}"><span>p${i}</span></div>`).join('')}</div>
+    <div class="btns">${['a','b','c'].map(k=>`<button data-b="${k}">${k.toUpperCase()}</button>`).join('')}</div>
+    <div class="tiltrow"><div class="sw" id="tiltsw"></div> Tilt → remote.tiltx / tilty</div>`
+  const xy = document.getElementById('xy'), knob = document.getElementById('knob')
+  function padMove(e) {
+    const r = xy.getBoundingClientRect(), t = e.touches ? e.touches[0] : e
+    const x = Math.min(1, Math.max(0, (t.clientX - r.left) / r.width))
+    const y = Math.min(1, Math.max(0, (t.clientY - r.top) / r.height))
+    knob.style.left = x * 100 + '%'; knob.style.top = y * 100 + '%'
+    queue('x', { type: 'control', name: 'x', value: x })
+    queue('y', { type: 'control', name: 'y', value: 1 - y }) // up = 1
+  }
+  xy.addEventListener('pointerdown', (e) => { xy.setPointerCapture(e.pointerId); padMove(e) })
+  xy.addEventListener('pointermove', (e) => { if (e.pressure > 0 || e.buttons) padMove(e) })
+  padEl.querySelectorAll('input[data-p]').forEach((r) => {
+    r.oninput = () => queue(r.dataset.p, { type: 'control', name: r.dataset.p, value: +r.value })
+  })
+  padEl.querySelectorAll('button[data-b]').forEach((b) => {
+    const down = () => { b.classList.add('down'); post({ type: 'control', name: b.dataset.b, value: 1 }) }
+    const up = () => { b.classList.remove('down'); post({ type: 'control', name: b.dataset.b, value: 0 }) }
+    b.addEventListener('pointerdown', down); b.addEventListener('pointerup', up); b.addEventListener('pointerleave', up)
+  })
+  // Tilt (DeviceOrientation; iOS needs a permission gesture)
+  const tiltsw = document.getElementById('tiltsw')
+  let tiltOn = false
+  function onTilt(e) {
+    if (e.gamma == null) return
+    queue('tiltx', { type: 'control', name: 'tiltx', value: Math.min(1, Math.max(0, e.gamma / 90 + 0.5)) })
+    queue('tilty', { type: 'control', name: 'tilty', value: Math.min(1, Math.max(0, e.beta / 90 + 0.5)) })
+  }
+  tiltsw.onclick = async () => {
+    tiltOn = !tiltOn; tiltsw.classList.toggle('on', tiltOn)
+    if (tiltOn) {
+      try { if (DeviceOrientationEvent.requestPermission) await DeviceOrientationEvent.requestPermission() } catch {}
+      window.addEventListener('deviceorientation', onTilt)
+    } else window.removeEventListener('deviceorientation', onTilt)
+  }
+
+  // --- tabs -------------------------------------------------------------------
+  const tS = document.getElementById('tab-sketch'), tP = document.getElementById('tab-pad')
+  tS.onclick = () => { tS.classList.add('on'); tP.classList.remove('on'); sketchEl.hidden = false; padEl.hidden = true }
+  tP.onclick = () => { tP.classList.add('on'); tS.classList.remove('on'); padEl.hidden = false; sketchEl.hidden = true }
+
+  sketchEl.innerHTML = '<div class="empty">Waiting for a sketch…<br>Open a sketch in the app on your laptop.</div>'
+  connect()
+  </script>
+</body>
+</html>

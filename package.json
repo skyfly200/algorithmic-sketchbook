@@ -12,6 +12,8 @@
     "preview": "vite preview",
     "new": "node scripts/new-sketch.mjs",
     "artnet-bridge": "node scripts/artnet-bridge.mjs",
+    "remote": "node scripts/remote-server.mjs",
+    "remote:build": "vite build && node scripts/remote-server.mjs",
     "perf": "node scripts/perf-audit.mjs"
   },
   "dependencies": {

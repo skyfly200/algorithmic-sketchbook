@@ -109,6 +109,21 @@ The viewer and sketch talk over `postMessage` (`sketch:ready`,
 `sketch:set-param`, `sketch:set-mappings`, `sketch:apply-scene`) — see
 `sketches/_lib/runtime.js` and `src/views/SketchView.vue`.
 
+### Phone / OSC remote control
+
+`npm run build && npm run remote` starts a tiny relay on your laptop
+(`scripts/remote-server.mjs`, node builtins only) that serves the app over plain
+HTTP on your LAN, prints a QR code, and runs a message hub. Open the app on the
+laptop at the printed LAN URL and the **phone controller** at `…/remote`
+(scan the QR): its *Sketch* tab **auto-follows** the current sketch — a labelled
+control per param, changes applied live — and its *Pad* tab is an XY pad + faders
++ buttons + tilt wired to `remote.x`, `remote.y`, `remote.p1…p6`, `remote.a/b/c`,
+`remote.tiltx/y`, which you map to any param like any other input source. The
+relay also listens for **OSC over UDP** (`:8000`), so TouchOSC or any OSC app
+drives the same `remote.*` sources (`/remote/<name>` → `remote.<name>`; any key
+resolves). HTTP-on-LAN keeps the app and phone on one origin so `EventSource`
+works without the mixed-content block a deployed `https://` site would hit.
+
 Example sketches: `flow-field` (params + a default beat→speed mapping),
 `beat-rings` (beat callbacks), `motion-extraction` (webcam motion extraction
 with delay/blend/freeze params — works without a camera via its demo source).
