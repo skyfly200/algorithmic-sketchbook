@@ -88,6 +88,7 @@ function onMessage(e) {
     if (fpsReadings > 2 && !paused.value) recordFps(props.slug, e.data.fps)
     return
   }
+  if (e.data?.type === 'sketch:learned') { onLearned(e.data.source); return }
   if (e.data?.type !== 'sketch:ready') return
   controls.value = {
     schema: e.data.schema ?? {},
@@ -145,8 +146,45 @@ function addMapping() {
 }
 
 function removeMapping(i) {
+  if (learningIndex.value === i) cancelLearn()
   controls.value.mappings.splice(i, 1)
   syncMappings()
+}
+
+// OSC / MIDI learn: put a mapping row into "listening" mode; the sketch runtime
+// watches its live controllers and posts back the first one that moves, which we
+// drop into this row's source. Click again (or wait) to cancel.
+const learningIndex = ref(-1)
+let learnTimer = 0
+function learnMapping(i) {
+  if (learningIndex.value === i) { cancelLearn(); return }
+  learningIndex.value = i
+  post({ type: 'sketch:learn' })
+  clearTimeout(learnTimer)
+  learnTimer = setTimeout(cancelLearn, 12000)
+}
+function cancelLearn() {
+  if (learningIndex.value < 0) return
+  learningIndex.value = -1
+  clearTimeout(learnTimer)
+  post({ type: 'sketch:learn-cancel' })
+}
+function onLearned(source) {
+  const i = learningIndex.value
+  learningIndex.value = -1
+  clearTimeout(learnTimer)
+  if (i < 0 || !controls.value?.mappings[i]) return
+  controls.value.mappings[i].source = source
+  syncMappings()
+}
+// Add a fresh mapping already in learn mode — the fast path: click, then wiggle
+// a phone/OSC control (or a MIDI knob) to bind it.
+function addLearnMapping() {
+  const firstNumeric = Object.entries(controls.value.schema).find(([, s]) => typeof s.min === 'number')
+  if (!firstNumeric) return
+  controls.value.mappings.push({ source: 'remote.x', param: firstNumeric[0], amount: 1, smooth: 0.5 })
+  syncMappings()
+  learnMapping(controls.value.mappings.length - 1)
 }
 
 // Input sources offered in the mapping editor: MIDI stays hidden until it's
@@ -444,6 +482,15 @@ onUnmounted(() => {
               Input mappings
               <v-spacer />
               <v-btn
+                icon="mdi-school-outline"
+                size="x-small"
+                variant="tonal"
+                color="primary"
+                title="Learn: add a mapping, then move a phone / OSC / MIDI control to bind it"
+                class="mr-2"
+                @click.stop="addLearnMapping"
+              />
+              <v-btn
                 icon="mdi-plus"
                 size="x-small"
                 variant="tonal"
@@ -457,6 +504,9 @@ onUnmounted(() => {
                 Route beat, mouse, tilt, or time inputs into parameters. With no
                 mappings a parameter just holds its slider value.
               </p>
+              <p v-if="learningIndex >= 0" class="text-caption text-primary mb-2">
+                <v-icon icon="mdi-radar" size="14" class="mr-1" />Listening — move a control on your phone (Pad tab), an OSC app, or a MIDI knob to bind it.
+              </p>
               <p v-if="!controls.mappings.length" class="text-caption text-disabled mb-1">
                 No mappings yet — add one to drive a parameter from an input.
               </p>
@@ -467,6 +517,14 @@ onUnmounted(() => {
                 class="pa-2 mb-2"
               >
                 <div class="d-flex ga-2 align-center">
+                  <v-btn
+                    :icon="learningIndex === i ? 'mdi-radar' : 'mdi-school-outline'"
+                    size="x-small"
+                    variant="text"
+                    :color="learningIndex === i ? 'primary' : undefined"
+                    :title="learningIndex === i ? 'Listening… move a phone / OSC / MIDI control' : 'Learn this source: click, then move a control'"
+                    @click="learnMapping(i)"
+                  />
                   <v-select
                     v-model="m.source"
                     :items="sourceOptions"

@@ -599,6 +599,26 @@ export function createRuntime() {
     })
     remote.send(remoteSchemaMsg())
   }
+
+  // OSC / MIDI "learn": snapshot the live controllers, then report the first one
+  // that moves past a threshold so the host can bind it to a param. Catches both
+  // remote.* (phone / OSC) and midi.ccN.
+  let learning = false, learnBase = null
+  function controllerValues() {
+    const out = {}
+    for (const k in remote.state) out['remote.' + k] = remote.state[k]
+    for (const k in midi.state.cc) out['midi.cc' + k] = midi.state.cc[k]
+    return out
+  }
+  function startLearn() { remote.start(); midi.start(); learnBase = controllerValues(); learning = true }
+  function scanLearn() {
+    if (!learning) return
+    const cur = controllerValues()
+    let best = null, bestD = 0.12 // ignore idle jitter; a real move clears this
+    for (const k in cur) { const d = Math.abs(cur[k] - (learnBase[k] ?? 0)); if (d > bestD) { bestD = d; best = k } }
+    if (best) { learning = false; window.parent?.postMessage({ type: 'sketch:learned', source: best }, '*') }
+  }
+
   function announce() {
     if (announced) return
     announced = true
@@ -642,6 +662,10 @@ export function createRuntime() {
       actions[msg.name]?.()
     } else if (msg.type === 'sketch:pause') {
       setPaused(!!msg.paused)
+    } else if (msg.type === 'sketch:learn') {
+      startLearn()
+    } else if (msg.type === 'sketch:learn-cancel') {
+      learning = false
     } else if (msg.type === 'sketch:auto-map') {
       // apply the sketch's own default input mappings on demand
       setMappings([...defaultMappings])
@@ -744,6 +768,7 @@ export function createRuntime() {
       reportFps(now)
       beat.update(now)
       motion.shake *= 0.9 // shake decays like beat.pulse
+      scanLearn()
       applyModulation(now)
     },
   }

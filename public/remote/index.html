@@ -18,6 +18,7 @@
     .tabs { display: flex; border-bottom: 1px solid var(--line); }
     .tabs button { flex: 1; background: none; border: 0; color: var(--dim); font: 600 14px system-ui; padding: 12px; cursor: pointer; border-bottom: 2px solid transparent; }
     .tabs button.on { color: var(--txt); border-bottom-color: var(--accent); }
+    .target { margin: 10px 14px 0; padding: 10px; background: #12141c; color: var(--txt); border: 1px solid var(--accent); border-radius: 8px; font: 600 15px system-ui; width: calc(100% - 28px); }
     main { flex: 1; overflow-y: auto; padding: 14px calc(14px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left)); -webkit-overflow-scrolling: touch; }
     .row { margin-bottom: 16px; }
     .row label { display: flex; justify-content: space-between; font-size: 13px; color: var(--dim); margin-bottom: 6px; }
@@ -56,6 +57,7 @@
     <button id="tab-sketch" class="on">Sketch</button>
     <button id="tab-pad">Pad</button>
   </div>
+  <select class="target" id="target" hidden></select>
   <main id="sketch"></main>
   <main id="pad" hidden></main>
 
@@ -75,49 +77,73 @@
     es.onerror = () => { dot.classList.remove('on'); sub.textContent = 'reconnecting…'; es.close(); setTimeout(connect, 2000) }
   }
   function onMessage(m) {
-    if (m.type === 'schema') renderSketch(m)
-    else if (m.type === 'param') { const el = controls.get(m.name); if (el) setControl(el, m.value) }
+    // Single-sketch viewer sends `schema` (one target); the Patch compositor
+    // sends `targets` (many). Normalise both to a target list + picker.
+    if (m.type === 'schema') setTargets([{ id: 'sketch', label: m.title || 'Sketch', params: m.params }], m.title)
+    else if (m.type === 'targets') setTargets(m.targets || [], m.title)
+    else if (m.type === 'param' && (!m.targetId || m.targetId === currentId)) { const el = controls.get(m.name); if (el) setControl(el, m.value) }
   }
 
-  // --- Sketch tab: auto-follow the current sketch's params -------------------
+  // --- Sketch tab: auto-follow the current sketch (or a chosen Patch node) ----
   const sketchEl = document.getElementById('sketch')
+  const targetSel = document.getElementById('target')
   const controls = new Map() // param name -> input element
+  let targets = [], currentId = null
+  function setTargets(list, title) {
+    targets = list || []
+    if (title) sub.textContent = title
+    // keep the current selection if it's still present, else pick the first
+    if (!targets.some((t) => t.id === currentId)) currentId = targets[0] ? targets[0].id : null
+    targetSel.innerHTML = ''
+    for (const t of targets) { const o = document.createElement('option'); o.value = t.id; o.textContent = t.label; targetSel.appendChild(o) }
+    targetSel.value = currentId
+    updateTargetVis()
+    renderCurrent()
+  }
+  function updateTargetVis() { targetSel.hidden = !padEl.hidden || targets.length < 2 } // only on Sketch tab, only when there's a choice
+  targetSel.onchange = () => { currentId = targetSel.value; renderCurrent() }
+  function renderCurrent() {
+    const t = targets.find((x) => x.id === currentId)
+    renderParams(t ? t.params : [])
+  }
+  // Set a param on the *currently selected* target.
+  function sendParam(name, value) { post({ type: 'set-param', targetId: currentId, name, value }) }
+  function queueParam(name, value) { queue(currentId + '␟' + name, { type: 'set-param', targetId: currentId, name, value }) }
   function setControl(el, v) {
     if (el.type === 'range') { el.value = v; el.oninput && el.parentEl_valEl && (el.parentEl_valEl.textContent = fmt(v)) }
     else if (el.dataset.kind === 'bool') el.classList.toggle('on', !!v)
     else if (el.tagName === 'SELECT') el.value = v
   }
   const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(2) : (+v).toFixed(3))
-  function renderSketch(m) {
-    sub.textContent = m.title || 'Sketch'
+  function renderParams(params) {
     sketchEl.innerHTML = ''
     controls.clear()
-    if (!m.params || !m.params.length) { sketchEl.innerHTML = '<div class="empty">No adjustable params on this sketch.<br>Use the <b>Pad</b> tab and map remote.* in the app.</div>'; return }
-    for (const p of m.params) {
+    if (!params || !params.length) { sketchEl.innerHTML = '<div class="empty">No adjustable params here.<br>Use the <b>Pad</b> tab and map remote.* in the app.</div>'; return }
+    for (const p of params) {
       const row = document.createElement('div'); row.className = 'row'
       if (p.type === 'bool') {
         const lab = document.createElement('label'); lab.innerHTML = `<b>${esc(p.label)}</b>`
         const wrap = document.createElement('div'); wrap.className = 'toggle'
         const sw = document.createElement('div'); sw.className = 'sw' + (p.value ? ' on' : ''); sw.dataset.kind = 'bool'
-        sw.onclick = () => { const on = !sw.classList.contains('on'); sw.classList.toggle('on', on); post({ type: 'set-param', name: p.name, value: on ? 1 : 0 }) }
+        sw.onclick = () => { const on = !sw.classList.contains('on'); sw.classList.toggle('on', on); sendParam(p.name, on ? 1 : 0) }
         wrap.appendChild(sw); row.append(lab, wrap); controls.set(p.name, sw)
       } else if (p.type === 'select' && p.options) {
         const lab = document.createElement('label'); lab.innerHTML = `<b>${esc(p.label)}</b>`
         const sel = document.createElement('select')
         for (const o of p.options) { const opt = document.createElement('option'); opt.value = o; opt.textContent = o; sel.appendChild(opt) }
         sel.value = p.value
-        sel.onchange = () => post({ type: 'set-param', name: p.name, value: sel.value })
+        sel.onchange = () => sendParam(p.name, sel.value)
         row.append(lab, sel); controls.set(p.name, sel)
       } else if (p.type === 'action') {
         const b = document.createElement('button'); b.className = 'act'; b.textContent = p.label
-        b.onclick = () => post({ type: 'set-param', name: p.name, value: 1 })
+        b.onclick = () => sendParam(p.name, 1)
         row.appendChild(b)
       } else {
         const lab = document.createElement('label'); const valEl = document.createElement('span'); valEl.className = 'val'; valEl.textContent = fmt(p.value)
         lab.innerHTML = `<b>${esc(p.label)}</b>`; lab.appendChild(valEl)
         const r = document.createElement('input'); r.type = 'range'; r.min = p.min; r.max = p.max; r.step = p.step || 0.001; r.value = p.value
         r.parentEl_valEl = valEl
-        r.oninput = () => { valEl.textContent = fmt(+r.value); queue(p.name, { type: 'set-param', name: p.name, value: +r.value }) }
+        r.oninput = () => { valEl.textContent = fmt(+r.value); queueParam(p.name, +r.value) }
         row.append(lab, r); controls.set(p.name, r)
       }
       sketchEl.appendChild(row)
@@ -170,8 +196,8 @@
 
   // --- tabs -------------------------------------------------------------------
   const tS = document.getElementById('tab-sketch'), tP = document.getElementById('tab-pad')
-  tS.onclick = () => { tS.classList.add('on'); tP.classList.remove('on'); sketchEl.hidden = false; padEl.hidden = true }
-  tP.onclick = () => { tP.classList.add('on'); tS.classList.remove('on'); padEl.hidden = false; sketchEl.hidden = true }
+  tS.onclick = () => { tS.classList.add('on'); tP.classList.remove('on'); sketchEl.hidden = false; padEl.hidden = true; updateTargetVis() }
+  tP.onclick = () => { tP.classList.add('on'); tS.classList.remove('on'); padEl.hidden = false; sketchEl.hidden = true; updateTargetVis() }
 
   sketchEl.innerHTML = '<div class="empty">Waiting for a sketch…<br>Open a sketch in the app on your laptop.</div>'
   connect()

@@ -124,6 +124,13 @@ drives the same `remote.*` sources (`/remote/<name>` → `remote.<name>`; any ke
 resolves). HTTP-on-LAN keeps the app and phone on one origin so `EventSource`
 works without the mixed-content block a deployed `https://` site would hit.
 
+**OSC / MIDI learn** — in a sketch's Input-mappings panel the 🎓 button (header,
+or per row) puts a mapping into *listening* mode; move a phone / OSC control (or
+a MIDI knob) and it binds that source to the parameter. **Multi-sketch
+targeting** — in the Patch compositor the phone controller shows a picker of
+every effect node, so you choose which one its sliders drive; the single-sketch
+viewer just follows that one sketch.
+
 Example sketches: `flow-field` (params + a default beat→speed mapping),
 `beat-rings` (beat callbacks), `motion-extraction` (webcam motion extraction
 with delay/blend/freeze params — works without a camera via its demo source).

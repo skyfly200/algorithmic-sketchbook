@@ -43,7 +43,7 @@ const MIME = {
 // --- the hub: SSE clients tagged by role, fan-out by message type ------------
 const apps = new Set()
 const phones = new Set()
-let lastSchema = null // cached so a phone that connects late still gets it
+let lastState = null // the last schema/targets, so a phone that connects late still gets it
 
 function send(res, obj) { res.write(`data: ${JSON.stringify(obj)}\n\n`) }
 function toApps(obj) { for (const r of apps) send(r, obj) }
@@ -54,12 +54,13 @@ function route(msg) {
     case 'control':
     case 'set-param':
       toApps(msg); break
-    case 'schema':
-      lastSchema = msg; toPhones(msg); break
+    case 'schema':   // single-sketch viewer
+    case 'targets':  // Patch compositor (many nodes)
+      lastState = msg; toPhones(msg); break
     case 'param':
       toPhones(msg); break
     case 'hello':
-      // a phone (re)joined — ask any app to republish its current schema
+      // a phone (re)joined — ask any app to republish its current state
       toApps({ type: 'hello' }); break
   }
 }
@@ -99,8 +100,11 @@ const server = http.createServer(async (req, res) => {
     res.write(': connected\n\n')
     const set = role === 'app' ? apps : phones
     set.add(res)
-    if (role === 'phone' && lastSchema) send(res, lastSchema) // catch a late phone up
-    if (role === 'app') toApps({ type: 'hello' })             // ask for a fresh schema
+    if (role === 'phone') {
+      if (lastState) send(res, lastState)     // catch a late phone up immediately
+      toApps({ type: 'hello' })               // and ask apps to republish fresh state
+    }
+    if (role === 'app') toApps({ type: 'hello' }) // a new app should announce its state
     const ping = setInterval(() => res.write(': ping\n\n'), 20000) // keep proxies from timing out
     req.on('close', () => { clearInterval(ping); set.delete(res) })
     return

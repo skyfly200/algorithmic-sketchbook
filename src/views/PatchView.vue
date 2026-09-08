@@ -1782,6 +1782,7 @@ function onEffectMessage(e) {
         if (pendingEffects) applyPendingEffects()
         // Natural-language adjective/colour mods waiting on this sketch's schema.
         if (nlPendingMods.has(n.id)) { applyNlMods(n.id, nlPendingMods.get(n.id)); nlPendingMods.delete(n.id) }
+        publishTargetsSoon() // this node now has params → refresh the phone's target list
       }
       break
     }
@@ -2796,9 +2797,63 @@ const tourSteps = PATCH_TOUR_STEPS // step data lives in ../lib/patch/constants.
 function startTour() { tourActive.value = true }
 function finishTour(payload) { settings.markSeen('patch'); if (payload?.disableAll) settings.setTutorials(false) }
 
+// --- phone / OSC remote bridge — multi-sketch targeting --------------------
+// Publishes every effect/filter node as a controllable "target" to the local
+// relay so the phone controller can pick which one to drive, and applies the
+// param values it sends back. Gated to the local relay origin (never the https
+// deploy). See scripts/remote-server.mjs and the standalone-viewer bridge in
+// sketches/_lib/runtime.js.
+function remoteLanHttp() {
+  if (location.protocol !== 'http:') return false
+  const h = location.hostname
+  return h === 'localhost' || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)
+}
+let remoteES = null, remotePubTimer = 0
+function remoteSend(msg) {
+  try { fetch('/remote-hub/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg), keepalive: true }) } catch { /* relay off */ }
+}
+function remoteTargets() {
+  const out = []
+  for (const n of nodes) {
+    if (n.type !== 'effect' && n.type !== 'filter') continue
+    const c = effectControls.get(n.id)
+    if (!c || !c.schema) continue
+    const params = Object.entries(c.schema).map(([name, sp]) => ({
+      name, label: sp.label ?? name, type: sp.type ?? 'range',
+      min: sp.min ?? 0, max: sp.max ?? 1, step: sp.step ?? 0.01, options: sp.options ?? null,
+      value: c.values?.[name] ?? sp.value ?? 0,
+    }))
+    if (params.length) out.push({ id: String(n.id), label: nodeTitle(n), params })
+  }
+  return out
+}
+function publishTargets() { if (remoteES) remoteSend({ type: 'targets', title: 'Patch', targets: remoteTargets() }) }
+function publishTargetsSoon() { clearTimeout(remotePubTimer); remotePubTimer = setTimeout(publishTargets, 150) }
+function initRemoteBridge() {
+  if (!remoteLanHttp() || new URLSearchParams(location.search).get('remote') === '0') return
+  const connect = () => {
+    try { remoteES = new EventSource('/remote-hub/events?role=app') } catch { return }
+    remoteES.onmessage = (e) => {
+      let m; try { m = JSON.parse(e.data) } catch { return }
+      if (m.type === 'hello') { publishTargets(); return }
+      if (m.type !== 'set-param' || m.targetId == null) return
+      const id = +m.targetId
+      const c = effectControls.get(id)
+      if (c && c.schema && m.name in c.schema) {
+        setEffectParam(id, m.name, m.value)
+        remoteSend({ type: 'param', targetId: m.targetId, name: m.name, value: m.value }) // sync other phones
+      }
+    }
+    remoteES.onerror = () => { remoteES.close(); remoteES = null; setTimeout(connect, 5000) }
+  }
+  connect()
+  publishTargetsSoon()
+}
+
 onMounted(async () => {
   document.addEventListener('fullscreenchange', onFsChange)
   document.addEventListener('webkitfullscreenchange', onFsChange)
+  initRemoteBridge() // phone / OSC multi-target control (local relay only)
   setGooglePhotosClientId(settings.googleClientId) // enable Google Photos if a client id is set
   if (settings.shouldAutoTour('patch')) setTimeout(startTour, 600)
   // Handoff from the Mixer / Autopilot: a converted graph waiting to be edited.
@@ -2889,7 +2944,13 @@ onBeforeUnmount(() => {
   }
   geoRenderer?.dispose?.()
   geoRenderer = null
+  remoteES?.close()
+  clearTimeout(remotePubTimer)
 })
+
+// Republish the phone target list when the set of controllable nodes changes
+// (a node added/removed, or an effect announced its schema).
+watch(() => nodes.map((n) => n.id).join(','), publishTargetsSoon)
 </script>
 
 <template>
