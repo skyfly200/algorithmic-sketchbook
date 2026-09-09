@@ -28,8 +28,11 @@ const vuetify = createVuetify({
 createApp(App).use(createPinia()).use(router).use(vuetify).mount('#app')
 
 // Restore any media the user imported in a previous session (blobs live in
-// IndexedDB; this mints fresh object URLs for them).
-hydrateMediaLibrary()
+// IndexedDB; this mints fresh object URLs for them). Deferred to idle so the
+// IndexedDB read never delays first paint — nothing on the gallery needs it.
+const hydrate = () => hydrateMediaLibrary()
+if ('requestIdleCallback' in window) requestIdleCallback(hydrate, { timeout: 2000 })
+else setTimeout(hydrate, 200)
 
 // Register the offline service worker (built only in production). Scope is the
 // deployment root so it covers the gallery, viewer and every iframed sketch.

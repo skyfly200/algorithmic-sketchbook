@@ -2927,7 +2927,7 @@ function trackMouse(e) {
 }
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
-  clearInterval(autoTimer)
+  // (the autopilot clock lives in useAutopilot now and disposes with its scope)
   window.removeEventListener('resize', resizeStage)
   window.removeEventListener('message', onEffectMessage)
   window.removeEventListener('keydown', onKey)

@@ -89,6 +89,17 @@ onMounted(() => {
     .map((s) => s.slug)
   settings.ensureMigrated(effectSlugs)
   if (settings.shouldAutoTour('app')) startTour()
+
+  // Warm the heavy chunks once the gallery is idle so the first navigation is
+  // instant. Patch is prefetched eagerly (the user's main destination); the
+  // single-sketch viewer is common too. Guarded by requestIdleCallback so it
+  // never competes with the initial paint.
+  const warm = () => {
+    import('./views/SketchView.vue').catch(() => {})
+    import('./views/PatchView.vue').catch(() => {})
+  }
+  if ('requestIdleCallback' in window) requestIdleCallback(warm, { timeout: 3000 })
+  else setTimeout(warm, 1500)
 })
 </script>
 
@@ -135,7 +146,19 @@ onMounted(() => {
     </v-app-bar>
 
     <v-main>
-      <router-view />
+      <!-- Cross-fade between views, and show a light loader while a lazy route
+           chunk (Patch/Mixer/Autopilot pull in three.js) downloads — instead of
+           a blank flash. Suspense catches the async route component. -->
+      <router-view v-slot="{ Component }">
+        <transition name="view-fade" mode="out-in">
+          <Suspense>
+            <component :is="Component" />
+            <template #fallback>
+              <div class="view-loading"><v-progress-circular indeterminate color="primary" size="40" /></div>
+            </template>
+          </Suspense>
+        </transition>
+      </router-view>
     </v-main>
 
     <TourOverlay v-model="tourActive" :steps="tourSteps" allow-disable-all @finish="finishTour" />
@@ -143,6 +166,13 @@ onMounted(() => {
 </template>
 
 <style>
+/* Route cross-fade — old view fades out, new fades in once it's ready. */
+.view-fade-enter-active,
+.view-fade-leave-active { transition: opacity 0.18s ease; }
+.view-fade-enter-from,
+.view-fade-leave-to { opacity: 0; }
+/* Loader shown while a lazy route chunk is still downloading. */
+.view-loading { display: grid; place-items: center; min-height: 70vh; }
 .app-title {
   display: inline-flex;
   align-items: center;

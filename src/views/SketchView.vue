@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSketchStore } from '../stores/sketches'
 import { useViewerStore, QUALITY_OPTIONS } from '../stores/viewer'
@@ -62,6 +62,14 @@ function randomizeParams() {
 
 const frame = ref(null)
 const reloadKey = ref(0)
+// Boot cover: opaque while a sketch (re)loads, faded out on sketch:ready (or a
+// short fallback for standalone pages that don't announce). Any src/reload
+// change re-covers, hiding the black reboot flash.
+const booting = ref(true)
+let bootFallback = 0
+watch([frameSrc, reloadKey], () => { booting.value = true })
+function bootDone() { booting.value = false; clearTimeout(bootFallback) }
+function onFrameLoad() { clearTimeout(bootFallback); bootFallback = setTimeout(() => { booting.value = false }, 900) }
 const showControls = ref(false)
 
 // Populated when the sketch announces its params over postMessage.
@@ -90,6 +98,7 @@ function onMessage(e) {
   }
   if (e.data?.type === 'sketch:learned') { onLearned(e.data.source); return }
   if (e.data?.type !== 'sketch:ready') return
+  bootDone() // sketch initialised → fade the boot cover
   controls.value = {
     schema: e.data.schema ?? {},
     values: { ...e.data.values },
@@ -401,7 +410,15 @@ onUnmounted(() => {
           :src="frameSrc"
           class="sketch-frame"
           allow="fullscreen; microphone; camera; midi; accelerometer; gyroscope; xr-spatial-tracking"
+          @load="onFrameLoad"
         />
+        <!-- Boot cover: hides the black flash while a sketch (re)loads. Shows the
+             card poster if we have one, else a soft gradient + spinner; fades out
+             the moment the sketch announces it's ready. -->
+        <div class="boot-cover" :class="{ show: booting }">
+          <v-img v-if="sketch.thumbnail" :src="sketch.thumbnail" cover class="boot-poster" />
+          <v-progress-circular indeterminate color="primary" size="36" />
+        </div>
         <div v-if="paused" class="paused-badge" title="Press Space to resume">
           <v-icon icon="mdi-pause" size="16" /> paused · Space to resume
         </div>
@@ -727,6 +744,20 @@ onUnmounted(() => {
   border-radius: 8px;
   background: #000;
 }
+.boot-cover {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 40%, #1a1f2b, #0a0b0f);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease;
+}
+.boot-cover.show { opacity: 1; }
+.boot-poster { position: absolute; inset: 0; filter: brightness(0.5) saturate(0.85); }
 .paused-badge {
   position: absolute;
   top: 10px;

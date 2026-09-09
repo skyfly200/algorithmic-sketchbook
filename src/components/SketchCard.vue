@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { traitsOf, elementMeta, energyMeta } from '../registry/traits'
 import { effectivePerf } from '../registry/localPerf'
 import { useSettingsStore } from '../stores/settings'
+import { getPoster, putPoster } from '../lib/posterDb'
 
 const props = defineProps({
   sketch: { type: Object, required: true },
@@ -88,13 +89,21 @@ function release() {
 }
 
 async function capturePoster() {
+  const ver = props.sketch.updated || props.sketch.created || ''
   try {
     const cached = sessionStorage.getItem(posterKey(props.sketch.slug))
-    if (cached) {
-      poster.value = cached
+    if (cached) { poster.value = cached; return }
+  } catch {}
+  // Persistent cache (survives reloads); versioned by the sketch's updated date.
+  try {
+    const stored = await getPoster(props.sketch.slug, ver)
+    if (stored) {
+      poster.value = stored
+      try { sessionStorage.setItem(posterKey(props.sketch.slug), stored) } catch {}
       return
     }
   } catch {}
+  if (cancelled) return
   await slot()
   if (cancelled) {
     release()
@@ -136,9 +145,8 @@ async function capturePoster() {
     }
     if (url) {
       poster.value = url
-      try {
-        sessionStorage.setItem(posterKey(props.sketch.slug), url)
-      } catch {}
+      try { sessionStorage.setItem(posterKey(props.sketch.slug), url) } catch {}
+      putPoster(props.sketch.slug, ver, url) // persist across reloads (best-effort)
     }
   } catch {
   } finally {
@@ -251,6 +259,10 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* Let the browser skip rendering/layout for cards scrolled off-screen on the
+     long gallery grid; the intrinsic size keeps the scrollbar honest. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
 }
 .card-preview {
   position: relative;
