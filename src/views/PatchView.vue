@@ -17,6 +17,7 @@ import { useRouter } from 'vue-router'
 import { useSketchStore, CATEGORIES } from '../stores/sketches'
 import { useSettingsStore } from '../stores/settings'
 import { PATCH_HANDOFF_KEY } from '../lib/mixToPatch'
+import { takeMediaHandoff, takeTraceHandoff } from '../lib/collectionsHandoff.js'
 import { inputParams, groupInputSources } from '../lib/inputParams'
 import { parsePointFile, parseLas, finalizePoints } from '../lib/points.js'
 import { NL_TEXT_DEFAULTS, specNodeParams, resolveEffectMods } from '../lib/nlDesigner.js'
@@ -2485,10 +2486,13 @@ function applyPolyShape(id, name) {
 // ../lib/patch/traceShapes.js); here we drop what it finds into the graph.
 const shapeTracerOpen = ref(false)
 const shapeTracerMode = ref('add') // 'add' → a node per shape · 'fill' → one node's points
+const shapeTracerSrc = ref('')     // optional preload URL (e.g. a Collections plate)
 let shapeTracerNodeId = null
-function openShapeTracer(nodeId = null) {
+let pendingTraceUrl = null          // Collections "Trace shapes" handoff, opened after mount
+function openShapeTracer(nodeId = null, src = '') {
   shapeTracerNodeId = nodeId
   shapeTracerMode.value = nodeId != null ? 'fill' : 'add'
+  shapeTracerSrc.value = src || ''
   shapeTracerOpen.value = true
 }
 function onTraceShapes(picks) {
@@ -2877,6 +2881,41 @@ onMounted(async () => {
       }
     } catch { /* fall through to normal load */ }
   }
+  // Handoff from Collections "Use in Patch": import the plate URL into the media
+  // library and drop a Media → Output graph so it's live immediately. Commons
+  // serves ACAO:* so the fetch and the resulting canvas draw are CORS-clean.
+  const mediaHand = takeMediaHandoff()
+  if (mediaHand?.url) {
+    try {
+      const r = await fetch(mediaHand.url)
+      if (!r.ok) throw new Error(r.status)
+      const blob = await r.blob()
+      const item = addMediaFile(new File([blob], mediaHand.name || 'collection image', { type: blob.type || 'image/jpeg' }))
+      addNode('media'); const mNode = nodes[nodes.length - 1]
+      mNode.params.mode = 'library'; mNode.params.mediaId = item.id
+      addNode('output'); const oNode = nodes[nodes.length - 1]
+      await nextTick()
+      oNode.x = 320
+      edges.push({ from: mNode.id, to: oNode.id, port: 0 })
+      persist()
+      showToast('Added ' + (mediaHand.name || 'image') + ' from Collections')
+    } catch {
+      showToast('Could not load that image (the source may be unavailable)')
+    }
+    await nextTick()
+    layoutTick.value++
+    resizeStage()
+    window.addEventListener('resize', resizeStage)
+    window.addEventListener('message', onEffectMessage)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('pointermove', trackMouse)
+    raf = requestAnimationFrame(loop)
+    return
+  }
+  // Handoff from Collections "Trace shapes": open the tracer preloaded with the
+  // plate; falls through to normal setup so the board is ready behind it.
+  const traceHand = takeTraceHandoff()
+  if (traceHand?.url) pendingTraceUrl = traceHand.url
   // Deep link from the Library / Display mode: ?load=<id> opens a saved
   // routing, &output=1 starts chrome-free (for projection).
   const qs = new URLSearchParams(location.hash.split('?')[1] || '')
@@ -2920,6 +2959,8 @@ onMounted(async () => {
   // once its iframe announces ready (onEffectMessage drains pendingEffects).
   if (saved?.effects && Object.keys(saved.effects).length) { pendingEffects = { ...saved.effects }; nextTick(applyPendingEffects) }
   raf = requestAnimationFrame(loop)
+  // Collections "Trace shapes" handoff: open the tracer preloaded with the plate.
+  if (pendingTraceUrl) { openShapeTracer(null, pendingTraceUrl); pendingTraceUrl = null }
 })
 function trackMouse(e) {
   mouseN.x = e.clientX / window.innerWidth
@@ -3977,7 +4018,7 @@ watch(() => nodes.map((n) => n.id).join(','), publishTargetsSoon)
       @open-settings="router.push({ name: 'settings' })"
     />
 
-    <ShapeTracer v-model="shapeTracerOpen" :mode="shapeTracerMode" @apply="onTraceShapes" />
+    <ShapeTracer v-model="shapeTracerOpen" :mode="shapeTracerMode" :src="shapeTracerSrc" @apply="onTraceShapes" />
 
     <transition name="toast-fade">
       <div v-if="toast" class="save-toast"><v-icon icon="mdi-check-circle" size="16" class="mr-1" />{{ toast }}</div>

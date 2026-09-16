@@ -19,6 +19,8 @@ export default createRouter({
     { path: '/docs/:page?', name: 'docs', component: () => import('../views/DocsView.vue'), props: true },
     { path: '/auto', name: 'autopilot', component: () => import('../views/AutopilotView.vue') },
     { path: '/library', name: 'library', component: () => import('../views/LibraryView.vue') },
+    { path: '/collections', name: 'collections', component: () => import('../views/CollectionsView.vue') },
+    { path: '/collections/:slug', name: 'collection', component: () => import('../views/CollectionsView.vue'), props: true },
     { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
   ],
 })

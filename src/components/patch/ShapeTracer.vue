@@ -6,13 +6,15 @@
  * pure tracer in ../../lib/patch/traceShapes.js. Detected shapes are shown over
  * the photo; tap to keep/drop each, then Apply hands the chosen ones to the host.
  */
-import { ref, reactive, computed, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, onBeforeUnmount, nextTick, watch } from 'vue'
 import { extractShapes } from '../../lib/patch/traceShapes.js'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   // 'add' → host makes a Polygon node per shape; 'fill' → replace one node's points
   mode: { type: String, default: 'add' },
+  // optional image URL to preload when opened (e.g. a Collections plate)
+  src: { type: String, default: '' },
 })
 const emit = defineEmits(['update:modelValue', 'apply'])
 
@@ -53,6 +55,23 @@ function onFile(e) {
   img.src = URL.createObjectURL(file)
   e.target.value = '' // allow re-picking the same file
 }
+// Preload a remote image (a Collections plate) when the dialog opens with a src.
+// crossOrigin='anonymous' keeps the working canvas clean so tracing can read
+// pixels — Commons serves the file with Access-Control-Allow-Origin: *.
+function loadFromUrl(url) {
+  err.value = ''
+  busy.value = true
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  img.onload = () => { busy.value = false; drawToWork(img, img.naturalWidth, img.naturalHeight) }
+  img.onerror = () => { busy.value = false; err.value = 'Could not load that image from the source.' }
+  img.src = url
+}
+watch(
+  () => props.modelValue,
+  (open) => { if (open && props.src) loadFromUrl(props.src) },
+  { immediate: true },
+)
 async function startCamera() {
   err.value = ''
   try {

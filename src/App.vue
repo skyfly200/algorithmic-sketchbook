@@ -119,6 +119,7 @@ onMounted(() => {
         <v-btn data-tour="patch" prepend-icon="mdi-vector-polyline" variant="tonal" size="small" class="mr-2" title="Patch — wire effects into a live node graph" :to="{ name: 'patch' }">Patch</v-btn>
         <v-btn data-tour="mixer" prepend-icon="mdi-layers-triple-outline" variant="tonal" size="small" class="mr-2" title="Mixer — blend multiple effects into one composite" :to="{ name: 'mixer' }">Mixer</v-btn>
         <v-btn data-tour="present" prepend-icon="mdi-projector-screen-outline" variant="tonal" size="small" class="mr-2" title="Display mode — fullscreen projection view" :to="{ name: 'present' }">Display mode</v-btn>
+        <v-btn prepend-icon="mdi-image-multiple-outline" variant="text" size="small" class="mr-2" title="Collections — public-domain imagery to build on" :to="{ name: 'collections' }">Collections</v-btn>
         <v-btn data-tour="library" prepend-icon="mdi-bookmark-multiple-outline" variant="text" size="small" class="mr-2" title="Library — your saved patches, mixes and scenes" :to="{ name: 'library' }">Library</v-btn>
         <v-btn icon="mdi-book-open-variant" variant="text" title="Docs — how the sketchbook works" :to="{ name: 'docs' }" />
         <v-btn data-tour="settings" icon="mdi-cog-outline" variant="text" title="Settings — tutorials, effect pool and more" :to="{ name: 'settings' }" />
@@ -136,6 +137,7 @@ onMounted(() => {
           <v-list-item prepend-icon="mdi-vector-polyline" title="Patch" :to="{ name: 'patch' }" />
           <v-list-item prepend-icon="mdi-layers-triple-outline" title="Mixer" :to="{ name: 'mixer' }" />
           <v-list-item prepend-icon="mdi-projector-screen-outline" title="Display mode" :to="{ name: 'present' }" />
+          <v-list-item prepend-icon="mdi-image-multiple-outline" title="Collections" :to="{ name: 'collections' }" />
           <v-list-item prepend-icon="mdi-bookmark-multiple-outline" title="Library" :to="{ name: 'library' }" />
           <v-list-item prepend-icon="mdi-book-open-variant" title="Docs" :to="{ name: 'docs' }" />
           <v-list-item prepend-icon="mdi-cog-outline" title="Settings" :to="{ name: 'settings' }" />
