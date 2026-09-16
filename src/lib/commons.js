@@ -34,7 +34,8 @@ function toItem(page) {
   const ext = info.extmetadata || {}
   const title = String(page.title || '').replace(/^File:/, '').replace(/\.[a-z0-9]+$/i, '')
   return {
-    id: page.pageid,
+    id: `commons:${page.pageid}`,
+    provider: 'commons',
     title,
     thumb: info.thumburl || info.url,
     thumbWidth: info.thumbwidth || info.width,

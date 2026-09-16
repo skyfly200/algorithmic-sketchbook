@@ -1,22 +1,25 @@
 <script setup>
 /**
  * Collections — built-in libraries of public-domain reference imagery to build
- * on. The browse page lists each collection; opening one fetches its plates live
- * from Wikimedia Commons (in the browser — the build has no egress) and shows a
- * grid. From a plate you can open it at the source, pull it into a Patch Media
- * node, or trace it to polygon mattes. Nothing is downloaded ahead of time; the
- * image bytes only load when you view or use a plate.
+ * on, plus a live keyword search across Wikimedia Commons and the Internet
+ * Archive. The browse page lists curated sets and hosts the search box; opening
+ * a set fetches its plates live (in the browser — the build has no egress). From
+ * any plate you can open it at the source, pull it into a Patch Media node, or
+ * trace it to polygon mattes. Nothing is downloaded ahead of time; the image
+ * bytes only load when you view or use a plate.
  */
 import { ref, reactive, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { COLLECTIONS, collectionBySlug } from '../collections'
 import { fetchCollectionItems } from '../lib/commons.js'
+import { searchCollections, ensureFullUrl, PROVIDERS } from '../lib/collectionSearch.js'
 import { handOffMediaToPatch, handOffTraceToPatch } from '../lib/collectionsHandoff.js'
 
 const props = defineProps({ slug: { type: String, default: '' } })
 const router = useRouter()
 
 const collection = computed(() => (props.slug ? collectionBySlug(props.slug) : null))
+const providerLabel = (id) => PROVIDERS.find((p) => p.id === id)?.label || id
 
 // Cover thumbnails, fetched live (one plate per collection) for the browse grid.
 const covers = reactive({})
@@ -64,12 +67,52 @@ watch(
 function openCollection(slug) { router.push({ name: 'collection', params: { slug } }) }
 function backToList() { router.push({ name: 'collections' }) }
 
-function useInPatch(item) {
-  handOffMediaToPatch(item.url, item.title || 'collection image')
+// --- live search across sources -------------------------------------------
+const query = ref('')
+const sources = reactive({ commons: true, archive: true })
+const searchItems = ref([])
+const searching = ref(false)
+const searchError = ref('')
+const searched = ref(false)
+async function runSearch() {
+  const q = query.value.trim()
+  if (!q) return
+  const picked = PROVIDERS.map((p) => p.id).filter((id) => sources[id])
+  if (!picked.length) { searchError.value = 'Pick at least one source.'; return }
+  searching.value = true
+  searchError.value = ''
+  searched.value = true
+  try {
+    const { items: found, errors } = await searchCollections(q, picked, 40)
+    searchItems.value = found
+    if (!found.length) searchError.value = errors.length ? 'The source(s) could not be reached. Try again.' : 'No results for “' + q + '”.'
+    else if (errors.length) searchError.value = errors.map(providerLabel).join(' & ') + ' could not be reached — showing the rest.'
+  } catch (e) {
+    searchError.value = 'Search failed (' + (e?.message || 'network error') + ').'
+  } finally {
+    searching.value = false
+  }
+}
+function clearSearch() { query.value = ''; searchItems.value = []; searched.value = false; searchError.value = '' }
+
+// Resolve an item's full-res URL (archive items resolve on demand), stash the
+// handoff and jump to Patch. A brief overlay covers the resolve step.
+const handoffBusy = ref(false)
+async function withFullUrl(item) {
+  handoffBusy.value = true
+  try { return await ensureFullUrl(item) }
+  finally { handoffBusy.value = false }
+}
+async function useInPatch(item) {
+  const url = await withFullUrl(item)
+  if (!url) { searchError.value = 'Could not resolve that image.'; return }
+  handOffMediaToPatch(url, item.title || 'collection image')
   router.push({ name: 'patch' })
 }
-function traceShapes(item) {
-  handOffTraceToPatch(item.url, item.title || 'collection image')
+async function traceShapes(item) {
+  const url = await withFullUrl(item)
+  if (!url) { searchError.value = 'Could not resolve that image.'; return }
+  handOffTraceToPatch(url, item.title || 'collection image')
   router.push({ name: 'patch' })
 }
 function openSource(item) { window.open(item.descriptionUrl, '_blank', 'noopener') }
@@ -88,6 +131,69 @@ function stripName(a) { return (a || '').replace(/\s+/g, ' ').trim() }
           then pull a plate into Patch or trace it to shapes. Plates load live from the source.
         </p>
       </div>
+
+      <!-- Live search across sources -->
+      <v-card variant="tonal" class="mb-6 pa-3">
+        <div class="d-flex flex-wrap align-center" style="gap: 10px">
+          <v-text-field
+            v-model="query"
+            density="compact"
+            variant="outlined"
+            hide-details
+            clearable
+            placeholder="Search public-domain imagery (e.g. “waves”, “botanical”, “star map”)"
+            prepend-inner-icon="mdi-magnify"
+            style="min-width: 260px; flex: 1 1 320px"
+            @keyup.enter="runSearch"
+            @click:clear="clearSearch"
+          />
+          <v-btn color="primary" :loading="searching" prepend-icon="mdi-magnify" @click="runSearch">Search</v-btn>
+        </div>
+        <div class="d-flex flex-wrap align-center mt-2" style="gap: 4px">
+          <span class="text-caption text-medium-emphasis mr-1">Sources:</span>
+          <v-checkbox
+            v-for="p in PROVIDERS"
+            :key="p.id"
+            v-model="sources[p.id]"
+            :label="p.label"
+            density="compact"
+            hide-details
+            class="mr-2"
+          />
+        </div>
+      </v-card>
+
+      <!-- Search results -->
+      <template v-if="searched">
+        <div class="d-flex align-center mb-3">
+          <h2 class="text-h6 mb-0">Results</h2>
+          <v-spacer />
+          <v-btn size="small" variant="text" prepend-icon="mdi-close" @click="clearSearch">Clear</v-btn>
+        </div>
+        <div v-if="searching" class="d-flex justify-center py-12">
+          <v-progress-circular indeterminate color="primary" size="42" />
+        </div>
+        <template v-else>
+          <v-alert v-if="searchError" :type="searchItems.length ? 'info' : 'warning'" variant="tonal" class="mb-4">{{ searchError }}</v-alert>
+          <div v-if="searchItems.length" class="plate-grid mb-6">
+            <div v-for="it in searchItems" :key="it.id" class="plate">
+              <div class="plate-img plate-img--dark" @click="lightbox = it">
+                <img :src="it.thumb" :alt="it.title" loading="lazy" />
+                <span class="provider-badge">{{ providerLabel(it.provider) }}</span>
+              </div>
+              <div class="plate-title" :title="it.title">{{ it.title }}</div>
+              <div class="plate-actions">
+                <v-btn size="x-small" variant="tonal" prepend-icon="mdi-vector-polyline" title="Add as a Media node in Patch" @click="useInPatch(it)">Patch</v-btn>
+                <v-btn size="x-small" variant="tonal" prepend-icon="mdi-shape-plus" title="Trace this to polygon mattes" @click="traceShapes(it)">Trace</v-btn>
+                <v-btn size="x-small" variant="text" icon="mdi-open-in-new" title="Open at source" @click="openSource(it)" />
+              </div>
+            </div>
+          </div>
+        </template>
+        <v-divider class="mb-6" />
+      </template>
+
+      <h2 class="text-h6 mb-3">Curated sets</h2>
       <v-row>
         <v-col v-for="c in COLLECTIONS" :key="c.slug" cols="12" sm="6" md="4">
           <v-card class="coll-card h-100" @click="openCollection(c.slug)">
@@ -171,6 +277,11 @@ function stripName(a) { return (a || '').replace(/\s+/g, ' ').trim() }
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Brief cover while an archive image URL resolves before jumping to Patch -->
+    <v-overlay :model-value="handoffBusy" class="d-flex align-center justify-center" persistent>
+      <v-progress-circular indeterminate color="primary" size="48" />
+    </v-overlay>
   </v-container>
 </template>
 
@@ -208,6 +319,31 @@ function stripName(a) { return (a || '').replace(/\s+/g, ' ').trim() }
   overflow: hidden;
 }
 .plate-img img { width: 100%; height: 100%; object-fit: contain; }
+/* Search results are mixed media (photos, maps, plates) — a dark mat reads
+   better than the light ink-on-paper mat used for the wave plates. */
+.plate-img--dark { background: #0a0c12; position: relative; }
+.provider-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #cfd6e6;
+  pointer-events: none;
+}
+.plate-title {
+  font-size: 12px;
+  line-height: 1.3;
+  padding: 6px 8px 0;
+  color: #c7cede;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .plate-actions {
   display: flex;
   align-items: center;
