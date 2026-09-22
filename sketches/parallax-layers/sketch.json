@@ -1,0 +1,7 @@
+{
+  "title": "Parallax Layers",
+  "description": "Procedural ridgelines stacked from horizon to foreground, each drifting at its own speed so the scene reads with real depth — far layers pale, hazy and slow, near layers dark and racing. A sun/moon disc and a scatter of twinkling stars sit behind it all, and moving the pointer swings the whole stack for a hand-held parallax. Every ridge is generated from fractal value-noise, so nothing repeats. Layers, drift speed, parallax depth, ruggedness, atmosphere, palette (Dusk / Forest / Mono / Vapor / Ember), sun height and size, and star density are live params; the pointer drives the look and beats give the light a gentle bob.",
+  "tags": ["generative", "landscape", "parallax", "noise", "interactive", "ambient"],
+  "tech": ["canvas2d"],
+  "created": "2026-09-22"
+}

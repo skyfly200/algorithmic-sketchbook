@@ -1,0 +1,7 @@
+{
+  "title": "Kusama Dots",
+  "description": "A breathing field of polka dots in the spirit of Yayoi Kusama's dot paintings and Infinity rooms: a lattice of circles whose sizes ripple from a slow noise field and pulse outward in radial waves, on her signature high-contrast palettes (red/white, yellow/black, pink/red, black/white, and a multicolour option). It's a generative homage rather than a copy of any single work — the pattern is procedural and endless. A Nets mode inverts the idea into her infinity-net look, where the dots become the gaps in a painted mesh. Density, dot size, size variation, wave depth and speed, jitter, rotation and breathing are live params; beats send a pulse rolling through the field.",
+  "tags": ["generative", "dots", "pattern", "op-art", "audio-reactive", "homage"],
+  "tech": ["canvas2d"],
+  "created": "2026-09-22"
+}

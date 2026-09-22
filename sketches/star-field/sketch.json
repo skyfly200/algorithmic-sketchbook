@@ -1,0 +1,7 @@
+{
+  "title": "Star Field",
+  "description": "The classic fly-through: stars stream out of a vanishing point toward you, near ones sweeping past far faster than distant ones. Turn up Warp and the points stretch into hyperspace streaks while the whole field accelerates — push it and it tips into a full jump, with a motion-blur smear for extra speed. A slow Twist barrel-rolls the field, three colour modes (white, temperature-by-depth, rainbow) recolour it, and the pointer steers where the stars emerge from. Star count, speed, warp, spread, twist and glow are live params; beats fire a warp burst.",
+  "tags": ["generative", "space", "3d", "warp", "audio-reactive", "retro"],
+  "tech": ["canvas2d"],
+  "created": "2026-09-22"
+}
