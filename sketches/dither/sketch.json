@@ -1,0 +1,7 @@
+{
+  "title": "Dither",
+  "description": "Classic dithering algorithms applied to a live source: ordered (Bayer matrix), Floyd-Steinberg error diffusion, Atkinson, and random noise. Palette ranges from monochrome 1-bit through a configurable colour count, with adjustable scale so you can pixelate down before dithering. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": ["filter", "dither", "retro", "pixel-art", "image-processing"],
+  "tech": ["canvas2d"],
+  "created": "2026-09-25"
+}
