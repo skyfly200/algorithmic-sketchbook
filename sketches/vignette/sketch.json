@@ -1,0 +1,14 @@
+{
+  "title": "Vignette",
+  "description": "Vignette — darkens, lightens or tints the frame edges to pull focus toward a chosen spot. Adjustable size, softness, roundness vs. squareness, and an offset centre; can pulse on the beat. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "vignette",
+    "lens",
+    "photo"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

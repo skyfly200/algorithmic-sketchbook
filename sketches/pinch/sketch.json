@@ -1,0 +1,14 @@
+{
+  "title": "Pinch",
+  "description": "Pinch — pulls the image into a point, or with a negative amount bulges it outward, within an adjustable radius and falloff curve around a movable centre. Amount follows audio. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "pinch",
+    "bulge",
+    "distortion"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

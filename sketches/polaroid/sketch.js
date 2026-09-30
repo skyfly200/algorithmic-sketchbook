@@ -3,13 +3,15 @@
 // with the fat bottom lip, and a layer of physical damage — hair-thin scratches,
 // dust specks, greasy smudges and blooming water stains. The damage is generated
 // once from the sketch seed (so every instance is scuffed differently) and sits
-// static over the moving image, like a real print you keep re-filming.
+// static over the moving image, like a real print you keep re-filming. The grade,
+// border and vignette run in a fragment shader; the damage layer is baked on a 2D
+// canvas and uploaded as a texture only when a wear slider changes.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const rt = createRuntime()
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
 
 const TONES = {
   Faded: { lift: 26, gamma: 1.05, sat: 0.72, tint: [1.03, 1.0, 0.92], fade: 0.14 },
@@ -30,20 +32,64 @@ const params = rt.params({
 })
 
 const src = createSource()
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d', { willReadFrequently: true })
 // damage lives on its own static layer, rebuilt only when a wear param changes
 const dmg = document.createElement('canvas')
 const dctx = dmg.getContext('2d')
-let W = 0, H = 0, bw = 0, bh = 0
+let W = 0, H = 0
 let dmgKey = ''
 
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform sampler2D u_dmg;     // static damage layer (straight alpha)
+uniform vec2 u_res;
+uniform vec2 u_rect_xy;      // content window origin (px, y down)
+uniform vec2 u_rect_wh;      // content window size (px)
+uniform bool u_border;
+uniform float u_lift;        // 0..1
+uniform float u_invG;
+uniform float u_sat;
+uniform vec3 u_tint;
+uniform float u_fade;
+uniform float u_vig;
+out vec4 outColor;
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+void main() {
+  vec2 p = vec2(v_uv.x, 1.0 - v_uv.y) * u_res;
+  vec2 half_ = u_rect_wh * 0.5;
+  vec2 q = abs(p - (u_rect_xy + half_)) - half_;
+  bool inside = q.x <= 0.0 && q.y <= 0.0;
+  vec3 col;
+  if (!inside) {
+    // white instant-film border with a soft shadow around the window
+    float dist = length(max(q, 0.0));
+    float blur = min(u_res.x, u_res.y) * 0.02;
+    col = mix(vec3(0.937, 0.914, 0.863), vec3(0.0), 0.35 * (1.0 - smoothstep(0.0, blur, dist)));
+  } else {
+    vec2 su = (p - u_rect_xy) / u_rect_wh;
+    vec3 c = texture(u_tex, vec2(su.x, 1.0 - su.y)).rgb;
+    float l = dot(c, LUMA);
+    c = l + (c - l) * u_sat;
+    c = u_lift + (1.0 - u_lift) * pow(max(c, 0.0), vec3(u_invG));   // gamma + lifted blacks
+    c *= u_tint;
+    col = c + (vec3(214.0, 204.0, 186.0) / 255.0 - c) * u_fade;    // milky fade toward warm grey
+    // vignette within the window
+    float rad = length(u_rect_wh) * 0.5;
+    float vt = clamp((length(p - (u_rect_xy + half_)) - rad * 0.55) / (rad * 0.45), 0.0, 1.0);
+    col = mix(col, vec3(20.0, 14.0, 8.0) / 255.0, 0.55 * u_vig * vt);
+    // static damage on top
+    vec4 d = texture(u_dmg, v_uv);
+    col = mix(col, d.rgb, d.a);
+  }
+  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`
+const gf = createGLFilter({ rt, src, canvas, frag: FRAG })
+const dmgTex = gf.addTexture('u_dmg', 1)
+
 function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  const cap = 1000, s = Math.min(1, cap / Math.max(W, H))
-  bw = buf.width = Math.max(2, Math.round(W * s))
-  bh = buf.height = Math.max(2, Math.round(H * s))
+  W = gf.width
+  H = gf.height
   dmgKey = '' // force damage rebuild at new size
 }
 
@@ -138,7 +184,7 @@ function buildDamage() {
       : `rgba(10,8,6,${(0.15 + R() * 0.5) * params.dust})`
     dctx.beginPath(); dctx.arc(x, y, r, 0, Math.PI * 2); dctx.fill()
   }
-  // reset the seeded stream position roughly (rng already advanced; fine)
+  dmgTex.upload(dmg)
   dmgKey = key()
 }
 function key() {
@@ -147,69 +193,23 @@ function key() {
 
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-  const rect = contentRect()
-  // draw + grade the source into the reduced buffer
-  src.draw(bctx, bw, bh, { mirror: params.mirror })
-  const im = bctx.getImageData(0, 0, bw, bh)
-  const d = im.data
-  const T = TONES[params.tone]
-  const lift = T.lift * (0.4 + params.age), inv = 1 / T.gamma
-  const [tr, tg, tb] = T.tint
-  const fade = T.fade * params.age
-  for (let i = 0; i < d.length; i += 4) {
-    let r = d[i], g = d[i + 1], b = d[i + 2]
-    const l = r * 0.299 + g * 0.587 + b * 0.114
-    r = l + (r - l) * T.sat; g = l + (g - l) * T.sat; b = l + (b - l) * T.sat
-    // gamma + lifted blacks, tint, and a milky fade toward warm grey
-    r = lift + (255 - lift) * Math.pow(r / 255, inv)
-    g = lift + (255 - lift) * Math.pow(g / 255, inv)
-    b = lift + (255 - lift) * Math.pow(b / 255, inv)
-    r *= tr; g *= tg; b *= tb
-    d[i] = r + (214 - r) * fade
-    d[i + 1] = g + (204 - g) * fade
-    d[i + 2] = b + (186 - b) * fade
-  }
-  bctx.putImageData(im, 0, 0)
-
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  // paper/border
-  if (params.border) {
-    ctx.fillStyle = '#efe9dc'
-    ctx.fillRect(0, 0, W, H)
-    // subtle paper shadow around the window
-    ctx.save()
-    ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = Math.min(W, H) * 0.02
-    ctx.fillStyle = '#000'
-    ctx.fillRect(rect.x, rect.y, rect.w, rect.h)
-    ctx.restore()
-  } else {
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H)
-  }
-  ctx.imageSmoothingEnabled = true
-  ctx.drawImage(buf, rect.x, rect.y, rect.w, rect.h)
-
-  // vignette within the window
-  if (params.vignette > 0.001) {
-    const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2
-    const rad = Math.hypot(rect.w, rect.h) * 0.5
-    const vg = ctx.createRadialGradient(cx, cy, rad * 0.55, cx, cy, rad)
-    vg.addColorStop(0, 'rgba(0,0,0,0)')
-    vg.addColorStop(1, `rgba(20,14,8,${0.55 * params.vignette})`)
-    ctx.save(); ctx.beginPath(); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.clip()
-    ctx.fillStyle = vg; ctx.fillRect(rect.x, rect.y, rect.w, rect.h); ctx.restore()
-  }
-
-  // static damage on top (rebuild only when wear params change)
   if (dmgKey !== key()) buildDamage()
-  ctx.save(); ctx.beginPath(); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.clip()
-  ctx.drawImage(dmg, 0, 0)
-  ctx.restore()
-
+  const rect = contentRect()
+  const T = TONES[params.tone]
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    u.v2('u_rect_xy', rect.x, rect.y)
+    u.v2('u_rect_wh', rect.w, rect.h)
+    u.i('u_border', params.border ? 1 : 0)
+    u.f('u_lift', (T.lift * (0.4 + params.age)) / 255)
+    u.f('u_invG', 1 / T.gamma)
+    u.f('u_sat', T.sat)
+    u.v3('u_tint', T.tint[0], T.tint[1], T.tint[2])
+    u.f('u_fade', T.fade * params.age)
+    u.f('u_vig', params.vignette)
+  })
   requestAnimationFrame(frame)
 }
+
 window.addEventListener('resize', resize)
 resize()
 requestAnimationFrame(frame)

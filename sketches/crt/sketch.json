@@ -8,7 +8,7 @@
     "audio-reactive"
   ],
   "tech": [
-    "canvas2d"
+    "webgl"
   ],
   "created": "2026-07-21"
 }

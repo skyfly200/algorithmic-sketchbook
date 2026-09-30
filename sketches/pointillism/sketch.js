@@ -1,13 +1,19 @@
 /**
  * Pointillism: repaint a live source (camera, a dropped photo/video, the demo
  * scene, or — inside the Mixer/Patch — the layers below) as a field of little
- * colour dots. A stable jittered grid of sample points reads the source each
- * frame and stamps a dot in the colour it finds there; short strokes can be
- * oriented along image contours for an impressionist, brushed feel. The eye
- * blends the dots the way it does a Seurat or Signac canvas.
+ * colour dots. A stable jittered brick grid of dots reads the source and paints
+ * a dot in the colour it finds there; short strokes can be oriented along image
+ * contours for an impressionist, brushed feel. The eye blends the dots the way
+ * it does a Seurat or Signac canvas.
+ *
+ * This runs entirely on the GPU in one fragment shader: each pixel looks at the
+ * few grid dots that could cover it, works out each dot's colour / size / stroke
+ * direction from a mipmapped copy of the source, and composites them in painter's
+ * order. No pixel readback, no per-dot draw calls.
  */
 import { createRuntime } from '../_lib/runtime.js'
-import { createSource, clamp } from '../_lib/source.js'
+import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const rt = createRuntime()
 
@@ -26,258 +32,135 @@ const params = rt.params({
 rt.mapInput('audio.volume', 'size', 0.4)
 rt.mapInput('audio.pulse', 'jitter', 0.4)
 
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform float u_gap;      // grid spacing (px)
+uniform float u_baseR;    // base dot radius (px)
+uniform float u_jit;      // max jitter (px)
+uniform float u_sat;
+uniform float u_elong;
+uniform float u_alpha;
+uniform float u_var;
+uniform bool u_tex_on;
+uniform bool u_paper;
+uniform int u_R;          // neighbourhood radius in grid cells
+out vec4 outColor;
+
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+vec2 hash22(vec2 p) {
+  float n = hash21(p);
+  return vec2(n, hash21(p + n + 17.3));
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float lumaAt(vec2 uv, float lod) { return dot(textureLod(u_tex, uv, lod).rgb, LUMA); }
+
+void main() {
+  vec2 px = v_uv * u_res;
+  vec3 col = u_paper ? vec3(0.937, 0.906, 0.839) : vec3(0.027, 0.027, 0.043);
+  float lod = max(log2(u_gap * 0.5), 0.0);
+
+  // no dot reaches further than this from its centre — used to skip most cells
+  float ext = u_baseR * 1.5 * (1.0 + 0.5 * u_var) * (1.0 + u_elong * 1.7) * 1.25;
+
+  float row0 = floor(px.y / u_gap - 0.5);
+  for (int dj = -3; dj <= 3; dj++) {
+    if (abs(dj) > u_R) continue;
+    float k = row0 + float(dj);
+    // brick-offset alternate rows so the grid doesn't read as rows/columns
+    float shift = mod(k + 1.0, 2.0) * u_gap * 0.5;
+    float x0 = u_gap * 0.5 - shift;
+    float i0 = floor((px.x - x0) / u_gap + 0.5);
+    for (int di = -3; di <= 3; di++) {
+      if (abs(di) > u_R) continue;
+      float i = i0 + float(di);
+      vec2 id = vec2(i, k);
+      vec2 h1 = hash22(id);
+      vec2 pos = vec2(x0 + i * u_gap, (k + 0.5) * u_gap) + (h1 * 2.0 - 1.0) * u_jit;
+      vec2 d = px - pos;
+      if (dot(d, d) > ext * ext) continue;
+
+      vec2 h2 = hash22(id + 7.7);
+      float h3 = hash21(id + 3.3);
+      float sz = 0.6 + h2.x * 0.9;
+      float si = floor(h2.y * 8.0);
+
+      vec2 uvc = pos / u_res;
+      vec3 c = textureLod(u_tex, uvc, lod).rgb;
+      float lum = dot(c, LUMA);
+      c = clamp(lum + (c - lum) * u_sat, 0.0, 1.0);   // saturation boost around own luma
+      float rad = u_baseR * sz * (1.0 + (lum - 0.5) * u_var);
+      if (rad < 0.3) continue;
+
+      // stretch into strokes along real contours, stay round in smooth areas
+      float e = 0.0;
+      float rot = h3 * 6.2832;
+      if (u_elong > 0.02) {
+        vec2 o = vec2(u_gap * 0.35) / u_res;
+        float gx = lumaAt(uvc + vec2(o.x, 0.0), lod) - lumaAt(uvc - vec2(o.x, 0.0), lod);
+        float gy = lumaAt(uvc + vec2(0.0, o.y), lod) - lumaAt(uvc - vec2(0.0, o.y), lod);
+        e = u_elong * clamp(length(vec2(gx, gy)) * 255.0 / 26.0, 0.0, 1.0);
+        if (e > 0.02) rot = atan(gy, gx) + 1.5708;
+      }
+      float rx = rad * (1.0 + e * 1.7);
+      float cs = cos(rot), sn = sin(rot);
+      vec2 q = vec2(cs * d.x + sn * d.y, -sn * d.x + cs * d.y);
+      float n = length(q / vec2(rx, rad));
+
+      float blob = 1.0;
+      float soft = clamp(1.5 / min(rx, rad), 0.05, 1.0);
+      if (u_tex_on) {
+        // wobbly blob outline + translucent halo edge, like a loaded round brush
+        float a = atan(q.y, q.x);
+        blob = 1.0 + 0.13 * sin(a * (7.0 + mod(si, 3.0)) + si * 1.7) + 0.07 * sin(a * 3.0 + si);
+        soft = max(soft, 0.3);
+      }
+      float cov = smoothstep(1.0, 1.0 - soft, n / blob);
+      if (u_tex_on) {
+        // paper-tooth grain: little bites out of the pigment
+        float bite = vnoise(q / rad * 14.0 + si * 13.0);
+        cov *= 1.0 - 0.45 * smoothstep(0.62, 0.82, bite);
+      }
+      col = mix(col, c, cov * u_alpha);
+    }
+  }
+  outColor = vec4(col, 1.0);
+}`
+
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-const src = createSource()
-
-// Effective pixel ratio, capped so the stipple grid never has to place tens
-// of thousands of stamped brush dots on a native-res canvas (the single
-// biggest cost). The browser upscales the softer painting for free — a big
-// speed win with no visible loss for an impressionist look.
-const RENDER_CAP = 1100
-function effPR() {
-  const long = Math.max(window.innerWidth, window.innerHeight)
-  return Math.min(rt.pixelRatio, RENDER_CAP / long)
-}
-let PR = effPR()
-
-// Offscreen buffer that holds the cover-fit source, sampled per frame.
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d', { willReadFrequently: true })
-let bufW = 0
-let bufH = 0
-let imgData = null
-
-// Stable stipple points (canvas px). Each carries fixed random offsets so its
-// jitter and size wobble don't flicker frame to frame.
-let pts = []
-let lastSpacing = -1
-
-// --- textured brush ---------------------------------------------------------
-// A handful of baked white brush sprites: irregular blobby outline with
-// internal grain, like a loaded round brush dabbed on rough paper. Dots are
-// stamped from these (tinted through a colour-binned cache) instead of flat
-// ellipses, so every touch has body and tooth.
-const SPR = 48
-const sprites = []
-{
-  for (let k = 0; k < 8; k++) {
-    const c = document.createElement('canvas')
-    c.width = c.height = SPR
-    const g = c.getContext('2d')
-    const cx = SPR / 2
-    const R = SPR * 0.42
-    // Wobbly blob outline.
-    g.beginPath()
-    const lobes = 7 + (k % 3)
-    const ph = Math.random() * Math.PI * 2
-    for (let i = 0; i <= 40; i++) {
-      const a = (i / 40) * Math.PI * 2
-      const r = R * (1 + 0.13 * Math.sin(a * lobes + ph) + 0.07 * Math.sin(a * 3 + k))
-      const x = cx + Math.cos(a) * r
-      const y = cx + Math.sin(a) * r
-      i === 0 ? g.moveTo(x, y) : g.lineTo(x, y)
-    }
-    g.closePath()
-    g.fillStyle = '#fff'
-    g.fill()
-    // Slightly translucent halo edge so stamps blend where they overlap.
-    g.globalCompositeOperation = 'destination-out'
-    const halo = g.createRadialGradient(cx, cx, R * 0.55, cx, cx, R * 1.15)
-    halo.addColorStop(0, 'rgba(0,0,0,0)')
-    halo.addColorStop(1, 'rgba(0,0,0,0.55)')
-    g.fillStyle = halo
-    g.fillRect(0, 0, SPR, SPR)
-    // Paper-tooth grain: little bites out of the pigment.
-    for (let i = 0; i < 110; i++) {
-      const a = Math.random() * Math.PI * 2
-      const rr = Math.sqrt(Math.random()) * R
-      g.fillStyle = `rgba(0,0,0,${0.12 + Math.random() * 0.3})`
-      g.beginPath()
-      g.arc(cx + Math.cos(a) * rr, cx + Math.sin(a) * rr, 0.6 + Math.random() * 1.5, 0, Math.PI * 2)
-      g.fill()
-    }
-    g.globalCompositeOperation = 'source-over'
-    sprites.push(c)
-  }
-}
-// Tinted-sprite cache, keyed by sprite index + colour quantized to 32 levels
-// per channel — so each colour bin pays the tint cost once, and every dot
-// after that is a single drawImage.
-const tintCache = new Map()
-function tinted(si, r, g, b) {
-  const qr = r >> 3
-  const qg = g >> 3
-  const qb = b >> 3
-  const key = (((si << 5 | qr) << 5 | qg) << 5) | qb
-  let c = tintCache.get(key)
-  if (!c) {
-    if (tintCache.size > 4000) tintCache.clear()
-    c = document.createElement('canvas')
-    c.width = c.height = SPR
-    const x = c.getContext('2d')
-    x.drawImage(sprites[si], 0, 0)
-    x.globalCompositeOperation = 'source-in'
-    x.fillStyle = `rgb(${qr << 3 | 4}, ${qg << 3 | 4}, ${qb << 3 | 4})`
-    x.fillRect(0, 0, SPR, SPR)
-    tintCache.set(key, c)
-  }
-  return c
-}
-
-function resize() {
-  PR = effPR()
-  canvas.width = Math.floor(window.innerWidth * PR)
-  canvas.height = Math.floor(window.innerHeight * PR)
-  // Sampling buffer: same aspect as the canvas, capped so getImageData is cheap.
-  const cap = 520
-  const s = Math.min(1, cap / Math.max(canvas.width, canvas.height))
-  bufW = Math.max(2, Math.round(canvas.width * s))
-  bufH = Math.max(2, Math.round(canvas.height * s))
-  buf.width = bufW
-  buf.height = bufH
-  lastSpacing = -1 // force stipple rebuild
-}
-
-function buildPoints() {
-  const gap = 9 * PR * params.spacing
-  pts = []
-  const off = gap * 0.5
-  for (let y = off; y < canvas.height + gap; y += gap) {
-    // Brick-offset alternate rows so the grid doesn't read as rows/columns.
-    const shift = ((Math.round(y / gap) % 2) * gap) / 2
-    for (let x = off - shift; x < canvas.width + gap; x += gap) {
-      pts.push({
-        x,
-        y,
-        jx: Math.random() * 2 - 1,
-        jy: Math.random() * 2 - 1,
-        sz: 0.6 + Math.random() * 0.9, // per-dot size wobble
-        si: (Math.random() * 8) | 0, // which brush sprite
-        rot: Math.random() * Math.PI * 2, // fixed stamp rotation
-      })
-    }
-  }
-  lastSpacing = params.spacing
-}
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG, mipmaps: true })
 
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-
-  if (params.spacing !== lastSpacing || !pts.length) buildPoints()
-
-  src.update(t)
-  if (!src.ready) {
-    requestAnimationFrame(frame)
-    return
-  }
-
-  // Refresh the sampled source.
-  try {
-    src.draw(bctx, bufW, bufH)
-    imgData = bctx.getImageData(0, 0, bufW, bufH)
-  } catch {
-    // Video not ready yet (or tainted) — keep the last sample.
-  }
-  if (!imgData) {
-    requestAnimationFrame(frame)
-    return
-  }
-  const data = imgData.data
-
-  // Ground: black glows the dots; paper reads as a classic painting.
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.fillStyle = params.paper ? '#efe7d6' : '#07070b'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-  const gap = 9 * PR * params.spacing
+  const pr = rt.pixelRatio
+  const gap = 9 * pr * params.spacing
   const baseR = gap * 0.62 * params.size
-  const sat = params.saturation
-  const sxb = bufW / canvas.width
-  const syb = bufH / canvas.height
-  const jitAmt = params.jitter * gap * 0.5
-  const elong = params.stroke // 0 round … 1 long strokes
-  const alpha = params.opacity
-
-  ctx.globalAlpha = alpha
-  let xf = false // is the canvas transform currently rotated (needs a reset)?
-  for (let i = 0; i < pts.length; i++) {
-    const p = pts[i]
-    const px = p.x + p.jx * jitAmt
-    const py = p.y + p.jy * jitAmt
-    const bx = clamp(Math.round(px * sxb), 0, bufW - 1)
-    const by = clamp(Math.round(py * syb), 0, bufH - 1)
-    const idx = (by * bufW + bx) * 4
-    let r = data[idx]
-    let g = data[idx + 1]
-    let b = data[idx + 2]
-
-    // Saturation boost around the pixel's own luminance.
-    const lum = 0.299 * r + 0.587 * g + 0.114 * b
-    r = clamp(lum + (r - lum) * sat, 0, 255)
-    g = clamp(lum + (g - lum) * sat, 0, 255)
-    b = clamp(lum + (b - lum) * sat, 0, 255)
-
-    // Dot radius wobbles per-point and, a little, with local brightness so
-    // highlights bloom and shadows tighten — reads more painterly.
-    const rad = baseR * p.sz * (1 + (lum / 255 - 0.5) * params.variation)
-    if (rad < 0.3) continue
-
-    ctx.fillStyle = `rgb(${r | 0}, ${g | 0}, ${b | 0})`
-
-    // Local gradient decides whether (and how far) to elongate: dots stretch
-    // into strokes along real contours and stay round in smooth areas, so flat
-    // regions don't fill with randomly-angled flecks.
-    let e = 0
-    let ang = 0
-    if (elong > 0.02) {
-      const l = (j) => 0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2]
-      const xl = bx > 0 ? idx - 4 : idx
-      const xr = bx < bufW - 1 ? idx + 4 : idx
-      const yt = by > 0 ? idx - bufW * 4 : idx
-      const yd = by < bufH - 1 ? idx + bufW * 4 : idx
-      const gxv = l(xr) - l(xl)
-      const gyv = l(yd) - l(yt)
-      const gmag = Math.hypot(gxv, gyv)
-      e = elong * clamp(gmag / 26, 0, 1)
-      ang = Math.atan2(gyv, gxv) + Math.PI / 2 // along the contour
-    }
-
-    if (params.texture) {
-      // Stamp a tinted brush sprite: rotated per-dot, stretched along the
-      // contour when the stroke elongates. setTransform is cheaper than
-      // save/translate/rotate/restore across tens of thousands of dots.
-      const spr = tinted(p.si, r | 0, g | 0, b | 0)
-      const rx = rad * (1 + e * 1.7)
-      const rot = e > 0.02 ? ang : p.rot
-      const cs = Math.cos(rot)
-      const sn = Math.sin(rot)
-      ctx.setTransform(cs, sn, -sn, cs, px, py)
-      ctx.drawImage(spr, -rx, -rad, rx * 2, rad * 2)
-      xf = true
-    } else if (e > 0.02) {
-      const rx = rad * (1 + e * 1.7)
-      const cs = Math.cos(ang)
-      const sn = Math.sin(ang)
-      ctx.setTransform(cs, sn, -sn, cs, px, py)
-      ctx.beginPath()
-      ctx.ellipse(0, 0, rx, rad, 0, 0, Math.PI * 2)
-      ctx.fill()
-      xf = true
-    } else {
-      if (xf) { ctx.setTransform(1, 0, 0, 1, 0, 0); xf = false }
-      ctx.beginPath()
-      ctx.arc(px, py, rad, 0, Math.PI * 2)
-      ctx.fill()
-    }
-  }
-  if (xf) ctx.setTransform(1, 0, 0, 1, 0, 0) // reset for next frame's fillRect
-  ctx.globalAlpha = 1
-
+  // big dots overlap many neighbours, so look further out for them
+  const reach = baseR * 1.5 * (1 + 0.5 * params.variation) * (1 + params.stroke * 1.7) * 1.25 + params.jitter * gap * 0.5
+  gf.render({ time: now * 0.001 }, (u) => {
+    u.f('u_gap', gap)
+    u.f('u_baseR', baseR)
+    u.f('u_jit', params.jitter * gap * 0.5)
+    u.f('u_sat', params.saturation)
+    u.f('u_elong', params.stroke)
+    u.f('u_alpha', params.opacity)
+    u.f('u_var', params.variation)
+    u.i('u_tex_on', params.texture ? 1 : 0)
+    u.i('u_paper', params.paper ? 1 : 0)
+    u.i('u_R', Math.max(1, Math.min(3, Math.ceil(reach / gap))))
+  })
   requestAnimationFrame(frame)
 }
-
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

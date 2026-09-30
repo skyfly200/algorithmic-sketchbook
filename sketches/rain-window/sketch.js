@@ -42,6 +42,13 @@ const wetCtx = wetC.getContext('2d')
 // Composited clear streaks (sharp bg masked by wet).
 const clearC = document.createElement('canvas')
 const clearCtx = clearC.getContext('2d')
+// The fog is a heavy blur of a soft picture: blur a quarter-resolution copy and
+// scale it up (16x fewer pixels to filter), and only redo it when the source
+// picture (or the fog amount) actually changed.
+const fogSmall = document.createElement('canvas')
+const fogSmallCtx = fogSmall.getContext('2d')
+let fogVer = -1
+let fogSig = ''
 
 let W = 0
 let H = 0
@@ -210,18 +217,28 @@ function frame(now) {
     return
   }
 
-  // Sharp background (for refraction + streaks).
-  sharpCtx.globalCompositeOperation = 'source-over'
-  sharpCtx.filter = 'none'
-  src.draw(sharpCtx, W, H)
+  const sig = `${params.fog}|${W}x${H}`
+  if (src.version !== fogVer || sig !== fogSig) {
+    fogVer = src.version
+    fogSig = sig
+    // Sharp background (for refraction + streaks).
+    sharpCtx.globalCompositeOperation = 'source-over'
+    sharpCtx.filter = 'none'
+    src.draw(sharpCtx, W, H)
 
-  // Fogged glass: blurred, paled version of the scene.
-  fogCtx.clearRect(0, 0, W, H)
-  fogCtx.filter = `blur(${(3 + params.fog * 7) * PR}px) brightness(${1 + params.fog * 0.1})`
-  src.draw(fogCtx, W, H)
-  fogCtx.filter = 'none'
-  fogCtx.fillStyle = `rgba(206,212,224,${params.fog * 0.4})`
-  fogCtx.fillRect(0, 0, W, H)
+    // Fogged glass: blurred, paled version of the scene (blurred at 1/4 size).
+    const fw = Math.max(2, W >> 2), fh = Math.max(2, H >> 2)
+    if (fogSmall.width !== fw || fogSmall.height !== fh) { fogSmall.width = fw; fogSmall.height = fh }
+    fogSmallCtx.clearRect(0, 0, fw, fh)
+    fogSmallCtx.filter = `blur(${((3 + params.fog * 7) * PR) / 4}px) brightness(${1 + params.fog * 0.1})`
+    src.draw(fogSmallCtx, fw, fh)
+    fogSmallCtx.filter = 'none'
+    fogCtx.imageSmoothingEnabled = true
+    fogCtx.clearRect(0, 0, W, H)
+    fogCtx.drawImage(fogSmall, 0, 0, W, H)
+    fogCtx.fillStyle = `rgba(206,212,224,${params.fog * 0.4})`
+    fogCtx.fillRect(0, 0, W, H)
+  }
 
   step()
 

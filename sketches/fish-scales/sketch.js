@@ -5,6 +5,11 @@
  * patches, trout spots, mackerel bars, goldfish sheen, a tropical rainbow — and
  * a travelling iridescent highlight shimmers over everything as if the fish
  * turns in the light. Beats send a bright ripple down the flank.
+ *
+ * Performance: the scale lattice (thousands of clipped gradient fills) is baked
+ * once into an offscreen canvas and only re-baked when a look control changes.
+ * The travelling glint is a second baked layer — each scale's bright free edge —
+ * masked by a tiny per-frame glint field, so a frame is four image draws.
  */
 import { createRuntime } from '../_lib/runtime.js'
 
@@ -91,57 +96,58 @@ function bodyColor(u, v, sp) {
 // shape is deliberately irregular — asymmetric widths, an uneven top, a tilt and
 // an off-centre highlight — so no two scales read the same (`o` carries the
 // per-scale jitter).
-function drawScale(cx, cy, r, col, glint, o) {
+function drawScale(c, cx, cy, r, col, glint, o, rim) {
   const [h, s, l] = col
   const top = -r * o.round
   const lw = r * o.lw, rw = r * o.rw
-  ctx.save()
-  ctx.translate(cx, cy)
-  ctx.rotate(o.rot)
-  ctx.beginPath()
-  ctx.moveTo(-lw, 0)
-  ctx.quadraticCurveTo(-lw, top * o.lh, 0, top)
-  ctx.quadraticCurveTo(rw, top * o.rh, rw, 0)
-  ctx.quadraticCurveTo(0, r * o.dip, -lw, 0)
-  ctx.closePath()
-  ctx.clip()
-  const g = ctx.createRadialGradient(o.gx * r, o.gy * r, r * 0.08, 0, 0, r * 1.35)
+  c.save()
+  c.translate(cx, cy)
+  c.rotate(o.rot)
+  c.beginPath()
+  c.moveTo(-lw, 0)
+  c.quadraticCurveTo(-lw, top * o.lh, 0, top)
+  c.quadraticCurveTo(rw, top * o.rh, rw, 0)
+  c.quadraticCurveTo(0, r * o.dip, -lw, 0)
+  c.closePath()
+  c.clip()
+  const g = c.createRadialGradient(o.gx * r, o.gy * r, r * 0.08, 0, 0, r * 1.35)
   const base = hsl(h, s, Math.max(0.05, l - 0.14))
   const edge = hsl(h, s * 0.8, Math.min(0.95, l + 0.12 + glint * 0.5))
-  g.addColorStop(0, `rgb(${base[0] | 0},${base[1] | 0},${base[2] | 0})`)
+  if (rim) g.addColorStop(0, `rgba(${edge[0] | 0},${edge[1] | 0},${edge[2] | 0},0)`)
+  else g.addColorStop(0, `rgb(${base[0] | 0},${base[1] | 0},${base[2] | 0})`)
   g.addColorStop(1, `rgb(${edge[0] | 0},${edge[1] | 0},${edge[2] | 0})`)
-  ctx.fillStyle = g
-  ctx.fillRect(-lw - 1, top - 1, lw + rw + 2, r * 2 + 2)
+  c.fillStyle = g
+  c.fillRect(-lw - 1, top - 1, lw + rw + 2, r * 2 + 2)
   // iridescent rim highlight along the free edge
   if (glint > 0.01) {
-    ctx.globalAlpha = glint
-    ctx.strokeStyle = `rgb(${edge[0] | 0},${edge[1] | 0},${edge[2] | 0})`
-    ctx.lineWidth = Math.max(1, r * 0.12)
-    ctx.beginPath()
-    ctx.moveTo(-lw, 0)
-    ctx.quadraticCurveTo(-lw, top * o.lh, 0, top)
-    ctx.quadraticCurveTo(rw, top * o.rh, rw, 0)
-    ctx.stroke()
-    ctx.globalAlpha = 1
+    c.globalAlpha = glint
+    c.strokeStyle = `rgb(${edge[0] | 0},${edge[1] | 0},${edge[2] | 0})`
+    c.lineWidth = Math.max(1, r * 0.12)
+    c.beginPath()
+    c.moveTo(-lw, 0)
+    c.quadraticCurveTo(-lw, top * o.lh, 0, top)
+    c.quadraticCurveTo(rw, top * o.rh, rw, 0)
+    c.stroke()
+    c.globalAlpha = 1
   }
-  ctx.restore()
+  c.restore()
 }
 
-function render(t) {
+// Paint every scale. mode 'base' = the static lattice (no glint); mode 'rim' =
+// only each scale's bright free edge, for the glint layer to reveal.
+function paintScales(c, mode) {
   const sp = params.species
-  // background = the darkest body tone so gaps read as shadow between scales
-  const bg = hsl(bodyColor(0.5, 0.5, sp)[0], 0.4, 0.06)
-  ctx.fillStyle = `rgb(${bg[0] | 0},${bg[1] | 0},${bg[2] | 0})`
-  ctx.fillRect(0, 0, W, H)
-
+  if (mode === 'base') {
+    // background = the darkest body tone so gaps read as shadow between scales
+    const bg = hsl(bodyColor(0.5, 0.5, sp)[0], 0.4, 0.06)
+    c.fillStyle = `rgb(${bg[0] | 0},${bg[1] | 0},${bg[2] | 0})`
+    c.fillRect(0, 0, W, H)
+  }
   const r = minDim * 0.05 * params.scale
   const colW = r * 1.6
   const rowH = r * 0.95
   const cols = Math.ceil(W / colW) + 3
   const rows = Math.ceil(H / rowH) + 3
-  const sh = params.shimmer * t
-  const irid = params.iridescence
-  const pulse = rt.beat.state.pulse
   for (let ry = 0; ry < rows; ry++) {
     // rows waver left/right and breathe up/down a little, so the lattice isn't
     // a perfect grid
@@ -165,25 +171,77 @@ function render(t) {
       const rr = r * (0.78 + h3 * 0.4)
       // a worn / missing scale now and then: a dark socket showing the skin below
       if (h4 < 0.03 + params.pattern * 0.01) {
-        ctx.save(); ctx.globalAlpha = 0.8
-        const dk = hsl(col[0], col[1] * 0.5, Math.max(0.03, col[2] - 0.28))
-        ctx.fillStyle = `rgb(${dk[0] | 0},${dk[1] | 0},${dk[2] | 0})`
-        ctx.beginPath(); ctx.ellipse(cx, cy - rr * 0.2, rr * 0.7, rr * 0.55, 0, 0, Math.PI * 2); ctx.fill()
-        ctx.restore()
+        if (mode === 'base') {
+          c.save(); c.globalAlpha = 0.8
+          const dk = hsl(col[0], col[1] * 0.5, Math.max(0.03, col[2] - 0.28))
+          c.fillStyle = `rgb(${dk[0] | 0},${dk[1] | 0},${dk[2] | 0})`
+          c.beginPath(); c.ellipse(cx, cy - rr * 0.2, rr * 0.7, rr * 0.55, 0, 0, Math.PI * 2); c.fill()
+          c.restore()
+        }
         continue
       }
-      const band = Math.sin((u * 6 + v * 3) * Math.PI - sh * 2)
-      const glint = Math.max(0, band) ** 3 * irid * (0.7 + pulse) + pulse * 0.15
-      drawScale(cx, cy, rr, col, Math.min(1, glint), {
+      drawScale(c, cx, cy, rr, col, mode === 'rim' ? 1 : 0, {
         round: params.curvature * (0.6 + h5 * 0.6) + 0.2,
         rot: (h4 - 0.5) * 0.5,
         lw: 0.82 + h1 * 0.34, rw: 0.82 + h2 * 0.34,
         lh: 0.88 + h3 * 0.28, rh: 0.88 + h4 * 0.28,
         dip: 0.35 + h5 * 0.4,
         gx: (h2 - 0.5) * 0.6, gy: (h3 - 0.5) * 0.6,
-      })
+      }, mode === 'rim')
     }
   }
+}
+
+// static layers (rebuilt only when a look control or the size changes)
+const baseC = document.createElement('canvas')
+const rimC = document.createElement('canvas')
+const tmpC = document.createElement('canvas')
+const GW = 96, GH = 54
+const fieldC = document.createElement('canvas')
+fieldC.width = GW; fieldC.height = GH
+const fieldCtx = fieldC.getContext('2d')
+const fieldImg = fieldCtx.createImageData(GW, GH)
+let bakedSig = ''
+const lookSig = () => [params.species, params.scale, params.curvature, params.pattern, params.hue, W, H].join('|')
+function bake() {
+  baseC.width = rimC.width = tmpC.width = W
+  baseC.height = rimC.height = tmpC.height = H
+  paintScales(baseC.getContext('2d'), 'base')
+  paintScales(rimC.getContext('2d'), 'rim')
+  bakedSig = lookSig()
+}
+
+function render(t) {
+  if (bakedSig !== lookSig()) bake()
+  ctx.drawImage(baseC, 0, 0)
+  // the travelling glint: a small alpha field, evaluated per frame, reveals the
+  // baked bright-edge layer
+  const sh = params.shimmer * t
+  const irid = params.iridescence
+  const pulse = rt.beat.state.pulse
+  let any = false
+  const d = fieldImg.data
+  for (let y = 0; y < GH; y++) {
+    for (let x = 0; x < GW; x++) {
+      const u = (x + 0.5) / GW, v = (y + 0.5) / GH
+      const band = Math.sin((u * 6 + v * 3) * Math.PI - sh * 2)
+      const glint = Math.min(1, Math.max(0, band) ** 3 * irid * (0.7 + pulse) + pulse * 0.15)
+      const i = (y * GW + x) * 4
+      d[i] = d[i + 1] = d[i + 2] = 255
+      d[i + 3] = glint * 255
+      if (glint > 0.004) any = true
+    }
+  }
+  if (!any) return
+  fieldCtx.putImageData(fieldImg, 0, 0)
+  const tc = tmpC.getContext('2d')
+  tc.globalCompositeOperation = 'copy'
+  tc.drawImage(rimC, 0, 0)
+  tc.globalCompositeOperation = 'destination-in'
+  tc.imageSmoothingEnabled = true
+  tc.drawImage(fieldC, 0, 0, W, H)
+  tc.globalCompositeOperation = 'source-over'
+  ctx.drawImage(tmpC, 0, 0)
 }
 
 function frame(now) {

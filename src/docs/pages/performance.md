@@ -62,8 +62,8 @@ decides how the **off-air** deck runs:
 | **paused** | off air and the pair would exceed the budget | none — its pages are paused | held |
 | **pulsed preview** | the *edited* off-air deck on a machine that can't run both | ~1/8 — resumed for a few frames every ½ s so the preview and thumbnails still move | held |
 
-Only pausing saves GPU work, because each effect draws at its own frame rate. So
-Patch runs both decks together only when `on-air + off-air ≤ budget`; otherwise the
+Pausing a deck saves the most, because its pages stop drawing altogether; slowing
+individual nodes (see below) saves less. So Patch runs both decks together only when `on-air + off-air ≤ budget`; otherwise the
 off-air deck is held and the crossfade brings it up as it fades in. The deck bar's
 capacity badge shows the on-air deck's load against the budget and lists any
 warnings (over budget, memory, resolution above the tier's target). The
@@ -73,3 +73,27 @@ warnings (over budget, memory, resolution above the tier's target). The
 plan allows), so a change finds its effects already running. Standby frames cost
 memory like any other page, which is why the allowed number shrinks on small
 devices.
+
+## Culling and throttling inside a deck
+
+Within a deck that is running, Patch does not treat every node alike:
+
+- **Culling.** Only nodes that can affect the Output matter. A branch that goes
+  nowhere, or a layer hidden behind a fully-mixed *Normal* blend whose top input is
+  opaque, is culled. Culled nodes are not thrown away — they tick over at about
+  3 fps, one or two at a time in rotation, so their thumbnails stay alive for almost
+  nothing (1 fps when only the output is shown).
+- **Load shedding.** If the compositor can't hold the display's refresh rate, the
+  least important and most expensive live nodes are stepped down — 60 → 30 → 20 →
+  15 → 10 → 6 fps — one at a time, and stepped back up once there is headroom.
+  Importance comes from distance to the Output; the selected node and anything you
+  are dragging are protected (never below 30 fps). Expensive sketches (by their
+  perf-audit weight) are slowed first.
+- **No wasted work.** Filters are only re-fed when their input picture actually
+  changed, blends and the output only redraw when an input or their own settings
+  changed, and still images are drawn once. Shader filters also skip frames whose
+  picture and settings haven't changed.
+
+This is separate from the deck policy above: decks decide *whether* a deck's
+pages run; this decides *how fast* each node inside a running deck needs to. It
+only ever slows a node's frame rate — pausing is left to the deck policy.

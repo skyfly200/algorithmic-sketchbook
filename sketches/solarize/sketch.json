@@ -1,0 +1,14 @@
+{
+  "title": "Solarize",
+  "description": "Solarize — the darkroom Sabattier effect: tones past a threshold flip to negative, giving the metallic, half-inverted look of a film briefly re-exposed to light. Luminance, per-channel and fold modes. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "solarize",
+    "negative",
+    "photo"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

@@ -9,44 +9,19 @@
  * There's no true depth here (the source is flat), so depth is modelled as
  * distance from a focal region — pick the lens type: a tilt-shift focal band, a
  * radial "portrait" spot, or the stepped concentric zones of a Fresnel lens.
+ *
+ * It all runs in one fragment shader; average scene brightness comes from the
+ * top mip of the source instead of a per-frame pixel readback.
  */
 import { createRuntime } from '../_lib/runtime.js'
-import { createSource, clamp } from '../_lib/source.js'
+import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
+const LENSES = ['Tilt-shift', 'Radial', 'Fresnel']
 
-const rt = createRuntime()
-const params = rt.params({
-  focalPlane: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Focal plane' },
-  autoScan: { value: false, type: 'bool', label: 'Auto-scan focus' },
-  scanSpeed: { value: 1, min: 0.2, max: 3, step: 0.05, label: 'Auto-scan speed' },
-  focusDepth: { value: 0.3, min: 0.03, max: 1, step: 0.01, label: 'Focus depth' },
-  aperture: { value: +rt.random(0.35, 0.8).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Aperture (blur)' },
-  // How the sharp zone is shaped: a tilt-shift focal band, a radial portrait
-  // spot, or the stepped concentric zones of a Fresnel lens.
-  lens: { value: rt.rng() < 0.3 ? 'Radial' : 'Tilt-shift', type: 'select', options: ['Tilt-shift', 'Radial', 'Fresnel'], label: 'Lens type' },
-  bloom: { value: 0.35, min: 0, max: 1, step: 0.02, label: 'Highlight bloom' },
-  dirt: { value: +rt.random(0.2, 0.7).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Lens dirt' },
-  vignette: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Vignette' },
-  mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
-})
-// Rack focus by moving the mouse up and down — works with no permissions.
-rt.mapInput('mouse.y', 'focalPlane', 0.5)
-
-const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-const src = createSource()
-
-// Work canvases: a blur/bloom layer and a tiny buffer for average brightness.
-const blurC = document.createElement('canvas')
-const blurCtx = blurC.getContext('2d')
-const tiny = document.createElement('canvas')
-tiny.width = 24
-tiny.height = 16
-const tinyCtx = tiny.getContext('2d', { willReadFrequently: true })
-
-// Procedural lens-dirt texture (smudges, dust specks, a couple of hairs),
-// rebuilt on resize. It's screen-blended so it only ever adds light — the way
-// grime on a lens veils and flares against a bright scene.
-let dirtC = null
+// Procedural lens-dirt texture (smudges, dust specks, a couple of hairs), baked
+// once per size and uploaded as a texture. The shader screen-blends it, so it
+// only ever adds light — the way grime on a lens veils and flares against a
+// bright scene.
 function buildDirt(W, H) {
   const c = document.createElement('canvas')
   c.width = W
@@ -105,33 +80,11 @@ function buildDirt(W, H) {
   return c
 }
 
-let W = 0
-let H = 0
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  blurC.width = W
-  blurC.height = H
-  dirtC = buildDirt(W, H)
-}
-
-// Average scene brightness (0..1) — lens dirt and bloom lean on it.
-function avgBrightness() {
-  try {
-    src.draw(tinyCtx, tiny.width, tiny.height, { mirror: params.mirror })
-    const d = tinyCtx.getImageData(0, 0, tiny.width, tiny.height).data
-    let s = 0
-    for (let i = 0; i < d.length; i += 4) s += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
-    return s / (d.length / 4) / 255
-  } catch {
-    return 0.5
-  }
-}
 
 // Auto-scan: a camera hunting for focus — pull to a new focal plane, ease in
 // (with a little settling wobble), hold, then rack to another.
 let scanCur = 0.5, scanTarget = 0.5, scanNext = 0, lastT = 0
-function autoFocal(t) {
+function autoFocal(t, rt, params) {
   const dt = Math.min(0.05, lastT ? t - lastT : 0.016)
   lastT = t
   if (t > scanNext) { scanTarget = rt.random(0.15, 0.85); scanNext = t + rt.random(2.4, 5) / Math.max(0.2, params.scanSpeed) }
@@ -139,146 +92,186 @@ function autoFocal(t) {
   // a faint focus-breathing wobble as it settles
   return Math.max(0, Math.min(1, scanCur + Math.sin(t * 6) * 0.01 * Math.abs(scanTarget - scanCur)))
 }
+let dirtTex = null
+let dirtSize = ''
+
+const idx = (list, v) => Math.max(0, list.indexOf(v))
+
+const rt = createRuntime()
+const params = rt.params({
+  focalPlane: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Focal plane' },
+  autoScan: { value: false, type: 'bool', label: 'Auto-scan focus' },
+  scanSpeed: { value: 1, min: 0.2, max: 3, step: 0.05, label: 'Auto-scan speed' },
+  focusDepth: { value: 0.3, min: 0.03, max: 1, step: 0.01, label: 'Focus depth' },
+  aperture: { value: +rt.random(0.35, 0.8).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Aperture (blur)' },
+  // How the sharp zone is shaped: a tilt-shift focal band, a radial portrait
+  // spot, or the stepped concentric zones of a Fresnel lens.
+  lens: { value: rt.rng() < 0.3 ? 'Radial' : 'Tilt-shift', type: 'select', options: LENSES, label: 'Lens type' },
+  bloom: { value: 0.35, min: 0, max: 1, step: 0.02, label: 'Highlight bloom' },
+  dirt: { value: +rt.random(0.2, 0.7).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Lens dirt' },
+  vignette: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Vignette' },
+  mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
+})
+// Rack focus by moving the mouse up and down — works with no permissions.
+rt.mapInput('mouse.y', 'focalPlane', 0.5)
+
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform float u_time;
+out vec4 outColor;
+
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+vec3 hsv2rgb(float h, float s, float v) {
+  vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return v * mix(vec3(1.0), k, s);
+}
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+vec2 hash22(vec2 p) {
+  float n = hash21(p);
+  return vec2(n, hash21(p + n + 17.3));
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+vec3 tex(vec2 uv) { return texture(u_tex, uv).rgb; }
+
+uniform sampler2D u_dirtTex;
+uniform float u_fp;          // focal plane, 0 = top
+uniform int u_lens;          // 0 tilt-shift, 1 radial, 2 fresnel
+uniform float u_depth;
+uniform float u_blurPx;
+uniform float u_bloom;
+uniform float u_dirt;
+uniform float u_vig;
+uniform float u_rings;
+uniform float u_pr;
+
+// 0 = in focus, 1 = fully blurred
+float dofMask(vec2 px) {
+  float mn = min(u_res.x, u_res.y);
+  vec2 c = vec2(u_res.x * 0.5, u_fp * u_res.y);
+  if (u_lens == 1) {                        // portrait spot: a sharp disc that softens outward
+    float rIn = u_depth * 0.5 * mn;
+    float rOut = rIn + u_depth * 0.9 * mn + 1.0;
+    return clamp((length(px - c) - rIn) / (rOut - rIn), 0.0, 1.0);
+  }
+  if (u_lens == 2) {                        // alternating sharp / soft rings, like Fresnel grooves
+    float maxR = 0.5 * length(u_res) + 1.0;
+    float stops = u_rings * 2.0;
+    float f = length(px - c) / maxR * stops;
+    if (f >= stops) return mod(stops, 2.0) < 0.5 ? 0.0 : 1.0;
+    float fr = fract(f);
+    return mod(floor(f), 2.0) < 0.5 ? fr : 1.0 - fr;
+  }
+  float yf = px.y / u_res.y;                // tilt-shift: a sharp band at the focal plane
+  float hw = u_depth * 0.5;
+  if (yf <= u_fp - hw) return 1.0;
+  if (yf < u_fp) return min(1.0, (u_fp - yf) / hw);
+  if (yf < u_fp + hw) return min(1.0, (yf - u_fp) / hw);
+  return 1.0;
+}
+
+// disc blur (golden-angle spiral) that reads a pre-blurred mip so few taps suffice
+vec3 blurDisc(vec2 uv, float radPx, float lod) {
+  vec3 acc = vec3(0.0);
+  float ws = 0.0;
+  for (int i = 0; i < 20; i++) {
+    float f = (float(i) + 0.5) / 20.0;
+    float a = float(i) * 2.399963;
+    float w = exp(-1.5 * f);
+    acc += textureLod(u_tex, uv + vec2(cos(a), sin(a)) * sqrt(f) * radPx / u_res, lod).rgb * w;
+    ws += w;
+  }
+  return acc / ws;
+}
+
+void main() {
+  vec2 px = vec2(v_uv.x, 1.0 - v_uv.y) * u_res;       // y-down px
+  vec3 col = tex(v_uv);
+  // average scene brightness from the smallest mip (no readback)
+  float bright = dot(textureLod(u_tex, vec2(0.5), 30.0).rgb, LUMA);
+
+  // depth of field: blend toward a blurred copy away from the focal zone
+  if (u_blurPx > 0.4) {
+    float k = dofMask(px);
+    if (k > 0.004) col = mix(col, blurDisc(v_uv, u_blurPx * 2.0, max(0.0, log2(u_blurPx / 5.0))), k);
+  }
+
+  // highlight bloom: blurred bright-pass added back (brightness 0.55, contrast 2.4)
+  if (u_bloom > 0.01) {
+    vec3 b = vec3(0.0);
+    float ws = 0.0;
+    float r = 8.0 * u_pr * 2.0;
+    for (int i = 0; i < 12; i++) {
+      float f = (float(i) + 0.5) / 12.0;
+      float a = float(i) * 2.399963;
+      float w = exp(-2.0 * f);
+      vec3 s = clamp(tex(v_uv + vec2(cos(a), sin(a)) * sqrt(f) * r / u_res) * 0.55, 0.0, 1.0);
+      b += clamp((s - 0.5) * 2.4 + 0.5, 0.0, 1.0) * w;
+      ws += w;
+    }
+    col += b / ws * min(1.0, u_bloom * (0.5 + 0.7 * bright));
+  }
+
+  // lens dirt: screen-blended so it flares against bright areas
+  if (u_dirt > 0.01) {
+    vec4 d = texture(u_dirtTex, v_uv);
+    float a = clamp(d.a * u_dirt * (0.22 + 0.95 * bright), 0.0, 1.0);
+    col += a * d.rgb * (1.0 - col);
+  }
+
+  // Fresnel groove seams: faint concentric ring lines catching the light
+  if (u_lens == 2) {
+    vec2 c = vec2(u_res.x * 0.5, u_fp * u_res.y);
+    float maxR = 0.5 * length(u_res);
+    float sp = maxR / (u_rings * 2.0);
+    float dist = abs(mod(length(px - c) + sp * 0.5, sp) - sp * 0.5);
+    float lw = max(1.0, u_pr);
+    col += vec3(200.0, 220.0, 255.0) / 255.0 * 0.06 * (0.5 + 0.6 * bright) * (1.0 - smoothstep(lw * 0.5 - 0.5, lw * 0.5 + 0.5, dist));
+  }
+
+  // vignette
+  float mn = min(u_res.x, u_res.y), mx = max(u_res.x, u_res.y);
+  float t = clamp((length(px - u_res * 0.5) - mn * 0.35) / (mx * 0.72 - mn * 0.35), 0.0, 1.0);
+  col *= 1.0 - u_vig * 0.85 * t;
+  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`
+
+const canvas = document.getElementById('canvas')
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG, mipmaps: true })
 
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) {
-    requestAnimationFrame(frame)
-    return
-  }
-
-  const fp = params.autoScan ? autoFocal(t) : params.focalPlane
-  const mirror = params.mirror
-  const lens = params.lens
-  const bright = avgBrightness()
-
-  // --- sharp base ---
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.globalAlpha = 1
-  ctx.filter = 'none'
-  src.draw(ctx, W, H, { mirror })
-
-  // --- depth-of-field: overlay a blurred copy, masked to fade in away from the
-  // focal band (or focal ring, in radial mode). ---
-  const bpx = params.aperture * 22 * Math.max(0.6, rt.pixelRatio)
-  if (bpx > 0.4) {
-    blurCtx.globalCompositeOperation = 'source-over'
-    blurCtx.globalAlpha = 1
-    blurCtx.clearRect(0, 0, W, H)
-    blurCtx.filter = `blur(${bpx}px)`
-    src.draw(blurCtx, W, H, { mirror })
-    blurCtx.filter = 'none'
-
-    // Keep the blur only where it's out of focus (destination-in alpha mask):
-    // alpha 1 keeps the blur, 0 lets the sharp base through.
-    blurCtx.globalCompositeOperation = 'destination-in'
-    const depth = params.focusDepth
-    if (lens === 'Radial') {
-      // portrait spot: a sharp disc that softens outward
-      const cx = W / 2
-      const cy = fp * H
-      const rIn = depth * 0.5 * Math.min(W, H)
-      const rOut = rIn + depth * 0.9 * Math.min(W, H) + 1
-      const g = blurCtx.createRadialGradient(cx, cy, rIn, cx, cy, rOut)
-      g.addColorStop(0, 'rgba(0,0,0,0)')
-      g.addColorStop(1, 'rgba(0,0,0,1)')
-      blurCtx.fillStyle = g
-    } else if (lens === 'Fresnel') {
-      // concentric zones: sharp and soft rings alternate outward from the focal
-      // point, like the stepped grooves of a real Fresnel lens element
-      const cx = W / 2
-      const cy = fp * H
-      const maxR = 0.5 * Math.hypot(W, H) + 1
-      const rings = Math.max(3, Math.min(26, Math.round(0.7 / depth)))
-      const stops = rings * 2
-      const g = blurCtx.createRadialGradient(cx, cy, 0, cx, cy, maxR)
-      for (let i = 0; i <= stops; i++) {
-        g.addColorStop(clamp(i / stops, 0, 1), i % 2 === 0 ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,1)')
-      }
-      blurCtx.fillStyle = g
-    } else {
-      // tilt-shift: a horizontal focal band, sharp at fp, soft above and below
-      const c = fp
-      const hw = depth * 0.5
-      const g = blurCtx.createLinearGradient(0, 0, 0, H)
-      g.addColorStop(0, 'rgba(0,0,0,1)')
-      g.addColorStop(clamp(c - hw, 0.0001, 0.9998), 'rgba(0,0,0,1)')
-      g.addColorStop(clamp(c, 0.0002, 0.9999), 'rgba(0,0,0,0)')
-      g.addColorStop(clamp(c + hw, 0.0003, 1), 'rgba(0,0,0,1)')
-      g.addColorStop(1, 'rgba(0,0,0,1)')
-      blurCtx.fillStyle = g
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    const t = now * 0.001
+    const fp = params.autoScan ? autoFocal(t, rt, params) : params.focalPlane
+    // (re)bake the dirt texture when the size changes
+    const size = gf.width + 'x' + gf.height
+    if (size !== dirtSize) {
+      dirtSize = size
+      if (!dirtTex) dirtTex = gf.addTexture('u_dirtTex', 1)
+      dirtTex.upload(buildDirt(gf.width, gf.height))
     }
-    blurCtx.fillRect(0, 0, W, H)
-    blurCtx.globalCompositeOperation = 'source-over'
-
-    ctx.drawImage(blurC, 0, 0)
-  }
-
-  // --- highlight bloom: blurred bright-pass added back over the frame ---
-  if (params.bloom > 0.01) {
-    blurCtx.globalCompositeOperation = 'source-over'
-    blurCtx.globalAlpha = 1
-    blurCtx.clearRect(0, 0, W, H)
-    blurCtx.filter = `brightness(0.55) contrast(2.4) blur(${8 * rt.pixelRatio}px)`
-    src.draw(blurCtx, W, H, { mirror })
-    blurCtx.filter = 'none'
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.globalAlpha = params.bloom * (0.5 + 0.7 * bright)
-    ctx.drawImage(blurC, 0, 0)
-    ctx.globalAlpha = 1
-    ctx.globalCompositeOperation = 'source-over'
-  }
-
-  // --- lens dirt: screen-blended so it flares against bright areas ---
-  if (params.dirt > 0.01 && dirtC) {
-    ctx.globalCompositeOperation = 'screen'
-    ctx.globalAlpha = params.dirt * (0.22 + 0.95 * bright)
-    ctx.drawImage(dirtC, 0, 0)
-    ctx.globalAlpha = 1
-    ctx.globalCompositeOperation = 'source-over'
-  }
-
-  // --- Fresnel groove seams: faint concentric ring lines catching the light,
-  // the tell-tale of a stepped Fresnel element ---
-  if (lens === 'Fresnel') {
-    const cx = W / 2
-    const cy = fp * H
-    const maxR = 0.5 * Math.hypot(W, H)
-    const rings = Math.max(3, Math.min(26, Math.round(0.7 / params.focusDepth)))
-    ctx.save()
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.lineWidth = Math.max(1, rt.pixelRatio)
-    for (let k = 1; k <= rings * 2; k++) {
-      const rr = (maxR * k) / (rings * 2)
-      ctx.strokeStyle = `rgba(200,220,255,${0.06 * (0.5 + 0.6 * bright)})`
-      ctx.beginPath()
-      ctx.arc(cx, cy, rr, 0, Math.PI * 2)
-      ctx.stroke()
-    }
-    ctx.restore()
-  }
-
-  // --- vignette ---
-  if (params.vignette > 0.01) {
-    const g = ctx.createRadialGradient(
-      W / 2,
-      H / 2,
-      Math.min(W, H) * 0.35,
-      W / 2,
-      H / 2,
-      Math.max(W, H) * 0.72,
-    )
-    g.addColorStop(0, 'rgba(0,0,0,0)')
-    g.addColorStop(1, `rgba(0,0,0,${params.vignette * 0.85})`)
-    ctx.fillStyle = g
-    ctx.fillRect(0, 0, W, H)
-  }
-
+    u.f('u_fp', fp)
+    u.i('u_lens', idx(LENSES, params.lens))
+    u.f('u_depth', params.focusDepth)
+    u.f('u_blurPx', params.aperture * 22 * Math.max(0.6, rt.pixelRatio))
+    u.f('u_bloom', params.bloom)
+    u.f('u_dirt', params.dirt)
+    u.f('u_vig', params.vignette)
+    u.f('u_rings', Math.max(3, Math.min(26, Math.round(0.7 / params.focusDepth))))
+    u.f('u_pr', rt.pixelRatio)
+  })
   requestAnimationFrame(frame)
 }
-
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

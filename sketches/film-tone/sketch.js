@@ -1,13 +1,17 @@
 // Film Tone — a darkroom grade for a live source: sepia, black & white,
-// negative or cyanotype, with filmic contrast, grain and a vignette. A simple
-// per-pixel tone map applied over the shared source pipeline (camera, a dropped
-// clip/photo, the demo, or the layers below in the Mixer/Patch).
+// negative or cyanotype, with filmic contrast, grain and a vignette. A per-pixel
+// tone map run as a fragment shader over the shared source pipeline (camera, a
+// dropped clip/photo, the demo, or the layers below in the Mixer/Patch).
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
+const MODES = ['Sepia', 'Black & White', 'Negative', 'Cyanotype']
+
+const idx = (list, v) => Math.max(0, list.indexOf(v))
 
 const rt = createRuntime()
 const params = rt.params({
-  mode: { value: 'Sepia', type: 'select', options: ['Sepia', 'Black & White', 'Negative', 'Cyanotype'], label: 'Tone' },
+  mode: { value: 'Sepia', type: 'select', options: MODES, label: 'Tone' },
   strength: { value: 1, min: 0, max: 1, step: 0.02, label: 'Strength' },
   contrast: { value: 1.15, min: 0.5, max: 2.2, step: 0.05, label: 'Contrast' },
   brightness: { value: 0, min: -0.4, max: 0.4, step: 0.02, label: 'Brightness' },
@@ -17,78 +21,81 @@ const params = rt.params({
 })
 rt.mapInput('audio.volume', 'grain', 0.3)
 
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform float u_time;
+out vec4 outColor;
+
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+vec3 hsv2rgb(float h, float s, float v) {
+  vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return v * mix(vec3(1.0), k, s);
+}
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+vec2 hash22(vec2 p) {
+  float n = hash21(p);
+  return vec2(n, hash21(p + n + 17.3));
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+vec3 tex(vec2 uv) { return texture(u_tex, uv).rgb; }
+
+uniform int u_mode;        // 0 sepia, 1 b&w, 2 negative, 3 cyanotype
+uniform float u_mix;
+uniform float u_con;
+uniform float u_bright;
+uniform float u_grain;
+uniform float u_vig;
+uniform float u_seed;      // grain re-rolls ~24x a second (0 = static)
+
+void main() {
+  vec3 c0 = tex(v_uv);
+  float n = u_grain > 0.001 ? hash21(v_uv * u_res + u_seed) - 0.5 : 0.0;
+  vec3 c;
+  if (u_mode == 2) {
+    c = (1.0 - c0 - 0.5) * u_con + 0.5 + u_bright + n * u_grain * 90.0 / 255.0;
+  } else {
+    float l = dot(c0, LUMA);
+    l = (l - 0.5) * u_con + 0.5 + u_bright + n * u_grain * 110.0 / 255.0;
+    l = clamp(l, 0.0, 1.0);
+    if (u_mode == 1) c = vec3(l);
+    else if (u_mode == 3) c = mix(vec3(8.0, 22.0, 54.0), vec3(214.0, 236.0, 255.0), l) / 255.0;
+    else c = mix(vec3(42.0, 26.0, 12.0), vec3(255.0, 240.0, 200.0), l) / 255.0;
+  }
+  vec3 col = mix(c0, c, u_mix);
+  // vignette: transparent until 0.33 of the short side, full strength by 0.72 of the long side
+  float r0 = min(u_res.x, u_res.y) * 0.33;
+  float r1 = max(u_res.x, u_res.y) * 0.72;
+  float t = clamp((length(v_uv * u_res - u_res * 0.5) - r0) / (r1 - r0), 0.0, 1.0);
+  col *= 1.0 - u_vig * 0.9 * t;
+  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`
+
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-const src = createSource()
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d', { willReadFrequently: true })
-
-let W = 0, H = 0, bw = 0, bh = 0
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  const cap = 720
-  const s = Math.min(1, cap / Math.max(W, H))
-  bw = buf.width = Math.max(2, Math.round(W * s))
-  bh = buf.height = Math.max(2, Math.round(H * s))
-}
-
-// Map a 0..255 luminance onto a two-point colour ramp (shadow → highlight).
-function ramp(l, lo, hi) {
-  const k = l / 255
-  return [lo[0] + (hi[0] - lo[0]) * k, lo[1] + (hi[1] - lo[1]) * k, lo[2] + (hi[2] - lo[2]) * k]
-}
-const SEPIA_LO = [42, 26, 12], SEPIA_HI = [255, 240, 200]
-const CYAN_LO = [8, 22, 54], CYAN_HI = [214, 236, 255]
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG })
 
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-  src.draw(bctx, bw, bh, { mirror: params.mirror })
-  const img = bctx.getImageData(0, 0, bw, bh)
-  const d = img.data
-  const mode = params.mode
-  const mix = params.strength
-  const con = params.contrast
-  const bright = params.brightness * 255
-  const grain = params.grain
-  for (let i = 0; i < d.length; i += 4) {
-    const r0 = d[i], g0 = d[i + 1], b0 = d[i + 2]
-    let r, g, b
-    if (mode === 'Negative') {
-      r = 255 - r0; g = 255 - g0; b = 255 - b0
-      r = (r - 128) * con + 128 + bright; g = (g - 128) * con + 128 + bright; b = (b - 128) * con + 128 + bright
-      if (grain > 0.001) { const n = (Math.random() - 0.5) * grain * 90; r += n; g += n; b += n }
-    } else {
-      // filmic luminance, contrasted around mid grey then lifted/dropped
-      let l = 0.299 * r0 + 0.587 * g0 + 0.114 * b0
-      l = (l - 128) * con + 128 + bright
-      if (grain > 0.001) l += (Math.random() - 0.5) * grain * 110
-      l = l < 0 ? 0 : l > 255 ? 255 : l
-      if (mode === 'Black & White') { r = g = b = l }
-      else if (mode === 'Cyanotype') { const c = ramp(l, CYAN_LO, CYAN_HI); r = c[0]; g = c[1]; b = c[2] }
-      else { const c = ramp(l, SEPIA_LO, SEPIA_HI); r = c[0]; g = c[1]; b = c[2] } // Sepia
-    }
-    d[i] = r0 + (r - r0) * mix
-    d[i + 1] = g0 + (g - g0) * mix
-    d[i + 2] = b0 + (b - b0) * mix
-  }
-  bctx.putImageData(img, 0, 0)
-  ctx.imageSmoothingEnabled = true
-  ctx.drawImage(buf, 0, 0, W, H)
-
-  // vignette drawn at full res so it stays smooth
-  if (params.vignette > 0.01) {
-    const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.33, W / 2, H / 2, Math.max(W, H) * 0.72)
-    g.addColorStop(0, 'rgba(0,0,0,0)')
-    g.addColorStop(1, `rgba(0,0,0,${params.vignette * 0.9})`)
-    ctx.fillStyle = g
-    ctx.fillRect(0, 0, W, H)
-  }
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    u.i('u_mode', idx(MODES, params.mode))
+    u.f('u_mix', params.strength)
+    u.f('u_con', params.contrast)
+    u.f('u_bright', params.brightness)
+    u.f('u_grain', params.grain)
+    u.f('u_vig', params.vignette)
+    u.f('u_seed', params.grain > 0.001 ? Math.floor(now * 0.024) * 7.31 : 0)
+  })
   requestAnimationFrame(frame)
 }
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

@@ -1,0 +1,14 @@
+{
+  "title": "Glowing Edges",
+  "description": "Glowing Edges — Photoshop's neon outline filter: edges are picked out in the source's own colours on black, then blurred into a soft glow. Edge gain, width, glow amount and radius, colour boost, and an optional faint underlay of the original. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "glowing-edges",
+    "neon",
+    "edge-detection"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

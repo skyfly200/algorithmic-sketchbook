@@ -176,73 +176,81 @@ function frame(now) {
 // A glossy near-spherical bead, lit from the upper-left: contact shadow, a
 // darkened refractive body, a bright rim from total internal reflection, a
 // sharp specular, and a focused caustic on the far side.
-function drawBead(d) {
-  const wob = d.wob * params.wobble
-  const rx = d.r * (1 + wob * 0.18 * Math.cos(d.wa))
-  const ry = d.r * (1 - wob * 0.18 * Math.cos(d.wa))
-  const hue = params.hue
-  const gloss = params.gloss
+//
+// Every bead is the same picture at a different size, so it is painted once into
+// a sprite (per hue / gloss setting) covering [-2r, 2r] and stamped with
+// drawImage; the wobble is just a non-uniform scale on the stamp. This replaces
+// four radial gradients and a path per bead per frame.
+const BEAD = 256
+const U = BEAD / 4 // sprite px per unit of bead radius
+let beadKey = ''
+let beadSprite = null
+function bakeBead(hue, gloss) {
+  const c = document.createElement('canvas')
+  c.width = c.height = BEAD
+  const g = c.getContext('2d')
+  g.translate(BEAD / 2, BEAD / 2)
+  const r = U
 
   // Contact shadow (offset down-right).
-  ctx.globalCompositeOperation = 'source-over'
-  const sg = ctx.createRadialGradient(
-    d.x + d.r * 0.28,
-    d.y + d.r * 0.34,
-    0,
-    d.x + d.r * 0.28,
-    d.y + d.r * 0.34,
-    d.r * 1.35,
-  )
+  const sg = g.createRadialGradient(r * 0.28, r * 0.34, 0, r * 0.28, r * 0.34, r * 1.35)
   sg.addColorStop(0, 'rgba(0,0,0,0.45)')
   sg.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.fillStyle = sg
-  ctx.beginPath()
-  ctx.ellipse(d.x + d.r * 0.28, d.y + d.r * 0.34, d.r * 1.35, d.r * 1.2, 0, 0, Math.PI * 2)
-  ctx.fill()
-
-  ctx.save()
-  ctx.translate(d.x, d.y)
-  ctx.scale(rx / d.r, ry / d.r)
+  g.fillStyle = sg
+  g.beginPath()
+  g.ellipse(r * 0.28, r * 0.34, r * 1.35, r * 1.2, 0, 0, Math.PI * 2)
+  g.fill()
 
   // Refractive body: darker in the middle (looking through to the dark
   // surface), a touch of the surface hue, brightening toward the edge.
-  const bg = ctx.createRadialGradient(-d.r * 0.25, -d.r * 0.25, d.r * 0.1, 0, 0, d.r)
+  const bg = g.createRadialGradient(-r * 0.25, -r * 0.25, r * 0.1, 0, 0, r)
   bg.addColorStop(0, `hsla(${hue}, 45%, 30%, 0.55)`)
   bg.addColorStop(0.6, `hsla(${hue}, 40%, 16%, 0.5)`)
   bg.addColorStop(0.92, `hsla(${hue}, 55%, 50%, 0.5)`)
   bg.addColorStop(1, `hsla(${hue}, 60%, 70%, 0.85)`)
-  ctx.fillStyle = bg
-  ctx.beginPath()
-  ctx.arc(0, 0, d.r, 0, Math.PI * 2)
-  ctx.fill()
+  g.fillStyle = bg
+  g.beginPath()
+  g.arc(0, 0, r, 0, Math.PI * 2)
+  g.fill()
 
   // Bright rim ring (total internal reflection).
-  ctx.lineWidth = Math.max(0.6, d.r * 0.06)
-  ctx.strokeStyle = `hsla(${hue}, 70%, 82%, ${0.5 * gloss})`
-  ctx.beginPath()
-  ctx.arc(0, 0, d.r * 0.95, 0, Math.PI * 2)
-  ctx.stroke()
+  g.lineWidth = r * 0.06
+  g.strokeStyle = `hsla(${hue}, 70%, 82%, ${0.5 * gloss})`
+  g.beginPath()
+  g.arc(0, 0, r * 0.95, 0, Math.PI * 2)
+  g.stroke()
 
   // Focused caustic on the lower-right — light bent through the drop.
-  const cg = ctx.createRadialGradient(d.r * 0.34, d.r * 0.36, 0, d.r * 0.34, d.r * 0.36, d.r * 0.5)
+  const cg = g.createRadialGradient(r * 0.34, r * 0.36, 0, r * 0.34, r * 0.36, r * 0.5)
   cg.addColorStop(0, `hsla(${(hue + 20) % 360}, 90%, 85%, ${0.5 * gloss})`)
   cg.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.fillStyle = cg
-  ctx.beginPath()
-  ctx.arc(0, 0, d.r, 0, Math.PI * 2)
-  ctx.fill()
+  g.fillStyle = cg
+  g.beginPath()
+  g.arc(0, 0, r, 0, Math.PI * 2)
+  g.fill()
 
   // Sharp specular highlight (upper-left).
-  const hg = ctx.createRadialGradient(-d.r * 0.34, -d.r * 0.38, 0, -d.r * 0.34, -d.r * 0.38, d.r * 0.5)
+  const hg = g.createRadialGradient(-r * 0.34, -r * 0.38, 0, -r * 0.34, -r * 0.38, r * 0.5)
   hg.addColorStop(0, `rgba(255,255,255,${0.95 * gloss})`)
   hg.addColorStop(0.5, `rgba(255,255,255,${0.25 * gloss})`)
   hg.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.fillStyle = hg
-  ctx.beginPath()
-  ctx.ellipse(-d.r * 0.34, -d.r * 0.38, d.r * 0.4, d.r * 0.3, -0.6, 0, Math.PI * 2)
-  ctx.fill()
+  g.fillStyle = hg
+  g.beginPath()
+  g.ellipse(-r * 0.34, -r * 0.38, r * 0.4, r * 0.3, -0.6, 0, Math.PI * 2)
+  g.fill()
+  return c
+}
 
-  ctx.restore()
+function drawBead(d) {
+  const key = params.hue + '|' + params.gloss
+  if (key !== beadKey) { beadKey = key; beadSprite = bakeBead(params.hue, params.gloss) }
+  const wob = d.wob * params.wobble
+  const sx = 1 + wob * 0.18 * Math.cos(d.wa)
+  const sy = 1 - wob * 0.18 * Math.cos(d.wa)
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.setTransform(sx, 0, 0, sy, d.x, d.y)
+  ctx.drawImage(beadSprite, -2 * d.r, -2 * d.r, 4 * d.r, 4 * d.r)
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
 }
 
 window.addEventListener('resize', resize)

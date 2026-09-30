@@ -2,14 +2,10 @@
 // pushed through a metallic light→dark→light ramp (the banded highlights that
 // make a surface read as polished metal), domain-warped by a slow noise so the
 // sheen flows like liquid, with a sharp specular glint riding the brightest
-// ridges. Tint from steel to gold to copper.
+// ridges. Tint from steel to gold to copper. Runs per pixel in a fragment shader.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
-
-const rt = createRuntime()
-const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-
+import { createGLFilter } from '../_lib/glfilter.js'
 const TINTS = {
   Chrome: [[0.10, 0.11, 0.14], [0.72, 0.78, 0.90], [0.97, 0.99, 1.03]],
   Steel: [[0.08, 0.09, 0.11], [0.55, 0.60, 0.68], [0.90, 0.94, 1.00]],
@@ -17,6 +13,10 @@ const TINTS = {
   Copper: [[0.12, 0.05, 0.03], [0.80, 0.42, 0.26], [1.05, 0.80, 0.62]],
   Mercury: [[0.09, 0.10, 0.12], [0.62, 0.66, 0.72], [1.02, 1.04, 1.08]],
 }
+
+const idx = (list, v) => Math.max(0, list.indexOf(v))
+
+const rt = createRuntime()
 const params = rt.params({
   tint: { value: 'Chrome', type: 'select', options: Object.keys(TINTS), label: 'Metal' },
   bands: { value: 3.5, min: 1, max: 9, step: 0.1, label: 'Sheen bands' },
@@ -28,63 +28,88 @@ const params = rt.params({
 })
 rt.mapInput('audio.pulse', 'specular', 0.4)
 
-const src = createSource()
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d', { willReadFrequently: true })
-let W = 0, H = 0, bw = 0, bh = 0
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  const cap = 820, s = Math.min(1, cap / Math.max(W, H))
-  bw = buf.width = Math.max(2, Math.round(W * s))
-  bh = buf.height = Math.max(2, Math.round(H * s))
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform float u_time;
+out vec4 outColor;
+
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+vec3 hsv2rgb(float h, float s, float v) {
+  vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return v * mix(vec3(1.0), k, s);
 }
-// cheap value noise for the flow warp
-function vn(x, y) {
-  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi
-  const h = (a, b) => { const n = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return n - Math.floor(n) }
-  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf)
-  return (h(xi, yi) * (1 - u) + h(xi + 1, yi) * u) * (1 - v) +
-         (h(xi, yi + 1) * (1 - u) + h(xi + 1, yi + 1) * u) * v
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
 }
+vec2 hash22(vec2 p) {
+  float n = hash21(p);
+  return vec2(n, hash21(p + n + 17.3));
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+vec3 tex(vec2 uv) { return texture(u_tex, uv).rgb; }
+
+uniform vec3 u_lo;
+uniform vec3 u_mid;
+uniform vec3 u_hi;
+uniform float u_bands;
+uniform float u_flow;
+uniform float u_ph;        // flow phase (time * speed)
+uniform float u_spec;
+uniform float u_con;
+uniform vec2 u_buf;        // the old effect's working resolution: the noise is in those pixels
+
+float nz(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = fract(sin(i.x * 127.1 + i.y * 311.7) * 43758.5453);
+  float b = fract(sin((i.x + 1.0) * 127.1 + i.y * 311.7) * 43758.5453);
+  float c = fract(sin(i.x * 127.1 + (i.y + 1.0) * 311.7) * 43758.5453);
+  float d = fract(sin((i.x + 1.0) * 127.1 + (i.y + 1.0) * 311.7) * 43758.5453);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+void main() {
+  float l = clamp((dot(tex(v_uv), LUMA) - 0.5) * u_con + 0.5, 0.0, 1.0);
+  vec2 bp = vec2(v_uv.x, 1.0 - v_uv.y) * u_buf;
+  // warp the luminance coordinate by flowing noise so the sheen slides
+  float w = u_flow * (nz(bp * 0.02 + vec2(u_ph, -u_ph * 0.6)) - 0.5) * 2.0;
+  float s = mod(l * u_bands + w + u_ph * 0.15, 1.0);
+  float tri = 1.0 - abs(s * 2.0 - 1.0);                  // 0..1..0 sheen band
+  float a = tri < 0.5 ? tri * 2.0 : 1.0;
+  float b = tri < 0.5 ? 0.0 : (tri - 0.5) * 2.0;
+  vec3 col = mix(mix(u_lo, u_mid, a), u_hi, b);
+  col += pow(tri, 18.0) * u_spec * (0.3 + 0.7 * l);      // sharp glint on each band's crest
+  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`
+
+const canvas = document.getElementById('canvas')
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG })
 
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-  src.draw(bctx, bw, bh, { mirror: params.mirror })
-  const im = bctx.getImageData(0, 0, bw, bh)
-  const d = im.data
-  const [lo, mid, hi] = TINTS[params.tint]
-  const bands = params.bands, flow = params.flow, spec = params.specular, con = params.contrast
-  const ph = t * params.speed
-  for (let y = 0; y < bh; y++) {
-    for (let x = 0; x < bw; x++) {
-      const i = (y * bw + x) * 4
-      let l = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) / 255
-      l = Math.min(1, Math.max(0, (l - 0.5) * con + 0.5))
-      // warp the luminance coordinate by flowing noise so the sheen slides
-      const w = flow * (vn(x * 0.02 + ph, y * 0.02 - ph * 0.6) - 0.5) * 2
-      // banded metal ramp: fract of luminance*bands -> triangle -> highlight
-      let s = (l * bands + w + ph * 0.15) % 1; if (s < 0) s += 1
-      const tri = 1 - Math.abs(s * 2 - 1)          // 0..1..0 sheen band
-      // three-point tint ramp keyed on the banded value
-      const k = tri, a = k < 0.5 ? k * 2 : 1, b = k < 0.5 ? 0 : (k - 0.5) * 2
-      let r0 = lo[0] * (1 - a) + mid[0] * a, g0 = lo[1] * (1 - a) + mid[1] * a, b0 = lo[2] * (1 - a) + mid[2] * a
-      r0 = r0 * (1 - b) + hi[0] * b; g0 = g0 * (1 - b) + hi[1] * b; b0 = b0 * (1 - b) + hi[2] * b
-      // sharp specular glint on the crest of each band, gated by brightness
-      const gl = Math.pow(tri, 18) * spec * (0.3 + 0.7 * l)
-      r0 += gl; g0 += gl; b0 += gl
-      d[i] = Math.min(255, r0 * 255); d[i + 1] = Math.min(255, g0 * 255); d[i + 2] = Math.min(255, b0 * 255)
-    }
-  }
-  bctx.putImageData(im, 0, 0)
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.imageSmoothingEnabled = true
-  ctx.drawImage(buf, 0, 0, W, H)
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    const [lo, mid, hi] = TINTS[params.tint]
+    const s = Math.min(1, 820 / Math.max(gf.width, gf.height))
+    u.v3('u_lo', ...lo)
+    u.v3('u_mid', ...mid)
+    u.v3('u_hi', ...hi)
+    u.f('u_bands', params.bands)
+    u.f('u_flow', params.flow)
+    u.f('u_ph', now * 0.001 * params.speed)
+    u.f('u_spec', params.specular)
+    u.f('u_con', params.contrast)
+    u.v2('u_buf', Math.max(2, Math.round(gf.width * s)), Math.max(2, Math.round(gf.height * s)))
+  })
   requestAnimationFrame(frame)
 }
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

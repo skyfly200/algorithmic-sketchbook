@@ -17,53 +17,16 @@
  *   if (src.ready) { src.update(t); src.draw(ctx, w, h, { mirror: true }) }
  *   src.width / src.height   // current source dimensions
  *   src.kind                 // 'camera'|'image'|'video'|'demo'|'mixer'|null
+ *   src.version              // bumps whenever the picture changes (skip work if unchanged)
+ *   src.cycleDemo()          // next built-in demo scene (also: press D, or ?demo=<name|index>)
  *
  * It wires a chooser overlay if the page has one (#chooser with #use-camera,
  * #use-upload, #use-demo, #file-input), and accepts a file dropped anywhere.
  */
 
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
+import { DEMOS } from './demos.js'
 
-// The default demo: soft drifting colour blobs over a warm gradient — a scene
-// with smooth tone and a few hard edges, which flatters most filters.
-function defaultDemo(rand = Math.random) {
-  const blobs = Array.from({ length: 7 }, (_, i) => ({
-    x: rand(),
-    y: rand(),
-    r: 0.18 + rand() * 0.22,
-    hue: (i * 47 + rand() * 30) % 360,
-    px: rand() * Math.PI * 2,
-    py: rand() * Math.PI * 2,
-    sx: 0.4 + rand() * 0.5,
-    sy: 0.4 + rand() * 0.5,
-  }))
-  return (d, t, W, H) => {
-    const g = d.createLinearGradient(0, 0, 0, H)
-    g.addColorStop(0, '#12203a')
-    g.addColorStop(0.55, '#3a2a55')
-    g.addColorStop(1, '#6a3f4a')
-    d.fillStyle = g
-    d.fillRect(0, 0, W, H)
-    d.globalCompositeOperation = 'lighter'
-    for (const b of blobs) {
-      const cx = (b.x + 0.12 * Math.sin(t * b.sx + b.px)) * W
-      const cy = (b.y + 0.12 * Math.cos(t * b.sy + b.py)) * H
-      const rr = b.r * H
-      const rg = d.createRadialGradient(cx, cy, 0, cx, cy, rr)
-      rg.addColorStop(0, `hsla(${b.hue}, 85%, 62%, 0.9)`)
-      rg.addColorStop(1, 'hsla(0, 0%, 0%, 0)')
-      d.fillStyle = rg
-      d.beginPath()
-      d.arc(cx, cy, rr, 0, Math.PI * 2)
-      d.fill()
-    }
-    d.fillStyle = 'rgba(255, 224, 170, 0.9)'
-    d.beginPath()
-    d.arc(W * 0.75, H * 0.28, H * 0.085, 0, Math.PI * 2)
-    d.fill()
-    d.globalCompositeOperation = 'source-over'
-  }
-}
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
 
 export function createSource(opts = {}) {
   const preview = new URLSearchParams(location.search).get('preview') === '1'
@@ -74,14 +37,33 @@ export function createSource(opts = {}) {
     w: 0,
     h: 0,
     kind: null, // 'camera' | 'image' | 'video' | 'demo' | 'mixer'
+    version: 0, // bumps whenever the picture changes
   }
 
   // Demo scene lives on its own canvas so `update()` can repaint it.
   const demoCanvas = document.createElement('canvas')
-  demoCanvas.width = opts.demoWidth ?? 960
-  demoCanvas.height = opts.demoHeight ?? 540
+  demoCanvas.width = opts.demoWidth ?? 1280
+  demoCanvas.height = opts.demoHeight ?? 720
   const demoCtx = demoCanvas.getContext('2d')
-  const demoPaint = opts.demo ?? defaultDemo()
+  // Built-in scenes (landscape / test chart / night city); a sketch can still
+  // pass its own `demo` painter, which replaces them.
+  const scenes = opts.demo ? [{ name: 'custom', make: () => opts.demo }] : DEMOS
+  const wanted = new URLSearchParams(location.search).get('demo')
+  let demoIdx = 0
+  if (wanted != null) {
+    const byName = scenes.findIndex((sc) => sc.name.toLowerCase().replace(/\s+/g, '-') === wanted.toLowerCase())
+    demoIdx = byName >= 0 ? byName : clamp(parseInt(wanted, 10) || 0, 0, scenes.length - 1)
+  }
+  let demoPaint = scenes[demoIdx].make()
+  function cycleDemo() {
+    demoIdx = (demoIdx + 1) % scenes.length
+    demoPaint = scenes[demoIdx].make()
+    state.version++
+    return scenes[demoIdx].name
+  }
+  window.addEventListener('keydown', (e) => {
+    if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey && !e.altKey && !/input|textarea|select/i.test(e.target?.tagName || '')) cycleDemo()
+  })
 
   let mixerCanvas = null
 
@@ -94,9 +76,27 @@ export function createSource(opts = {}) {
     state.w = w
     state.h = h
     state.kind = kind
+    state.version++
+    watchVideo(el)
     hideChooser()
     updateFlipBtn?.()
     opts.onSource?.(kind)
+  }
+
+  // Video-like sources bump the version on each decoded frame where the browser
+  // can tell us (requestVideoFrameCallback); otherwise update() bumps it.
+  let rvfc = false
+  function watchVideo(el) {
+    rvfc = false
+    if (el instanceof HTMLVideoElement && typeof el.requestVideoFrameCallback === 'function') {
+      rvfc = true
+      const tick = () => {
+        if (state.el !== el) return
+        state.version++
+        el.requestVideoFrameCallback(tick)
+      }
+      el.requestVideoFrameCallback(tick)
+    }
   }
 
   function useDemo() {
@@ -214,7 +214,7 @@ export function createSource(opts = {}) {
       })
     }
     wire('use-camera', useCamera, 'Camera unavailable — try the demo or upload a file instead.')
-    wire('use-demo', useDemo, 'Demo failed to start.')
+    wire('use-demo', () => (state.kind === 'demo' ? cycleDemo() : useDemo()), 'Demo failed to start.')
   }
 
   // Accept a file dropped anywhere on the page.
@@ -277,7 +277,16 @@ export function createSource(opts = {}) {
 
     // Repaint the demo scene (no-op unless the demo is the active source).
     update(t) {
-      if (state.kind === 'demo') demoPaint(demoCtx, t, demoCanvas.width, demoCanvas.height)
+      if (state.kind === 'demo') {
+        demoPaint(demoCtx, t, demoCanvas.width, demoCanvas.height)
+        state.version++
+      } else if ((state.kind === 'camera' || state.kind === 'video') && !rvfc) {
+        state.version++
+      }
+    },
+    cycleDemo,
+    get version() {
+      return state.version
     },
 
     // Cover-fit the current source onto a target context sized (tw, th).

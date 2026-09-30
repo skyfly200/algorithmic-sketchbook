@@ -4,12 +4,16 @@
 // blur and breaks the leading edge into feathered fingers, so darks bloom and
 // drip while the drawing keeps redrawing itself underneath. Carries the source
 // colour into the runs, or bleeds mono black on paper.
+//
+// The ink field lives in a pair of ping-pong float textures (colour + ink
+// amount); one shader pass advances it a step and another composites it over
+// the paper, so the whole simulation runs on the GPU.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLPipe } from '../_lib/glpipe.js'
 
 const rt = createRuntime()
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
 
 const DIRS = { Down: [0, 1], Up: [0, -1], Left: [-1, 0], Right: [1, 0] }
 const params = rt.params({
@@ -25,108 +29,105 @@ const params = rt.params({
 })
 rt.mapInput('audio.pulse', 'flow', 0.3)
 
-const src = createSource()
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d', { willReadFrequently: true })
-const out = document.createElement('canvas')
-const octx = out.getContext('2d')
-let W = 0, H = 0, bw = 0, bh = 0
-let ink, ink2, col, col2, outImg // float fields + output image
-function alloc() {
-  const n = bw * bh
-  ink = new Float32Array(n); ink2 = new Float32Array(n)
-  col = new Float32Array(n * 3); col2 = new Float32Array(n * 3)
-  out.width = bw; out.height = bh
-  outImg = octx.createImageData(bw, bh)
+const HEAD = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform vec2 u_res;
+uniform float u_time;
+out vec4 outColor;
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+`
+// advance the field one step. state.rgb = ink colour, state.a = ink amount
+const STEP = HEAD + `
+uniform sampler2D u_state;
+uniform sampler2D u_src;
+uniform vec2 u_dir;          // water direction, y up
+uniform float u_step, u_spread, u_retain, u_feather, u_inkGain, u_mono, u_lod;
+float hn(float x, float y) { return fract(sin(x * 12.9898 + y * 78.233) * 43758.5453); }
+
+void main() {
+  ivec2 sz = textureSize(u_state, 0);
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec3 c = textureLod(u_src, (vec2(p) + 0.5) / vec2(sz), u_lod).rgb;
+  float lum = dot(c, LUMA);
+  // source ink: darkness becomes wet ink
+  float sInk = min(1.0, max(0.0, (1.0 - lum) - (1.0 - u_inkGain) * 0.4) * (0.6 + u_inkGain));
+
+  // pull ink from upstream with a lateral blur (capillary spread)
+  ivec2 up = p - ivec2(u_dir) * int(u_step);
+  float a = 0.0, wsum = 0.0;
+  vec3 col = vec3(0.0);
+  for (int k = -1; k <= 1; k++) {
+    ivec2 q = up + (u_dir.y != 0.0 ? ivec2(k, 0) : ivec2(0, k));
+    if (q.x < 0 || q.y < 0 || q.x >= sz.x || q.y >= sz.y) continue;
+    float w = k == 0 ? 1.0 : u_spread * 0.6;
+    vec4 s = texelFetch(u_state, q, 0);
+    a += s.a * w;
+    col += s.rgb * w;
+    wsum += w;
+  }
+  if (wsum > 0.0) { a /= wsum; col /= wsum; }
+  // feather the leading edge: randomly starve thin runs so they finger out
+  float edge = 1.0 - u_feather * 0.9 * hn(float(p.x) * 0.7 + u_time * 3.0, float(sz.y - 1 - p.y) * 0.7);
+  float run = a * u_retain * edge;
+
+  // freshly inked source wins where it is drawn
+  vec4 o = sInk >= run
+    ? vec4(u_mono > 0.5 ? vec3(20.0, 16.0, 14.0) / 255.0 : c, sInk)
+    : vec4(col, run);
+  outColor = o;
+}`
+const SHOW = HEAD + `
+uniform sampler2D u_state;
+uniform vec3 u_paper;
+void main() {
+  vec4 s = texture(u_state, v_uv);
+  float a = clamp(s.a, 0.0, 1.0);
+  float av = a * a * (3.0 - 2.0 * a);   // pools read dark, thin runs stay pale
+  outColor = vec4(mix(u_paper, s.rgb, av), 1.0);
+}`
+
+const pipe = createGLPipe({ rt, src: createSource(), canvas, mipmaps: true })
+const pStep = pipe.program(STEP)
+const pShow = pipe.program(SHOW)
+
+// the simulation grid is small (as before) and scaled up when shown
+const CAP = 440
+let S = null // ping-pong pair
+let gridW = 0
+let gridH = 0
+function ensureGrid() {
+  const s = Math.min(1, CAP / Math.max(pipe.width, pipe.height))
+  const w = Math.max(2, Math.round(pipe.width * s))
+  const h = Math.max(2, Math.round(pipe.height * s))
+  if (S && w === gridW && h === gridH) return
+  gridW = w
+  gridH = h
+  S = [0, 1].map(() => pipe.target({ width: w, height: h, float: true, filter: 'LINEAR' }))
 }
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  const cap = 440, s = Math.min(1, cap / Math.max(W, H))
-  bw = buf.width = Math.max(2, Math.round(W * s))
-  bh = buf.height = Math.max(2, Math.round(H * s))
-  alloc()
-}
-function hexRgb(h) {
+const hexRgb = (h) => {
   const v = parseInt(h.slice(1), 16)
-  return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+  return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255]
 }
-// cheap hash noise for the feathered leading edge
-function hn(x, y) { const n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453; return n - Math.floor(n) }
 
 function frame(now) {
   rt.tick(now)
   const t = now * 0.001
-  src.update(t)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-  src.draw(bctx, bw, bh, { mirror: params.mirror })
-  const sd = bctx.getImageData(0, 0, bw, bh).data
+  if (!pipe.begin({ mirror: params.mirror, time: t })) { requestAnimationFrame(frame); return }
+  ensureGrid()
   const [dx, dy] = DIRS[params.direction]
-  const flow = params.flow, spread = params.bleed, retain = params.wetness
-  const feather = params.feather, mono = params.mono
-  const [pr, pg, pb] = hexRgb(params.paper)
-  const inkGain = params.inkiness
-  const step = 1 + Math.round(flow * 2) // how many cells the water pulls per frame
-
-  for (let y = 0; y < bh; y++) {
-    for (let x = 0; x < bw; x++) {
-      const i = y * bw + x, i3 = i * 3, si = i * 4
-      // source ink: darkness (and a touch of saturation) becomes wet ink
-      const r = sd[si], g = sd[si + 1], b = sd[si + 2]
-      const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255
-      let sInk = Math.max(0, (1 - lum) - (1 - inkGain) * 0.4) * (0.6 + inkGain)
-      if (sInk > 1) sInk = 1
-
-      // advect: pull ink from upstream (behind the flow) with lateral blur
-      const ux = x - dx * step, uy = y - dy * step
-      let a = 0, cr = 0, cg = 0, cb = 0, wsum = 0
-      for (let k = -1; k <= 1; k++) {
-        // sample perpendicular to flow for capillary spread
-        const sx = ux + (dy ? k : 0), sy = uy + (dx ? k : 0)
-        if (sx < 0 || sy < 0 || sx >= bw || sy >= bh) continue
-        const w = k === 0 ? 1 : spread * 0.6
-        const j = sy * bw + sx, j3 = j * 3
-        a += ink[j] * w; cr += col[j3] * w; cg += col[j3 + 1] * w; cb += col[j3 + 2] * w; wsum += w
-      }
-      if (wsum > 0) { a /= wsum; cr /= wsum; cg /= wsum; cb /= wsum }
-      // feather the leading edge: randomly starve thin runs so they finger out
-      const edge = 1 - feather * 0.9 * hn(x * 0.7 + t * 3, y * 0.7)
-      let run = a * retain * edge
-
-      // combine the running ink with freshly inked source (source wins where drawn)
-      let ni, ncr, ncg, ncb
-      if (sInk >= run) {
-        ni = sInk
-        if (mono) { ncr = 20; ncg = 16; ncb = 14 } else { ncr = r; ncg = g; ncb = b }
-      } else {
-        ni = run
-        ncr = cr; ncg = cg; ncb = cb
-      }
-      ink2[i] = ni
-      col2[i3] = ncr; col2[i3 + 1] = ncg; col2[i3 + 2] = ncb
-    }
-  }
-  // swap fields
-  let ti = ink; ink = ink2; ink2 = ti
-  let tc = col; col = col2; col2 = tc
-
-  // composite ink over paper
-  const od = outImg.data
-  for (let i = 0, i3 = 0, si = 0; i < bw * bh; i++, i3 += 3, si += 4) {
-    let a = ink[i]; if (a > 1) a = 1
-    // ink density is nonlinear so pools read dark and thin runs stay pale
-    const av = a * a * (3 - 2 * a)
-    od[si] = pr * (1 - av) + col[i3] * av
-    od[si + 1] = pg * (1 - av) + col[i3 + 1] * av
-    od[si + 2] = pb * (1 - av) + col[i3 + 2] * av
-    od[si + 3] = 255
-  }
-  octx.putImageData(outImg, 0, 0)
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.imageSmoothingEnabled = true
-  ctx.drawImage(out, 0, 0, W, H)
+  pipe.run(pStep, { u_state: S[0], u_src: pipe.source }, S[1], (u) => {
+    u.v2('u_dir', dx, -dy) // the field is y-up; the old version's "down" is +y
+    u.f('u_step', 1 + Math.round(params.flow * 2))
+    u.f('u_spread', params.bleed)
+    u.f('u_retain', params.wetness)
+    u.f('u_feather', params.feather)
+    u.f('u_inkGain', params.inkiness)
+    u.f('u_mono', params.mono ? 1 : 0)
+    u.f('u_lod', Math.max(0, Math.log2(pipe.width / gridW)))
+  })
+  S.reverse() // S[0] is now the newest field
+  pipe.run(pShow, { u_state: S[0] }, null, (u) => u.v3('u_paper', ...hexRgb(params.paper)))
   requestAnimationFrame(frame)
 }
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

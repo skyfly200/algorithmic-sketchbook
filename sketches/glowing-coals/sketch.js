@@ -4,6 +4,11 @@
 // them. A few slow "hot spots" of pooled heat drift across the bed. Each coal
 // breathes on its own phase plus a shared airflow; fan a patch hotter with the
 // pointer; beats gust the whole bed and lift sparks.
+//
+// Performance: a bed is ~1000 coals, so the per-coal radial gradients (halo,
+// lit highlight, shadow) are baked into shared sprites — the halo in 32 heat
+// steps per hue, the highlight and shadow once — and drawn with drawImage and a
+// globalAlpha. Only the coal body keeps its own heat-coloured gradient.
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
@@ -161,6 +166,53 @@ function drawAsh(hue) {
   ctx.globalCompositeOperation = 'source-over'
 }
 
+// --- shared gradient sprites -------------------------------------------------
+const SPR = 128
+function makeSprite(draw) {
+  const c = document.createElement('canvas')
+  c.width = c.height = SPR
+  draw(c.getContext('2d'))
+  return c
+}
+// soft highlight on the lit (top-left) side and shade on the far side of a coal;
+// drawn over [-2r, 2r] and scaled to each coal's radius
+const litSprite = makeSprite((g) => {
+  const u = SPR / 4 // px per unit of r
+  const gr = g.createRadialGradient(SPR / 2 - 0.45 * u, SPR / 2 - 0.5 * u, 0, SPR / 2 - 0.45 * u, SPR / 2 - 0.5 * u, 1.35 * u)
+  gr.addColorStop(0, 'rgba(255,236,205,1)')
+  gr.addColorStop(0.6, 'rgba(255,230,200,0)')
+  g.fillStyle = gr
+  g.fillRect(0, 0, SPR, SPR)
+})
+const shadeSprite = makeSprite((g) => {
+  const u = SPR / 4
+  const gr = g.createRadialGradient(SPR / 2 + 0.5 * u, SPR / 2 + 0.55 * u, 0, SPR / 2 + 0.5 * u, SPR / 2 + 0.55 * u, 1.25 * u)
+  gr.addColorStop(0, 'rgba(0,0,0,1)')
+  gr.addColorStop(0.7, 'rgba(0,0,0,0)')
+  g.fillStyle = gr
+  g.fillRect(0, 0, SPR, SPR)
+})
+// under-halo per heat level (h quantised to 1/20), rebuilt when the ember hue changes
+let haloHue = NaN
+const haloCache = new Map()
+function haloSprite(h, hue) {
+  if (hue !== haloHue) { haloCache.clear(); haloHue = hue }
+  const bin = Math.max(1, Math.round(h * 20))
+  let c = haloCache.get(bin)
+  if (!c) {
+    const hq = bin / 20
+    c = makeSprite((g) => {
+      const gr = g.createRadialGradient(SPR / 2, SPR / 2, 0, SPR / 2, SPR / 2, SPR / 2)
+      gr.addColorStop(0, `hsla(${hue + hq * 16}, 100%, ${Math.min(58, 22 + hq * 30)}%, ${Math.min(0.5, hq * 0.5)})`)
+      gr.addColorStop(1, 'hsla(8, 100%, 11%, 0)')
+      g.fillStyle = gr
+      g.fillRect(0, 0, SPR, SPR)
+    })
+    haloCache.set(bin, c)
+  }
+  return c
+}
+
 const ptr = { x: -1e9, y: -1e9, t: -1e9 }
 window.addEventListener('pointermove', (e) => { ptr.x = e.clientX * PR; ptr.y = e.clientY * PR; ptr.t = performance.now() })
 
@@ -236,11 +288,7 @@ function frame(now) {
     const h = c.h
     if (h < 0.05) continue
     const r = c.r * 1.9
-    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r)
-    g.addColorStop(0, `hsla(${hue + h * 16}, 100%, ${Math.min(58, 22 + h * 30)}%, ${Math.min(0.5, h * 0.5)})`)
-    g.addColorStop(1, 'hsla(8, 100%, 11%, 0)')
-    ctx.fillStyle = g
-    ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.fill()
+    ctx.drawImage(haloSprite(h, hue), c.x - r, c.y - r, r * 2, r * 2)
   }
 
   // 3) the coal bodies, each incandescent from within: a radial gradient from a
@@ -271,17 +319,14 @@ function frame(now) {
       ctx.beginPath(); ctx.arc(fx * crackScale, fy * crackScale, fr, 0, 6.28); ctx.fill()
     }
     // lit top-left highlight → the coal reads as a rounded 3D lump, not a disc
-    const lit = ctx.createRadialGradient(-r * 0.45, -r * 0.5, 0, -r * 0.45, -r * 0.5, r * 1.35)
-    lit.addColorStop(0, `rgba(255,236,205,${0.16 + h * 0.12})`)
-    lit.addColorStop(0.6, 'rgba(255,230,200,0)')
-    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = lit
-    ctx.fillRect(-r * 2, -r * 2, r * 4, r * 4)
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.globalAlpha = 0.16 + h * 0.12
+    ctx.drawImage(litSprite, -r * 2, -r * 2, r * 4, r * 4)
     // shadowed bottom-right for form
-    const shd = ctx.createRadialGradient(r * 0.5, r * 0.55, 0, r * 0.5, r * 0.55, r * 1.25)
-    shd.addColorStop(0, `rgba(0,0,0,${0.2 + cool * 0.16})`)
-    shd.addColorStop(0.7, 'rgba(0,0,0,0)')
-    ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = shd
-    ctx.fillRect(-r * 2, -r * 2, r * 4, r * 4)
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.globalAlpha = 0.2 + cool * 0.16
+    ctx.drawImage(shadeSprite, -r * 2, -r * 2, r * 4, r * 4)
+    ctx.globalAlpha = 1
     ctx.restore()
     // faint hot rim where a hot coal meets the cooler cracks around it
     if (h > 0.15) {

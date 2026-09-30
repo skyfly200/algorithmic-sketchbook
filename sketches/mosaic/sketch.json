@@ -1,0 +1,14 @@
+{
+  "title": "Mosaic",
+  "description": "Mosaic — rebuilds the image from tiles with grout lines. Square or brick layouts, rounded and bevelled tiles, per-tile brightness variation, and adjustable grout colour and width. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "mosaic",
+    "tiles",
+    "stylize"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

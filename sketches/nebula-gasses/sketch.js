@@ -134,7 +134,7 @@ function frame(now) {
   // lay the nebula over the scene, blurred and glowing
   ctx.save()
   ctx.globalCompositeOperation = 'lighter'
-  ctx.filter = 'blur(3px)'
+  ctx.imageSmoothingEnabled = true // the half-res buffer is upscaled with bilinear filtering: soft enough without a full-screen blur filter
   ctx.globalAlpha = 0.5 + light * 0.5
   ctx.drawImage(buf, 0, 0, W, H)
   ctx.restore()

@@ -18,6 +18,7 @@ import { createBeatDetector } from '../../sketches/_lib/beat.js'
 // Single source of truth for mapping sources (audio/mouse/tilt/midi/leap/artnet).
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { inputParams } from '../lib/inputParams'
+import { isFilterSketch } from '../registry/filters'
 import { mixToPatch, handOffToPatch } from '../lib/mixToPatch'
 
 const router = useRouter()
@@ -257,7 +258,9 @@ function captureLoop(ts) {
   const L = layers.value
   for (let i = 0; i < L.length; i++) {
     const lay = L[i]
-    if (!lay.on || lay.slug !== 'motion-extraction') continue
+    // every filter layer processes the composite of the layers below it (this used
+    // to be hard-wired to motion-extraction, so other filters saw only their demo)
+    if (!lay.on || !isFilterSketch({ slug: lay.slug })) continue
     const el = layerEls.get(lay)
     if (!el?.contentWindow) continue
 

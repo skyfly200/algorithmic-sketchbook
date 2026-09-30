@@ -14,7 +14,8 @@
     "artnet-bridge": "node scripts/artnet-bridge.mjs",
     "remote": "node scripts/remote-server.mjs",
     "remote:build": "vite build && node scripts/remote-server.mjs",
-    "perf": "node scripts/perf-audit.mjs"
+    "perf": "node scripts/perf-audit.mjs",
+    "bench": "node scripts/bench.mjs"
   },
   "dependencies": {
     "@mdi/font": "^7.4.47",

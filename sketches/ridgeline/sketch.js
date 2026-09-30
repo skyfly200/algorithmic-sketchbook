@@ -5,11 +5,17 @@
 // (bottom); filling under each curve with the background colour hides the rows
 // behind it, giving the woodcut, overlapping-mountains look. The noise field
 // scrolls, so the ridges breathe and drift.
+//
+// WebGL version: every row is one instance of an instanced draw. The noise
+// profile is evaluated in the vertex shader (fbm per vertex), the "fill under the
+// curve" occlusion is the depth buffer, and each line is a ribbon whose fragment
+// shader draws the crisp stroke plus its glow — no per-point JS, no shadowBlur.
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
+const capture = new URLSearchParams(location.search).get('capture') === '1'
+const gl = canvas.getContext('webgl2', { antialias: true, depth: true, preserveDrawingBuffer: capture })
 
 const params = rt.params({
   lines: { value: 62, min: 12, max: 140, step: 1, label: 'Lines' },
@@ -27,30 +33,122 @@ const params = rt.params({
 rt.mapInput('audio.volume', 'amplitude', 0.5)
 rt.mapInput('audio.pulse', 'glow', 0.4)
 
-// --- 1D value-noise fractal --------------------------------------------------
 const seedOff = rt.rng() * 1000
-function hash(x) {
-  const s = Math.sin(x * 127.1 + seedOff) * 43758.5453
-  return s - Math.floor(s)
+
+// Shared by both passes: the profile height of row r at column c (px above its baseline).
+const COMMON = `#version 300 es
+precision highp float;
+uniform vec2 u_res;
+uniform float u_lines, u_cols, u_marginX, u_spanX, u_marginTop, u_dy, u_peak, u_inv2s2;
+uniform float u_freq, u_scroll, u_wander, u_detail, u_seed, u_t;
+
+float hash1(float x) { return fract(sin(x * 127.1 + u_seed) * 43758.5453); }
+float vnoise(float x) {
+  float i = floor(x);
+  float f = x - i;
+  float u = f * f * (3.0 - 2.0 * f);
+  return mix(hash1(i), hash1(i + 1.0), u);
 }
-function vnoise(x) {
-  const i = Math.floor(x)
-  const f = x - i
-  const u = f * f * (3 - 2 * f)
-  return hash(i) * (1 - u) + hash(i + 1) * u
-}
-function fbm(x) {
-  let sum = 0
-  let amp = 0.5
-  let freq = 1
-  let norm = 0
-  for (let k = 0; k < 5; k++) {
-    sum += amp * vnoise(x * freq)
-    norm += amp
-    amp *= 0.5
-    freq *= 2
+float fbm(float x) {
+  float sum = 0.0, amp = 0.5, freq = 1.0, norm = 0.0;
+  for (int k = 0; k < 5; k++) {
+    sum += amp * vnoise(x * freq);
+    norm += amp;
+    amp *= 0.5;
+    freq *= 2.0;
   }
-  return sum / norm // ~0..1
+  return sum / norm;
+}
+// y position (px, y down) of row r at column c
+float rowY(float r, float c) {
+  float baseY = u_marginTop + r * u_dy;
+  float u = clamp(c / u_cols, 0.0, 1.0);
+  float du = u - 0.5;
+  float edge = min(u, 1.0 - u) / 0.07;
+  float fade = edge < 1.0 ? edge * edge * (3.0 - 2.0 * edge) : 1.0;     // land flat on the baseline
+  float env = exp(-(du * du) * u_inv2s2) * fade;
+  float rowDrift = u_scroll + sin(r * 0.5 + u_t * u_wander * 0.6) * u_wander * 1.5;
+  float raw = fbm(u * u_freq + r * 8.13 + rowDrift);
+  float spike = max((raw - 0.42) / 0.58, 0.0);
+  spike = pow(spike, 1.0 + u_detail * 1.8);
+  return baseY - env * spike * u_peak;
+}
+float rowDepth(float r) { return 1.0 - (r + 1.0) / (u_lines + 2.0); }     // later rows are nearer
+vec4 toClip(vec2 px, float z) { return vec4(px.x / u_res.x * 2.0 - 1.0, 1.0 - px.y / u_res.y * 2.0, z * 2.0 - 1.0, 1.0); }
+`
+
+// pass 1: the silhouette under each curve, in the background colour (writes depth).
+// Drawn nearest row first so the depth test rejects the hidden rows' pixels early
+// instead of overdrawing every pixel once per row.
+const FILL_VS = COMMON + `
+void main() {
+  float r = u_lines - 1.0 - float(gl_InstanceID);
+  float c = float(gl_VertexID >> 1);
+  bool bottom = (gl_VertexID & 1) == 1;
+  float x = u_marginX + c / u_cols * u_spanX;
+  float y = bottom ? u_res.y : rowY(r, c);
+  gl_Position = toClip(vec2(x, y), rowDepth(r));
+}`
+const FILL_FS = `#version 300 es
+precision highp float;
+out vec4 outColor;
+void main() { outColor = vec4(5.0 / 255.0, 6.0 / 255.0, 10.0 / 255.0, 1.0); }`
+
+// pass 2: the stroke + its glow as a ribbon along the curve (depth-tested, no depth write)
+const LINE_VS = COMMON + `
+uniform float u_halfW;
+out float v_side;
+void main() {
+  float r = float(gl_InstanceID);
+  float c = float(gl_VertexID >> 1);
+  float side = (gl_VertexID & 1) == 1 ? 1.0 : -1.0;
+  float step_ = u_spanX / u_cols;
+  float y0 = rowY(r, c - 1.0), y1 = rowY(r, c + 1.0);
+  vec2 tangent = normalize(vec2(2.0 * step_, y1 - y0));
+  vec2 normal = vec2(-tangent.y, tangent.x);
+  vec2 p = vec2(u_marginX + c * step_, rowY(r, c)) + normal * side * u_halfW;
+  v_side = side;
+  gl_Position = toClip(p, rowDepth(r) - 0.0005);
+}`
+const LINE_FS = `#version 300 es
+precision highp float;
+in float v_side;
+uniform vec3 u_stroke;
+uniform float u_halfW, u_lw, u_glow, u_glowR;
+out vec4 outColor;
+void main() {
+  float d = abs(v_side) * u_halfW;                       // distance from the line's centre, px
+  float core = 1.0 - smoothstep(u_lw * 0.5 - 0.6, u_lw * 0.5 + 0.6, d);
+  float halo = u_glow * 0.55 * exp(-(d * d) / (2.0 * u_glowR * u_glowR + 1e-3));
+  float a = clamp(core + halo * (1.0 - core), 0.0, 1.0);
+  outColor = vec4(u_stroke, a);
+}`
+
+function compile(type, src) {
+  const s = gl.createShader(type)
+  gl.shaderSource(s, src)
+  gl.compileShader(s)
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s))
+  return s
+}
+function program(vs, fs) {
+  const p = gl.createProgram()
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs))
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs))
+  gl.linkProgram(p)
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p))
+  const locs = {}
+  return { p, u: (n) => (n in locs ? locs[n] : (locs[n] = gl.getUniformLocation(p, n))) }
+}
+const fill = program(FILL_VS, FILL_FS)
+const line = program(LINE_VS, LINE_FS)
+const vao = gl.createVertexArray() // attribute-less draws need a VAO bound
+
+const hsl = (h, s, l) => {
+  const k = (n) => (n + h / 30) % 12
+  const a = s * Math.min(l, 1 - l)
+  const f = (n) => l - a * Math.max(-1, Math.min(Math.min(k(n) - 3, 9 - k(n)), 1))
+  return [f(0), f(8), f(4)]
 }
 
 let W = 0
@@ -58,93 +156,73 @@ let H = 0
 function resize() {
   W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
   H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
+  gl.viewport(0, 0, W, H)
 }
 
-function frame(now) {
-  rt.tick(now)
-  const t = now * 0.001
-
-  ctx.fillStyle = '#05060a'
-  ctx.fillRect(0, 0, W, H)
-
-  const lines = Math.max(8, Math.round(params.lines))
+function setCommon(prog, t, lines, cols) {
   const marginX = W * 0.16
   const spanX = W - marginX * 2
   const marginTop = H * 0.14
   const marginBot = H * 0.12
   const dy = (H - marginTop - marginBot) / (lines - 1)
-  const peak = dy * 3.4 * params.amplitude // how far the tallest spike rises
+  const sigma = 0.1 + params.spread * 0.34 // envelope: a central Gaussian, wider with `spread`
+  const set1 = (n, v) => gl.uniform1f(prog.u(n), v)
+  gl.uniform2f(prog.u('u_res'), W, H)
+  set1('u_lines', lines)
+  set1('u_cols', cols)
+  set1('u_marginX', marginX)
+  set1('u_spanX', spanX)
+  set1('u_marginTop', marginTop)
+  set1('u_dy', dy)
+  set1('u_peak', dy * 3.4 * params.amplitude) // how far the tallest spike rises
+  set1('u_inv2s2', 1 / (2 * sigma * sigma))
+  set1('u_freq', 2.5 + params.detail * 15)
+  set1('u_scroll', t * params.speed)
+  set1('u_wander', params.wander)
+  set1('u_detail', params.detail)
+  set1('u_seed', seedOff)
+  set1('u_t', t)
+  return { spanX }
+}
 
-  // Envelope: a central Gaussian, wider with `spread`.
-  const sigma = 0.1 + params.spread * 0.34
-  const inv2s2 = 1 / (2 * sigma * sigma)
-
-  // Frequency of the noise across the width, and its scroll.
-  const freqScale = 2.5 + params.detail * 15
-  const scroll = t * params.speed
-
-  // Sample density: enough to be smooth, scaled by quality.
+function frame(now) {
+  rt.tick(now)
+  const t = now * 0.001
+  const lines = Math.max(8, Math.round(params.lines))
+  const spanX = W - W * 0.32
+  // sample density: enough to be smooth, scaled by quality
   const cols = Math.max(80, Math.round(spanX / (2.4 / Math.max(0.4, rt.pixelRatio))))
-  const dx = spanX / cols
 
-  const sat = Math.round(params.tint * 60)
-  const stroke = `hsl(${Math.round(params.hue)}, ${sat}%, 92%)`
+  gl.bindVertexArray(vao)
+  gl.clearColor(5 / 255, 6 / 255, 10 / 255, 1)
+  gl.clearDepth(1)
+  gl.depthMask(true)
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+  gl.enable(gl.DEPTH_TEST)
+  gl.depthFunc(gl.LEQUAL)
+  gl.disable(gl.BLEND)
+
+  // 1) silhouettes: each row hides those behind it
+  gl.useProgram(fill.p)
+  setCommon(fill, t, lines, cols)
+  gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (cols + 1) * 2, lines)
+
+  // 2) the lines themselves, with their glow
   const lw = Math.max(1, 1.15 * rt.pixelRatio)
-
-  ctx.lineJoin = 'round'
-  ctx.lineWidth = lw
-
-  const ys = new Float32Array(cols + 1)
-
-  // Back (top) to front (bottom): each filled under-curve occludes rows behind.
-  for (let r = 0; r < lines; r++) {
-    const baseY = marginTop + r * dy
-    // Each row samples the field at its own offset so rows are decorrelated;
-    // `wander` lets nearby rows drift apart over time for a liquid feel.
-    const rowSeed = r * 8.13
-    const rowDrift = scroll + Math.sin(r * 0.5 + t * params.wander * 0.6) * params.wander * 1.5
-
-    for (let c = 0; c <= cols; c++) {
-      const u = c / cols // 0..1 across the span
-      const du = u - 0.5
-      // Gaussian body, forced to zero right at the edges so every line lands
-      // flat on its baseline (no vertical seam where the rows begin/end).
-      const edge = Math.min(u, 1 - u) / 0.07
-      const fade = edge < 1 ? edge * edge * (3 - 2 * edge) : 1
-      const env = Math.exp(-(du * du) * inv2s2) * fade
-      const raw = fbm(u * freqScale + rowSeed + rowDrift)
-      // Rectify around a threshold so the profile sits flat between spikes and
-      // sharpens as `detail` rises.
-      let spike = (raw - 0.42) / 0.58
-      spike = spike > 0 ? spike : 0
-      spike = Math.pow(spike, 1 + params.detail * 1.8)
-      ys[c] = baseY - env * spike * peak
-    }
-
-    // Fill under the curve with the background to mask the rows behind.
-    ctx.beginPath()
-    ctx.moveTo(marginX, ys[0])
-    for (let c = 1; c <= cols; c++) ctx.lineTo(marginX + c * dx, ys[c])
-    ctx.lineTo(marginX + spanX, H)
-    ctx.lineTo(marginX, H)
-    ctx.closePath()
-    ctx.fillStyle = '#05060a'
-    ctx.fill()
-
-    // Stroke the ridge itself.
-    ctx.beginPath()
-    ctx.moveTo(marginX, ys[0])
-    for (let c = 1; c <= cols; c++) ctx.lineTo(marginX + c * dx, ys[c])
-    ctx.strokeStyle = stroke
-    if (params.glow > 0.01) {
-      ctx.shadowColor = stroke
-      ctx.shadowBlur = params.glow * 12 * rt.pixelRatio
-    } else {
-      ctx.shadowBlur = 0
-    }
-    ctx.stroke()
-  }
-  ctx.shadowBlur = 0
+  const glowR = params.glow * 12 * rt.pixelRatio
+  const halfW = lw * 0.5 + (params.glow > 0.01 ? glowR * 2.2 : 1)
+  gl.useProgram(line.p)
+  setCommon(line, t, lines, cols)
+  gl.uniform3f(line.u('u_stroke'), ...hsl(Math.round(params.hue), Math.round(params.tint * 60) / 100, 0.92))
+  gl.uniform1f(line.u('u_halfW'), halfW)
+  gl.uniform1f(line.u('u_lw'), lw)
+  gl.uniform1f(line.u('u_glow'), params.glow > 0.01 ? params.glow : 0)
+  gl.uniform1f(line.u('u_glowR'), glowR)
+  gl.enable(gl.BLEND)
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+  gl.depthMask(false)
+  gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (cols + 1) * 2, lines)
+  gl.depthMask(true)
 
   requestAnimationFrame(frame)
 }

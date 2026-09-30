@@ -2,6 +2,9 @@
 // wall: multi-pass bloom gives the tubes their halo, a couple of letters
 // flicker and buzz like a failing transformer, and the whole sign hums
 // brighter on the beat. Seeded shapes and colours each load.
+//
+// Performance: the brick wall is baked once per size, and the glow is drawn and
+// blurred at quarter resolution (16x fewer pixels per blur) then scaled up.
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
@@ -20,12 +23,32 @@ const params = rt.params({
 rt.mapInput('audio.pulse', 'glow', 0.4)
 
 let W = 0, H = 0
-const glowC = document.createElement('canvas')
+const Q = 0.25 // glow resolution relative to the canvas
+const glowC = document.createElement('canvas') // tubes, drawn small
 const gx = glowC.getContext('2d')
+const blurC = document.createElement('canvas') // blurred copy, reused for each halo
+const bx = blurC.getContext('2d')
+const wall = document.createElement('canvas') // baked brick wall
+function bakeWall() {
+  wall.width = W; wall.height = H
+  const c = wall.getContext('2d')
+  c.fillStyle = '#0d0a0c'; c.fillRect(0, 0, W, H)
+  c.strokeStyle = 'rgba(255,255,255,0.02)'; c.lineWidth = rt.pixelRatio
+  const bh = 26 * rt.pixelRatio
+  c.beginPath()
+  for (let y = 0, row = 0; y < H; y += bh, row++) {
+    c.moveTo(0, y); c.lineTo(W, y)
+    const off = (row % 2) * bh
+    for (let x = off; x < W; x += bh * 2) { c.moveTo(x, y); c.lineTo(x, y + bh) }
+  }
+  c.stroke()
+}
 function resize() {
   W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
   H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  glowC.width = W; glowC.height = H
+  glowC.width = blurC.width = Math.max(2, Math.round(W * Q))
+  glowC.height = blurC.height = Math.max(2, Math.round(H * Q))
+  bakeWall()
 }
 // each shape is a set of polyline strokes in a -1..1 box, [hueKind, points]
 function shapePaths(name) {
@@ -101,32 +124,30 @@ function frame(now) {
     flickerState[i] = Math.min(1, (flickerState[i] ?? 1) + dt * 4) * (1 - params.buzz * 0.08 * (0.5 + 0.5 * Math.sin(t * 60 + i)))
   }
 
-  // brick wall
-  ctx.fillStyle = '#0d0a0c'; ctx.fillRect(0, 0, W, H)
-  ctx.strokeStyle = 'rgba(255,255,255,0.02)'; ctx.lineWidth = rt.pixelRatio
-  const bh = 26 * rt.pixelRatio
-  for (let y = 0, row = 0; y < H; y += bh, row++) {
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
-    const off = (row % 2) * bh
-    for (let x = off; x < W; x += bh * 2) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + bh); ctx.stroke() }
-  }
+  // brick wall (baked)
+  ctx.drawImage(wall, 0, 0)
 
   const cx = W / 2, cy = H / 2
   const scale = Math.min(W, H) * 0.42
   const lw = 6 * rt.pixelRatio * params.thickness
   const lightF = params.glow
 
-  // glow pass: draw thick, blur, add
-  gx.clearRect(0, 0, W, H)
-  stroke(gx, paths, cx, cy, scale, lw * 2.2, params.hue, params.hue2, lightF)
+  // glow pass: draw thick at quarter res, blur there, add back scaled up
+  gx.clearRect(0, 0, glowC.width, glowC.height)
+  stroke(gx, paths, cx * Q, cy * Q, scale * Q, lw * 2.2 * Q, params.hue, params.hue2, lightF)
   ctx.globalCompositeOperation = 'lighter'
-  ctx.filter = `blur(${10 * rt.pixelRatio}px)`
-  ctx.globalAlpha = 0.8 * params.glow
-  ctx.drawImage(glowC, 0, 0)
-  ctx.filter = `blur(${22 * rt.pixelRatio}px)`
-  ctx.globalAlpha = 0.5 * params.glow
-  ctx.drawImage(glowC, 0, 0)
-  ctx.filter = 'none'; ctx.globalAlpha = 1
+  ctx.imageSmoothingEnabled = true
+  const halo = (blurPx, alpha) => {
+    bx.clearRect(0, 0, blurC.width, blurC.height)
+    bx.filter = `blur(${blurPx * rt.pixelRatio * Q}px)`
+    bx.drawImage(glowC, 0, 0)
+    bx.filter = 'none'
+    ctx.globalAlpha = alpha * params.glow
+    ctx.drawImage(blurC, 0, 0, W, H)
+  }
+  halo(10, 0.8)
+  halo(22, 0.5)
+  ctx.globalAlpha = 1
   // crisp tube core
   stroke(ctx, paths, cx, cy, scale, lw, params.hue, params.hue2, 1)
   // bright inner filament
