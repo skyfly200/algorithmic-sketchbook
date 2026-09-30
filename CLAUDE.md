@@ -69,3 +69,38 @@ controls panel, listed on the gallery page, deep-linked as
   sketch title. Update `techByTemplate` in `scripts/new-sketch.mjs`.
 - Gallery/app changes: Vue SFCs in `src/`; Vuetify components, Pinia store in
   `src/stores/sketches.js`, hash-based routing in `src/router/index.js`.
+
+## Writing filters that stay fast
+
+Per-pixel filters belong on the GPU — `getImageData` + a JS loop + `putImageData`
+every frame is the most common way a sketch ends up slow.
+
+- `sketches/_lib/glfilter.js` — single-pass WebGL2 filter over the shared source
+  (`createGLFilter({ rt, src, canvas, frag, mipmaps })`, then `gf.render({ mirror,
+  time }, (u) => u.f('u_x', v))`). It skips frames where the source picture, the
+  uniforms and the size are unchanged (and the shader doesn't read `u_time`).
+  `gf.addTexture(name, unit)` adds a LUT / baked overlay sampler.
+- `sketches/_lib/glpipe.js` — multipass sibling (separable blurs, prefix scans,
+  ping-pong simulation state in float targets). See `wind`, `ink-bleed`,
+  `vhs-defects`.
+- `src.version` (from `createSource()`) bumps whenever the picture changes; use it
+  to skip work on still images. `mipmaps: true` gives cheap pre-blurred reads via
+  `textureLod`, so effects need no readback to get an average brightness.
+- Canvas2D sketches: bake static layers once, blur at quarter resolution and scale
+  up, cache gradients as sprites, never create canvases inside the frame loop.
+- `npm run build && npm run bench -- --filters --headed` measures frame / JS time
+  per sketch on *your* GPU (`npm run perf` regenerates the gallery's grades).
+
+## Demo scenes
+
+`sketches/_lib/demos.js` holds the built-in demo sources (Landscape, Test chart,
+Night city). Press **D** in a sketch (or `?demo=night-city`) to cycle them; a
+sketch can still pass its own `createSource({ demo })`.
+
+## Patch scheduling
+
+`src/lib/patch/scheduler.js` (used by `PatchView`): culls nodes that can't reach
+the Output (including layers hidden behind an opaque Normal blend), idles culled
+nodes at a few fps in rotation, and steps low-priority live nodes down through
+`FPS_STEPS` when the compositor can't hold the display rate. Sketches honour it
+through the `sketch:throttle` message handled in `sketches/_lib/runtime.js`.

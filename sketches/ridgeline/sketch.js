@@ -77,10 +77,12 @@ float rowDepth(float r) { return 1.0 - (r + 1.0) / (u_lines + 2.0); }     // lat
 vec4 toClip(vec2 px, float z) { return vec4(px.x / u_res.x * 2.0 - 1.0, 1.0 - px.y / u_res.y * 2.0, z * 2.0 - 1.0, 1.0); }
 `
 
-// pass 1: the silhouette under each curve, in the background colour (writes depth)
+// pass 1: the silhouette under each curve, in the background colour (writes depth).
+// Drawn nearest row first so the depth test rejects the hidden rows' pixels early
+// instead of overdrawing every pixel once per row.
 const FILL_VS = COMMON + `
 void main() {
-  float r = float(gl_InstanceID);
+  float r = u_lines - 1.0 - float(gl_InstanceID);
   float c = float(gl_VertexID >> 1);
   bool bottom = (gl_VertexID & 1) == 1;
   float x = u_marginX + c / u_cols * u_spanX;
