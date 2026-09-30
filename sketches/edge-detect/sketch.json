@@ -1,0 +1,7 @@
+{
+  "title": "Edge Detect",
+  "description": "An edge-detection filter for a live source, run as a GPU shader. Choose Sobel, Scharr, Prewitt or Laplacian kernels, then thicken, threshold and soften the lines. Render them as white-on-black, ink on paper, neon in the source's own colours, a glowing overlay on the image, or hue-coded by edge direction. Strength is audio-mappable. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": ["filter", "edge-detection", "sobel", "outline", "line-art"],
+  "tech": ["webgl"],
+  "created": "2026-09-30"
+}
