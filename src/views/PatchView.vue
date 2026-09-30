@@ -39,7 +39,7 @@ import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } 
 import { createRenderers } from '../lib/patch/renderers.js'
 import { liveNodes, RateController, backgroundSlot, BACKGROUND_FPS } from '../lib/patch/scheduler.js'
 import { NODE_W, HEAD_H, THUMB_H, RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, PRESET_BLOCKS, NL_EXAMPLES, PATCH_TOUR_STEPS } from '../lib/patch/constants.js'
-import { normalizeNodes, migrateGraph, applyCurve, usedInGraph, ancestorsOf as ancestorsIn, makeOrderCache, planIdMap, applyIdMap, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
+import { normalizeNodes, migrateGraph, applyCurve, usedInGraph, ancestorsOf as ancestorsIn, makeOrderCache, planIdMap, planMirrorIds, applyIdMap, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
 import { loadJson, saveJson, fileSlug, downloadJson, pickJsonFile, captureBlockData, stampBlock, fillPreset, buildPatchFile, parsePatchImport } from '../lib/patch/library.js'
 import TourOverlay from '../components/TourOverlay.vue'
 import NumSlider from '../components/NumSlider.vue'
@@ -215,7 +215,7 @@ function persist() {
   // Autosave carries the effect sketches' own param values + mappings too, so a
   // browser reload restores the whole patch — not just the node graph.
   storeGraph()
-  if (restoring) return
+  if (restoring || D.scopeIdx() !== D.editIdx.value) return // undo history belongs to the edited deck only
   const s = snapshot()
   if (s !== lastSnap) {
     undoStack.push(lastSnap)
@@ -256,7 +256,7 @@ function applySnap(s) {
   pruneRuntime()
   for (const n of nodes) st(n.id)
   storeGraph()
-  lastSnap = s
+  if (D.scopeIdx() === D.editIdx.value) lastSnap = s
   restoring = false
   nextTick(() => layoutTick.value++)
 }
@@ -790,6 +790,16 @@ const ap = useAutopilot({
   nodes, edges, TYPES, BLENDS,
   fps: () => fps.value,
   slugPool, slugCost, graphCost, persist, randomPatch, rerollUpstream, undo,
+  // two-deck crossfaded moves (hoisted / later-declared: only called at runtime)
+  decksOn: () => mix.enabled,
+  busy: () => !!mix.fading || autopilotMoving,
+  crossfadeMove: (move, secs) => crossfadeMove(move, secs),
+  canFadeBack: () => mix.enabled && !mix.fading && decks[1 - D.onAirIdx()].nodes.length > 0,
+  fadeBack: (secs) => {
+    const to = 1 - D.onAirIdx()
+    if (D.editIdx.value === D.onAirIdx()) afterFade = () => selectDeck(to) // the editor follows the live patch
+    fadeToDeck(to, secs)
+  },
 })
 // The node card shows a "keep" pin only on nodes autopilot might touch.
 const autoCanTouch = ap.canTouch
@@ -2578,7 +2588,7 @@ function loop(ts) {
   if (renderPaused.value) { raf = requestAnimationFrame(loop); return } // held — keep the editor snappy
   broadcastBeat(now)
   if (show.state.mode === 'timeline' && show.state.playing) show.tickShow(now)
-  D.tickFade(now)
+  if (D.tickFade(now) && afterFade) { const f = afterFade; afterFade = null; f() }
   passToggle++
   const modes = [deckMode(0), deckMode(1)]
   liveParams.clear()
@@ -3091,6 +3101,59 @@ function takeCue(cue, secs) {
   queueEffects({ ...(cue.effects || {}) })
   if (secs > 0) D.fadeTo(to, secs, performance.now(), 250)
   else D.cut(to)
+}
+
+// --- Autopilot moves as live crossfades ---------------------------------------
+// Copy deck `from` into deck `to`, keeping the target's running iframes for nodes
+// that didn't change (same sketch + seed) so only what differs has to boot.
+function mirrorDeck(from, to) {
+  const src = decks[from]
+  const data = JSON.parse(JSON.stringify({ nodes: src.nodes, edges: src.edges, links: src.links }))
+  data.effects = currentEffects(D.idsOf(src))
+  const key = (n) => (isFrameNode(n) ? `${n.type}|${n.params.slug}|${n.params.seed ?? ''}` : null)
+  const { map, nextId: nx } = planMirrorIds(data.nodes, decks[to].nodes, Math.max(nextId, D.maxId() + 1), key)
+  nextId = Math.max(nextId, nx)
+  applyIdMap(data, map)
+  replaceDeck(to, data, data.effects)
+}
+// Every effect/filter frame of a deck is warm (or timed out) — its look is on screen-ready.
+function whenDeckWarm(idx, capMs) {
+  return new Promise((resolve) => {
+    const t0 = performance.now()
+    const poll = () => {
+      const ready = decks[idx].nodes.every((n) => {
+        if (!isFrameNode(n)) return true
+        const f = frameList.find((x) => x.nodeId === n.id)
+        return !f || frameWarm(f)
+      })
+      ready || performance.now() - t0 >= capMs ? resolve() : setTimeout(poll, 40)
+    }
+    poll()
+  })
+}
+let autopilotMoving = false // a move is being built/warmed (not yet fading)
+let afterFade = null // run once when the current fade completes
+// Build an Autopilot move on the off-air deck and fade it in: mirror the on-air
+// deck across, run `move` with that deck in scope, wait for the changed effects
+// to warm, then fade. Resolves once the fade has started (false if skipped).
+async function crossfadeMove(move, secs) {
+  if (mix.fading || autopilotMoving) return false
+  autopilotMoving = true
+  try {
+    const from = D.onAirIdx()
+    const to = 1 - from
+    mix.enabled = true
+    mirrorDeck(from, to)
+    D.withDeck(decks[to], move)
+    await nextTick() // let syncFrames create frames for whatever the move changed
+    await whenDeckWarm(to, 6000)
+    // the editor keeps showing the live patch: follow it across once the fade lands
+    if (D.editIdx.value === from) afterFade = () => selectDeck(to)
+    fadeToDeck(to, secs)
+    return true
+  } finally {
+    autopilotMoving = false
+  }
 }
 
 // --- saved routings: named snapshots of the node graph in localStorage ----
@@ -3945,7 +4008,7 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
 
     <!-- Autopilot transport + options — surfaced when engaged; the graph stays
          hand-editable while it runs. -->
-    <AutopilotBar :ap="ap" :fps="fps" :undo-depth="undoStack.length" @open-full="openAutopilot" />
+    <AutopilotBar :ap="ap" :fps="fps" :decks-on="mix.enabled" :undo-depth="ap.crossfading() ? (decks[1 - D.onAirIdx()].nodes.length ? 1 : 0) : undoStack.length" @open-full="openAutopilot" />
 
     <!-- node board -->
     <div

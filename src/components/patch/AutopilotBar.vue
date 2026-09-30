@@ -9,6 +9,7 @@ defineProps({
   ap: { type: Object, required: true },       // useAutopilot() return
   fps: { type: Number, default: 0 },
   undoDepth: { type: Number, default: 0 },
+  decksOn: { type: Boolean, default: false }, // the two-deck console is on
 })
 defineEmits(['open-full'])
 </script>
@@ -28,7 +29,7 @@ defineEmits(['open-full'])
 
     <!-- transport: previous · play/pause · next-now · countdown ring · reroll -->
     <div class="show-transport">
-      <v-btn icon="mdi-skip-previous" size="small" variant="text" :disabled="!undoDepth" title="Step back (undo the last change)" @click="ap.prev()" />
+      <v-btn icon="mdi-skip-previous" size="small" variant="text" :disabled="!undoDepth" title="Step back — fade to the previous look (decks) or undo the last change" @click="ap.prev()" />
       <v-btn :icon="ap.state.on && !ap.state.paused ? 'mdi-pause' : 'mdi-play'" size="small" variant="text" :title="!ap.state.on ? 'Engage autopilot' : ap.state.paused ? 'Resume' : 'Pause (holds autopilot)'" @click="ap.state.on ? ap.playPause() : ap.toggle()" />
       <v-btn icon="mdi-skip-next" size="small" variant="text" :disabled="!ap.state.on" title="Next move now" @click="ap.nextNow()" />
       <span class="countdown-ring" :title="ap.state.on ? (ap.state.paused ? 'Paused' : 'Time until the next change') : 'Autopilot is off'">
@@ -50,7 +51,15 @@ defineEmits(['open-full'])
       <div class="auto-row">Perf budget: {{ ap.state.budget }} — bigger is richer &amp; heavier</div>
       <v-slider v-model="ap.state.budget" :min="4" :max="30" :step="1" hide-details density="compact" class="mb-1" @pointerdown.stop />
       <div class="auto-row">FPS floor: {{ ap.state.fpsFloor }} — cheapen the graph below this</div>
-      <v-slider v-model="ap.state.fpsFloor" :min="10" :max="50" :step="1" hide-details density="compact" @pointerdown.stop />
+      <v-slider v-model="ap.state.fpsFloor" :min="10" :max="50" :step="1" hide-details density="compact" class="mb-1" @pointerdown.stop />
+      <label class="auto-row auto-check" :title="decksOn ? 'Build each move on the off-air deck, let it warm up, then fade it in' : 'Turn on Decks (bottom-right) to use this'">
+        <input v-model="ap.state.crossfade" type="checkbox" :disabled="!decksOn" @pointerdown.stop /> Crossfade each move on the decks
+      </label>
+      <template v-if="decksOn && ap.state.crossfade">
+        <div class="auto-row">Fade {{ ap.state.fadeSecs }}s</div>
+        <v-slider v-model="ap.state.fadeSecs" :min="0.5" :max="15" :step="0.5" hide-details density="compact" @pointerdown.stop />
+      </template>
+      <p v-if="!decksOn" class="auto-hint">Turn on <b>Decks</b> to fade each move in live instead of swapping it in place.</p>
       <p class="auto-hint">Autopilot swaps effects, restyles blends and regrows branches on the clock. Locked nodes are never touched — lock anything you want to keep, and keep adding nodes from the toolbar while it runs.</p>
     </div>
   </div>
@@ -81,4 +90,5 @@ defineEmits(['open-full'])
 .countdown-ring .ring-bg { fill: none; stroke: rgba(255,255,255,0.12); stroke-width: 3; }
 .countdown-ring .ring-fg { fill: none; stroke: #7c8cff; stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 0.9s linear; }
 .countdown-ring .ring-num { grid-area: 1 / 1; font: 600 10px/1 ui-monospace, monospace; color: #cdd3e0; }
+.auto-check { display: flex; align-items: center; gap: 6px; cursor: pointer; margin-top: 4px; }
 </style>

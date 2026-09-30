@@ -148,3 +148,29 @@ describe('useDecks crossfader', () => {
     expect(calls).toEqual([['draw', 1, 'source-over', 'A'], ['draw', 0.25, 'multiply', 'B']])
   })
 })
+
+import { planMirrorIds } from '../src/lib/patch/graph.js'
+
+describe('planMirrorIds (copy a deck, keep unchanged iframes)', () => {
+  const fx = (id, slug, seed = 's') => ({ id, type: 'effect', params: { slug, seed } })
+  const key = (n) => (n.type === 'effect' ? `${n.type}|${n.params.slug}|${n.params.seed}` : null)
+  it('reuses target ids for unchanged effects and gives fresh ids to the rest', () => {
+    const src = [fx(1, 'a'), fx(2, 'b'), { id: 3, type: 'output', params: {} }]
+    const dst = [fx(10, 'a'), fx(11, 'zzz'), { id: 12, type: 'output', params: {} }]
+    const { map, nextId } = planMirrorIds(src, dst, 100, key)
+    expect(map.get(1)).toBe(10)   // same sketch + seed → the running iframe is kept
+    expect(map.get(2)).toBe(100)  // changed → fresh
+    expect(map.get(3)).toBe(101)  // non-effect nodes are never reused
+    expect(nextId).toBe(102)
+  })
+  it('never hands the same target node to two sources', () => {
+    const src = [fx(1, 'a'), fx(2, 'a')]
+    const { map } = planMirrorIds(src, [fx(10, 'a')], 100, key)
+    expect([map.get(1), map.get(2)]).toEqual([10, 100])
+    expect(new Set(map.values()).size).toBe(2)
+  })
+  it('a different seed is a different look, so it is not reused', () => {
+    const { map } = planMirrorIds([fx(1, 'a', 'x')], [fx(10, 'a', 'y')], 100, key)
+    expect(map.get(1)).toBe(100)
+  })
+})

@@ -8,7 +8,15 @@ import { reactive, watch, onScopeDispose } from 'vue'
 
 // ctx: { nodes, edges, TYPES, BLENDS, fps() (getter → current fps), slugPool(n),
 //        slugCost(slug), graphCost(), persist(), randomPatch(),
-//        rerollUpstream(node), undo() }
+//        rerollUpstream(node), undo(),
+//        decksOn(), busy(), crossfadeMove(move, fadeSecs) → Promise<bool>,
+//        canFadeBack(), fadeBack(fadeSecs) }
+//
+// With the two-deck console on, a move doesn't edit the on-air graph in place (a
+// slug swap there reloads an iframe on screen). crossfadeMove mirrors the on-air
+// deck onto the off-air one, runs `move` there (nodes/edges/links are scoped to
+// that deck while it runs, so the same code works), waits for what changed to
+// warm up, and fades it in live.
 export function useAutopilot(ctx) {
   const state = reactive({
     on: false,
@@ -17,6 +25,8 @@ export function useAutopilot(ctx) {
     everySec: 12,   // dwell between moves
     fpsFloor: 15,   // below this, cheapen the graph instead of adding churn
     budget: 12,     // keep the graph's total render cost under this
+    crossfade: true, // with decks on: build each move on the off-air deck and fade it in
+    fadeSecs: 3,     // length of that fade
     left: 0,        // whole seconds until the next move
     total: 1,       // length of the current dwell, for the ring
     // countdown ring fill 0..1 (getter → reactive, unwraps cleanly in templates)
@@ -33,8 +43,21 @@ export function useAutopilot(ctx) {
     return n.type === 'effect' || n.type === 'filter' || n.type === 'blend' || ctx.TYPES[n.type].ins > 0
   }
 
-  function step() {
+  // Crossfading only applies with the decks console on and the option enabled.
+  const crossfading = () => !!(ctx.decksOn?.() && state.crossfade)
+
+  async function step() {
     if (!state.on) return
+    if (crossfading()) {
+      if (ctx.busy()) return // a fade (or a move still warming up) is in flight — skip this tick
+      await ctx.crossfadeMove(mutate, state.fadeSecs)
+      return
+    }
+    mutate()
+  }
+
+  // One evolution move on whatever graph is in scope (ctx.nodes/edges follow it).
+  function mutate() {
     const { nodes, edges, TYPES, BLENDS, slugPool, slugCost, graphCost, persist, randomPatch, rerollUpstream } = ctx
     const fpsNow = ctx.fps()
     const swappable = nodes.filter((n) => (n.type === 'effect' || n.type === 'filter') && !n.locked && !n.keep)
@@ -92,7 +115,7 @@ export function useAutopilot(ctx) {
     timer = setInterval(() => {
       if (state.paused) return
       state.left--
-      if (state.left <= 0) { step(); resetClock() }
+      if (state.left <= 0) { Promise.resolve(step()).catch((e) => console.error('[autopilot]', e)); resetClock() }
     }, 1000)
   }
   function toggle() {
@@ -105,12 +128,21 @@ export function useAutopilot(ctx) {
     arm()
   }
   function playPause() { state.paused = !state.paused }
-  function nextNow() { if (!state.on) return; step(); resetClock() }
-  function prev() { ctx.undo() }
-  function reroll() { ctx.randomPatch(); resetClock() }
+  function nextNow() { if (!state.on) return; Promise.resolve(step()).catch((e) => console.error('[autopilot]', e)); resetClock() }
+  // Step back: with decks, the deck we just faded away from still holds the
+  // previous look, so fade back to it; otherwise undo the last edit.
+  function prev() {
+    if (crossfading() && ctx.canFadeBack()) ctx.fadeBack(state.fadeSecs)
+    else ctx.undo()
+  }
+  function reroll() {
+    if (crossfading() && !ctx.busy()) ctx.crossfadeMove(() => ctx.randomPatch(), state.fadeSecs)
+    else ctx.randomPatch()
+    resetClock()
+  }
 
   watch(() => state.everySec, () => { if (state.on) arm() })
   onScopeDispose(() => clearInterval(timer))
 
-  return { state, canTouch, toggle, playPause, nextNow, prev, reroll, arm, resetClock, step }
+  return { state, canTouch, toggle, playPause, nextNow, prev, reroll, arm, resetClock, step, crossfading }
 }

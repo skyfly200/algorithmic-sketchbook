@@ -118,6 +118,19 @@ alone. The cog next to it sets how often it changes and links to the full
 Autopilot, and let the board evolve; take over any time by switching back to
 Manual.
 
+**Crossfaded moves.** With [Decks](#decks-edit-one-patch-while-another-is-on-air)
+on, Autopilot doesn't change the live graph in place (swapping a sketch there
+reloads it on screen). Instead each move is built on the **off-air deck**: the
+on-air deck is mirrored across — unchanged effects keep running, only what the
+move changes boots — the move is applied there, and once it has warmed up it
+fades in over the *Fade* time while the old look fades out, both running live.
+The editor follows the live patch across each fade. **Step back** fades to the
+previous look (the deck you just left still holds it). Autopilot owns the off-air
+deck while it runs, so don't edit it; *Restore* brings back what it overwrote.
+Untick *Crossfade each move on the decks* in the panel to go back to in-place
+changes. A fade briefly runs both decks, so on a small machine (see
+**Performance**) keep the fade short or the graph light.
+
 You can hop between the two either way: **Open the Autopilot view** from Patch,
 or **Edit in Patch** from Autopilot to drop its current evolving mix onto the
 board as an editable graph.
