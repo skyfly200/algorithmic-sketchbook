@@ -36,11 +36,16 @@ let W = 0
 let H = 0
 const core = document.createElement('canvas') // crisp LED cores, bloomed up later
 const cctx = core.getContext('2d')
+// the diffusion blurs run on a quarter-size copy (16x fewer pixels), scaled back up
+const small = document.createElement('canvas')
+const sctx = small.getContext('2d')
 function resize() {
   W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
   H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
   core.width = W
   core.height = H
+  small.width = Math.max(2, W >> 2)
+  small.height = Math.max(2, H >> 2)
   layoutDirty = true
 }
 
@@ -192,13 +197,17 @@ function frame(now) {
   // diffusion bloom: the whole core layer blurred and added back, twice
   if (params.diffuse > 0.02) {
     ctx.globalCompositeOperation = 'lighter'
-    ctx.globalAlpha = Math.min(1, 0.95 * params.diffuse)
-    ctx.filter = `blur(${sz * 0.9}px)`
-    ctx.drawImage(core, 0, 0)
-    ctx.globalAlpha = 0.6 * params.diffuse
-    ctx.filter = `blur(${sz * 3}px)`
-    ctx.drawImage(core, 0, 0)
-    ctx.filter = 'none'
+    const halo = (blurPx, alpha) => {
+      sctx.clearRect(0, 0, small.width, small.height)
+      sctx.filter = `blur(${blurPx / 4}px)`
+      sctx.drawImage(core, 0, 0, small.width, small.height)
+      sctx.filter = 'none'
+      ctx.globalAlpha = alpha
+      ctx.imageSmoothingEnabled = true
+      ctx.drawImage(small, 0, 0, W, H)
+    }
+    halo(sz * 0.9, Math.min(1, 0.95 * params.diffuse))
+    halo(sz * 3, 0.6 * params.diffuse)
     ctx.globalAlpha = 1
     ctx.globalCompositeOperation = 'source-over'
   }

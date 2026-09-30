@@ -120,7 +120,9 @@ const QUALITY = {
   low: { pixelRatio: 0.5, detail: 0.4 },
   medium: { pixelRatio: 0.75, detail: 0.7 },
   high: { pixelRatio: 1, detail: 1 },
-  native: { pixelRatio: Math.min(window.devicePixelRatio || 1, 3), detail: 1 },
+  // capped at 2: a 3x phone screen has 9x the pixels of 1x, which most sketches
+  // (full-screen shaders especially) pay for linearly, for little visible gain
+  native: { pixelRatio: Math.min(window.devicePixelRatio || 1, 2), detail: 1 },
 }
 
 function mountFpsMeter() {
