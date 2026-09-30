@@ -1,0 +1,14 @@
+{
+  "title": "Pixelate",
+  "description": "Pixelate — chunky low-resolution blocks. Square, round (LED-like) or diamond pixels with a gap between them, adjustable aspect, optional smoothing by averaging, and colour-level reduction for a retro palette. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "pixelate",
+    "pixel-art",
+    "retro"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

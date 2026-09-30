@@ -1,0 +1,14 @@
+{
+  "title": "Duotone",
+  "description": "Duotone — maps the image onto two (or three) tones: shadows take one colour, highlights another, optionally a third for the midtones. The classic poster / Spotify look, with hue and saturation per tone, contrast and balance. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "duotone",
+    "tritone",
+    "color-grading"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

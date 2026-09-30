@@ -1,0 +1,15 @@
+{
+  "title": "Polar Coordinates",
+  "description": "Polar Coordinates — remaps the image between rectangular and polar space: wrap it into a circle, unwrap a circle into a strip, fly down an infinite tunnel, or fold a panorama into a \"little planet\". Adjustable centre, zoom, rotation, spin, angular repeats and a seamless mirror option. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "polar",
+    "tunnel",
+    "little-planet",
+    "distortion"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

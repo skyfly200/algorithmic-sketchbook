@@ -1,0 +1,14 @@
+{
+  "title": "Crystallize",
+  "description": "Crystallize — breaks the image into flat-coloured Voronoi facets, like stained crystal shards. Cell size, jitter, edge lines, per-facet shading, and optional slow drift of the crystal seeds. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "crystallize",
+    "voronoi",
+    "stylize"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

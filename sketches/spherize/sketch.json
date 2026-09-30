@@ -1,0 +1,15 @@
+{
+  "title": "Spherize",
+  "description": "Spherize — wraps the image around a sphere or a cylinder (horizontal or vertical) inside a movable circle, bulging it out or, with a negative strength, sucking it in. Optional specular shine and edge darkening sell the 3D look. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "spherize",
+    "sphere",
+    "lens",
+    "distortion"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

@@ -11,6 +11,7 @@ export const FILTER_SLUGS = [
   'birefringence', 'curves', 'twist', 'wind', 'liquid-metal', 'tiling',
   'polaroid', 'ink-bleed', 'edge-detect',
   'kuwahara', 'emboss', 'sharpen', 'tilt-shift', 'gradient-map',
+  'solarize', 'duotone', 'invert', 'vignette', 'crystallize', 'mosaic', 'pixelate', 'displace', 'ripple', 'pinch', 'spherize', 'polar-coordinates', 'glowing-edges',
 ]
 export const FILTER_SLUG_SET = new Set(FILTER_SLUGS)
 export function isFilterSketch(sketch) {

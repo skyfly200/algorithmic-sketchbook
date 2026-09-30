@@ -1,0 +1,14 @@
+{
+  "title": "Ripple",
+  "description": "Ripple — water rings radiating from a point. Continuous concentric waves with distance decay, or expanding \"pond drop\" rings, with adjustable frequency, amplitude, speed and a lighting term from the wave slope. Amplitude can kick on every beat. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "ripple",
+    "water",
+    "distortion"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

@@ -1,0 +1,14 @@
+{
+  "title": "Invert",
+  "description": "Invert — a negative of the source. Invert all channels, only the luminance (keeping hue), flip to the luminance-complement colours, or invert a single channel. Amount blends it in, and it can flash on every beat. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "invert",
+    "negative",
+    "color"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}
