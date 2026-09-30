@@ -51,27 +51,52 @@ export function migrateGraph(nodesArr, edgesArr) {
 // --- topology ---------------------------------------------------------------
 // Kahn topological sort of the node list; nodes left in a cycle are appended in
 // their original order so a feedback loop still renders (holding last frame).
+// O(V + E): adjacency lists + a head index instead of per-node edge scans and
+// Array.shift (the naive form is O(V·E) and ran every frame).
 export function evalOrder(nodes, edges) {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
   const indeg = new Map(nodes.map((n) => [n.id, 0]))
-  for (const e of edges) indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1)
+  const out = new Map() // id → downstream ids, in edge order
+  for (const e of edges) {
+    indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1)
+    let l = out.get(e.from)
+    if (!l) out.set(e.from, (l = []))
+    l.push(e.to)
+  }
   const queue = nodes.filter((n) => (indeg.get(n.id) ?? 0) === 0)
   const order = []
   const seen = new Set()
-  while (queue.length) {
-    const n = queue.shift()
+  for (let head = 0; head < queue.length; head++) {
+    const n = queue[head]
     if (seen.has(n.id)) continue
     seen.add(n.id)
     order.push(n)
-    for (const e of edges.filter((e) => e.from === n.id)) {
-      indeg.set(e.to, indeg.get(e.to) - 1)
-      if (indeg.get(e.to) === 0) {
-        const t = nodes.find((x) => x.id === e.to)
+    for (const to of out.get(n.id) ?? []) {
+      indeg.set(to, indeg.get(to) - 1)
+      if (indeg.get(to) === 0) {
+        const t = byId.get(to)
         if (t) queue.push(t)
       }
     }
   }
   for (const n of nodes) if (!seen.has(n.id)) order.push(n) // cyclic remainder
   return order
+}
+// Per-frame callers shouldn't redo the sort while the wiring is unchanged. The
+// cache keys on a cheap O(V + E) signature of ids + edges (node *positions and
+// params* don't affect order), so the sort itself runs only when the topology
+// changes. Returns a function (nodes, edges) → ordered node objects.
+export function makeOrderCache() {
+  let sig = '', ids = []
+  return (nodes, edges) => {
+    let s = ''
+    for (const n of nodes) s += n.id + ','
+    s += '|'
+    for (const e of edges) s += e.from + '>' + e.to + ','
+    if (s !== sig) { sig = s; ids = evalOrder(nodes, edges).map((n) => n.id) }
+    const byId = new Map(nodes.map((n) => [n.id, n]))
+    return ids.map((id) => byId.get(id))
+  }
 }
 // Whether a node participates in any video edge or control link (i.e. it's
 // actually wired into the routing, not a disconnected orphan).

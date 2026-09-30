@@ -34,7 +34,7 @@ import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, cr
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
 import { createRenderers } from '../lib/patch/renderers.js'
 import { NODE_W, HEAD_H, THUMB_H, RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, PRESET_BLOCKS, NL_EXAMPLES, PATCH_TOUR_STEPS } from '../lib/patch/constants.js'
-import { normalizeNodes, migrateGraph, applyCurve, usedInGraph, evalOrder as orderGraph, ancestorsOf as ancestorsIn, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
+import { normalizeNodes, migrateGraph, applyCurve, usedInGraph, ancestorsOf as ancestorsIn, makeOrderCache, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
 import { loadJson, saveJson, fileSlug, downloadJson, pickJsonFile, captureBlockData, stampBlock, fillPreset, buildPatchFile, parsePatchImport } from '../lib/patch/library.js'
 import TourOverlay from '../components/TourOverlay.vue'
 import NumSlider from '../components/NumSlider.vue'
@@ -2292,7 +2292,9 @@ function evalNode(node) {
 }
 
 // Topological order (cycles tolerated: leftovers appended → 1-frame feedback).
-const evalOrder = () => orderGraph(nodes, edges)
+// Memoised: the sort reruns only when the wiring changes, not every frame.
+const orderCached = makeOrderCache()
+const evalOrder = () => orderCached(nodes, edges)
 
 let raf = 0
 // Adaptive throttling: a full compositor pass can get expensive (big
