@@ -1,0 +1,14 @@
+{
+  "title": "Kuwahara",
+  "description": "An edge-preserving painterly filter run as a GPU shader. Each pixel takes the mean of the least-varying of four surrounding sectors, so flat areas melt into brush-like patches while edges stay crisp. Adjustable brush radius, sector sharpness and saturation; brush radius is audio-mappable. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "painterly",
+    "kuwahara",
+    "oil-paint"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}

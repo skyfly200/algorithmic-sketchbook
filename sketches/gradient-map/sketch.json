@@ -1,0 +1,14 @@
+{
+  "title": "Gradient Map",
+  "description": "Remaps brightness onto a colour ramp like Photoshop's Gradient Map. Eight preset palettes or a custom three-hue ramp, with contrast, brightness shift, posterize bands, invert, mix with the original and an animated ramp cycle. Shift is audio-mappable. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "gradient-map",
+    "color-grading",
+    "palette"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-09-30"
+}
