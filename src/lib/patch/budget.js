@@ -87,26 +87,31 @@ export function maxFrames(memGB, pixels) {
 }
 
 // How to run two decks on this machine. costs = { on, off } from deckCost().
-//   offAirMode  'paused' (hold GPU state, draw nothing) | 'cued' (half rate,
-//               for the preview monitor) | 'live' (full rate)
-//   liveFade    whether a true live-to-live crossfade fits (2× on-air cost)
-//   standby     how many warm-up iframes to allow
+//
+// What each off-air mode really costs (iframes draw at their own rate, so only
+// pausing them saves GPU work):
+//   live / cued   iframes draw every frame → GPU cost = the deck's full cost.
+//                 (cued only halves our blit, a CPU saving.)
+//   paused        iframes paused → no GPU/CPU, RAM still held. The edited deck
+//                 is then *pulsed* (resumed for a few frames every ~½ s) so its
+//                 preview still moves, at roughly 1/8 of the GPU cost.
+// So two decks run together only when on + off fits the budget ('cued'); on a
+// smaller machine the off-air deck is held and previewed by pulse.
 // Returns { offAirMode, liveFade, standby, load, warnings[] }.
+export const PULSE_COST = 1 / 8 // share of a deck's GPU cost a pulsed preview uses
+
 export function planDecks(tier, costs, { cap = { memGB: 4 }, pixels = REF_PIXELS } = {}) {
   const t = TIERS[tier] ?? TIERS.baseline
   const warnings = []
   const live = costs.on.gpu // one deck live
-  const both = costs.on.gpu + costs.off.gpu
-  const liveFade = t.maxDecks > 1 && both <= t.capacity
-  const cuedFits = costs.on.gpu + costs.off.gpu * 0.5 <= t.capacity
+  const liveFade = t.maxDecks > 1 && live + costs.off.gpu <= t.capacity
   const offAirMode = liveFade ? 'cued' : 'paused'
   // RAM is held by both decks whichever mode they run in
   const ram = costs.on.ram + costs.off.ram
   const ramCap = cap.memGB * 1024 * FRAME_MEMORY_SHARE
   if (live > t.capacity) warnings.push(`The on-air deck (${live.toFixed(0)} units) is over this machine's ${t.capacity}-unit budget — expect dropped frames.`)
-  if (t.maxDecks < 2) warnings.push('Two decks need at least a baseline machine (integrated GPU, 4 cores, 4 GB).')
-  else if (!liveFade) warnings.push('Both decks together exceed the budget, so crossfades use a frozen frame of the outgoing deck instead of running it live.')
-  if (!cuedFits && t.maxDecks > 1) warnings.push('The off-air deck will be paused while you edit it (its preview updates only on demand).')
+  if (t.maxDecks < 2) warnings.push('Two decks need at least a baseline machine (integrated GPU, 4 cores, 4 GB); here the off-air deck is held and previews at a low rate.')
+  else if (!liveFade) warnings.push('Both decks together exceed the budget, so the off-air deck is held (previewed at ~2 fps) and a crossfade runs the incoming deck only as it fades in.')
   if (ram > ramCap) warnings.push(`Memory: ~${ram} MB of patch frames vs ~${Math.round(ramCap)} MB allowed on a ${cap.memGB} GB device.`)
   if (pixels > t.maxPixels) warnings.push(`Resolution is above this tier's ${Math.round(Math.sqrt(t.maxPixels * 16 / 9))}p target — try a lower compositor resolution.`)
   const fit = Math.max(1, maxFrames(cap.memGB, pixels) - costs.on.fx - costs.off.fx)

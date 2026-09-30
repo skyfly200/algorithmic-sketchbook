@@ -69,3 +69,25 @@ controls panel, listed on the gallery page, deep-linked as
   sketch title. Update `techByTemplate` in `scripts/new-sketch.mjs`.
 - Gallery/app changes: Vue SFCs in `src/`; Vuetify components, Pinia store in
   `src/stores/sketches.js`, hash-based routing in `src/router/index.js`.
+
+## Patch decks (two-graph compositor)
+
+`src/views/PatchView.vue` runs two patch graphs ("decks" A/B) behind a master
+crossfader; logic lives in `src/composables/useDecks.js`. Things to know before
+editing it:
+
+- `nodes` / `edges` / `links` are **scoped arrays** (`src/lib/patch/scoped.js`)
+  that point at the deck in scope — the edited deck, or the one the render loop is
+  evaluating inside `D.withDeck(deck, fn)`. Existing code that reads them works
+  per deck unchanged; don't capture the underlying arrays across a deck switch.
+- **Node ids are unique across both decks** (runtime maps — `rtState`,
+  `effectControls`, `frameList` — are keyed by id). Anything that loads graph data
+  into a deck must go through `installGraph()` / `planIdMap()` / `applyIdMap()`
+  (`src/lib/patch/graph.js`) so colliding ids get renumbered.
+- Effect/filter iframes live in one `frameList` (live + standby). A standby frame
+  is promoted to a node in place (`adoptStandby`) — never move an iframe in the
+  DOM, it reloads.
+- Limits come from the cost model (`src/lib/patch/budget.js`, tested in
+  `tests/patchBudget.test.js`), not from timing a machine. Keep new per-frame work
+  O(V+E); the topo order is memoised per deck.
+

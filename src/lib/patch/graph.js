@@ -114,6 +114,48 @@ export function ancestorsOf(id, edges) {
   return anc
 }
 
+// --- deck id hygiene ----------------------------------------------------------
+// Two decks share one runtime (iframes, canvases, effect params are all keyed by
+// node id), so node ids must be unique across decks. Graph data loaded into a
+// deck (a snapshot, a cue, a fork) may reuse ids the other deck already owns;
+// renumber just the colliding nodes.
+//
+// planIdMap: decide the renumbering without touching anything → { map (old→new,
+// changed ids only), nextId }. applyIdMap: apply a map to {nodes, edges, links,
+// effects?} in place. Splitting them lets a caller plan ahead (e.g. to adopt a
+// pre-warmed iframe under its final id) and apply later with the same result.
+export function planIdMap(nodeIds, taken, startId) {
+  const map = new Map()
+  const used = new Set(taken)
+  let next = startId
+  for (const id of nodeIds) {
+    if (!used.has(id)) { used.add(id); continue }
+    while (used.has(next)) next++
+    map.set(id, next)
+    used.add(next++)
+  }
+  return { map, nextId: next }
+}
+export function applyIdMap(data, map) {
+  if (!map.size) return data
+  const m = (id) => (map.has(id) ? map.get(id) : id)
+  for (const n of data.nodes) n.id = m(n.id)
+  for (const e of data.edges ?? []) { e.from = m(e.from); e.to = m(e.to) }
+  for (const l of data.links ?? []) { l.from = m(l.from); l.node = m(l.node) }
+  if (data.effects) {
+    const fx = {}
+    for (const [k, v] of Object.entries(data.effects)) fx[m(+k)] = v
+    data.effects = fx
+  }
+  return data
+}
+// plan + apply in one step; returns { map, nextId }.
+export function remapGraphIds(data, taken, startId) {
+  const r = planIdMap(data.nodes.map((n) => n.id), taken, startId)
+  applyIdMap(data, r.map)
+  return r
+}
+
 // --- layout / placement -----------------------------------------------------
 // Slide a proposed node box downward until it no longer overlaps any existing
 // (non-ignored) node plus a margin — keeps freshly-placed nodes from stacking.

@@ -19,7 +19,8 @@ const WARM_LEAD = 4        // timeline: start warming a cue this many seconds ah
 //        effectControls (Map), postToEffect(id,msg), stage (ref → canvas),
 //        showToast(msg), alertBadFile(),
 //        prepareStandby(cue|null), standbyReady(cue), whenStandbyReady(cue, ms),
-//        adoptStandby(cue), precacheShow(cues) }
+//        adoptStandby(cue), precacheShow(cues),
+//        decksOn(), takeCue(cue, fadeSecs) }
 export function useShow(ctx) {
   function loadShow() {
     try { return JSON.parse(localStorage.getItem(SHOW_KEY)) || [] } catch { return [] }
@@ -104,6 +105,14 @@ export function useShow(ctx) {
       }
     }
     const dur = ((opts.fade != null ? opts.fade : cue.fade) || 0) * 1000
+    // Decks on: the cue loads onto the off-air deck and fades in live (the
+    // outgoing deck keeps running through the fade) — no frozen frame.
+    if (ctx.decksOn?.()) {
+      ctx.takeCue(cue, dur / 1000)
+      state.activeCue = i
+      prepareNext()
+      return
+    }
     const cnv = ctx.stage.value
     if (dur > 0 && cnv && cnv.width) {
       const img = document.createElement('canvas')
@@ -198,7 +207,7 @@ export function useShow(ctx) {
     if (i !== curSeg) {
       // Skip the reload when we're flowing forward through a ramped, same-topology
       // segment (the graph is already sitting at this cue from the last ramp).
-      const rampedAdjacent = i === curSeg + 1 && curSeg >= 0 && topoMatch(sorted[curSeg].snap, sorted[i].snap)
+      const rampedAdjacent = !ctx.decksOn?.() && i === curSeg + 1 && curSeg >= 0 && topoMatch(sorted[curSeg].snap, sorted[i].snap)
       if (rampedAdjacent) state.activeCue = state.cues.indexOf(sorted[i])
       else goCue(state.cues.indexOf(sorted[i]), { fade: sorted[i].fade })
       curSeg = i
@@ -214,7 +223,7 @@ export function useShow(ctx) {
         ctx.prepareStandby(target)
       }
     }
-    if (next && topoMatch(sorted[i].snap, next.snap)) {
+    if (!ctx.decksOn?.() && next && topoMatch(sorted[i].snap, next.snap)) { // (with decks, the deck crossfade replaces per-param ramping)
       const span = (next.time || 0) - (sorted[i].time || 0)
       const f = span > 0 ? Math.min(1, Math.max(0, (state.playhead - (sorted[i].time || 0)) / span)) : 0
       applyRamp(sorted[i].snap, next.snap, f)

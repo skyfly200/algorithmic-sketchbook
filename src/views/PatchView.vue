@@ -28,13 +28,17 @@ import ShowPanel from '../components/patch/ShowPanel.vue'
 import ShapeTracer from '../components/patch/ShapeTracer.vue'
 import { useAutopilot } from '../composables/useAutopilot.js'
 import { useShow } from '../composables/useShow.js'
+import { useDecks } from '../composables/useDecks.js'
+import DeckBar from '../components/patch/DeckBar.vue'
+import { deckCost, classifyTier, planDecks, TIERS } from '../lib/patch/budget.js'
+import { probeCapability } from '../lib/patch/capability.js'
 import { precacheSketches } from '../lib/precache.js'
 import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTileUrl, decodeElev as demDecode } from '../lib/geoTiles.js'
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
 import { createRenderers } from '../lib/patch/renderers.js'
 import { NODE_W, HEAD_H, THUMB_H, RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, PRESET_BLOCKS, NL_EXAMPLES, PATCH_TOUR_STEPS } from '../lib/patch/constants.js'
-import { normalizeNodes, migrateGraph, applyCurve, usedInGraph, ancestorsOf as ancestorsIn, makeOrderCache, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
+import { normalizeNodes, migrateGraph, applyCurve, usedInGraph, ancestorsOf as ancestorsIn, makeOrderCache, planIdMap, applyIdMap, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
 import { loadJson, saveJson, fileSlug, downloadJson, pickJsonFile, captureBlockData, stampBlock, fillPreset, buildPatchFile, parsePatchImport } from '../lib/patch/library.js'
 import TourOverlay from '../components/TourOverlay.vue'
 import NumSlider from '../components/NumSlider.vue'
@@ -131,6 +135,8 @@ function applyResolution(label) {
   // Source iframes are CSS-sized to the compositor, so their sketches actually
   // render this many pixels (they run quality=high → pixelRatio 1).
   frameSize.value = { w: W, h: H }
+  masterCanvas.width = W
+  masterCanvas.height = H
   geomVer.value++ // the mask overlay's cover-fit depends on W/H
 }
 
@@ -175,12 +181,20 @@ function loadGraph() {
 // live in ../lib/patch/graph.js.
 const saved = settings.persistEditors ? loadGraph() : null
 let nextId = 1
-const nodes = reactive(normalizeNodes(saved?.nodes) ?? [])
-const edges = reactive(saved?.edges ?? [])
+// Two decks (A/B), each a full graph. `nodes` / `edges` / `links` are scoped to
+// the deck in scope — the edited deck, or the one the compositor is evaluating —
+// so everything below works per deck unchanged (see composables/useDecks.js).
 // Control links: an Input node's value → a numeric param on another node.
-const links = reactive(saved?.links ?? [])
-migrateGraph(nodes, edges) // reconnect legacy Polygon-Mask graphs
-if (nodes.length) nextId = Math.max(...nodes.map((n) => n.id)) + 1
+const D = useDecks({
+  a: { nodes: normalizeNodes(saved?.nodes) ?? [], edges: saved?.edges ?? [], links: saved?.links ?? [] },
+  b: saved?.deckB ? { nodes: normalizeNodes(saved.deckB.nodes) ?? [], edges: saved.deckB.edges ?? [], links: saved.deckB.links ?? [] } : null,
+  mix: saved?.mix,
+})
+const { decks, nodes, edges, links, mix } = D
+for (const d of decks) D.withDeck(d, () => migrateGraph(nodes, edges)) // reconnect legacy Polygon-Mask graphs
+// Node ids are unique across both decks (runtime state is keyed by id).
+function syncNextId() { nextId = Math.max(nextId, D.maxId() + 1) }
+syncNextId()
 
 // --- undo / redo: every persisted change pushes the previous graph state ----
 const undoStack = reactive([])
@@ -189,10 +203,17 @@ let restoring = false
 const snapshot = () => JSON.stringify({ nodes, edges, links })
 let lastSnap = snapshot()
 
+// Autosave: deck A in the legacy fields (older builds still load it), deck B and
+// the crossfader alongside, and every effect's params (ids are global).
+function storeGraph() {
+  if (!settings.persistEditors) return
+  const a = decks[0]
+  localStorage.setItem(STORE_KEY, JSON.stringify({ nodes: a.nodes, edges: a.edges, links: a.links, effects: currentEffects(), ...D.serialize() }))
+}
 function persist() {
   // Autosave carries the effect sketches' own param values + mappings too, so a
   // browser reload restores the whole patch — not just the node graph.
-  if (settings.persistEditors) localStorage.setItem(STORE_KEY, JSON.stringify({ nodes, edges, links, effects: currentEffects() }))
+  storeGraph()
   if (restoring) return
   const s = snapshot()
   if (s !== lastSnap) {
@@ -203,18 +224,37 @@ function persist() {
   }
 }
 
-function applySnap(s) {
-  restoring = true
-  const data = JSON.parse(s)
+// Install graph data into the edited deck. Ids that the other deck owns are
+// renumbered (a snapshot/cue/routing reuses small ids); `staged` is a precomputed
+// id map (from a cue whose standby frames were adopted under their final ids).
+// Keeps runtime state for surviving ids. Returns the id map (old → new).
+let stagedMap = null
+let lastMap = null
+function installGraph(data, staged = null) {
+  const others = D.idsOf(D.otherDeck())
+  const map = staged ?? planIdMap(data.nodes.map((n) => n.id), others, Math.max(nextId, D.maxId() + 1)).map
+  applyIdMap(data, map)
+  lastMap = map
   nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
   edges.splice(0, edges.length, ...data.edges)
   links.splice(0, links.length, ...(data.links ?? []))
+  syncNextId()
+  return map
+}
+// Drop runtime state for ids that no deck owns any more.
+function pruneRuntime() {
+  const keep = new Set(D.allNodes().map((n) => n.id))
+  for (const id of [...rtState.keys()]) if (!keep.has(id)) { disposeRuntime(id); rtState.delete(id) }
+}
+function applySnap(s) {
+  restoring = true
+  const data = JSON.parse(s)
+  installGraph(data, stagedMap)
+  stagedMap = null
   pruneOrphans()
-  nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
-  const ids = new Set(nodes.map((n) => n.id))
-  for (const id of [...rtState.keys()]) if (!ids.has(id)) { disposeRuntime(id); rtState.delete(id) }
+  pruneRuntime()
   for (const n of nodes) st(n.id)
-  if (settings.persistEditors) localStorage.setItem(STORE_KEY, JSON.stringify({ ...data, effects: currentEffects() }))
+  storeGraph()
   lastSnap = s
   restoring = false
   nextTick(() => layoutTick.value++)
@@ -368,7 +408,7 @@ function randomPatch() {
   nodes.splice(0, nodes.length, ...keptNodes)
   edges.splice(0, edges.length, ...keptEdges)
   links.splice(0, links.length, ...keptLinks)
-  for (const id of [...rtState.keys()]) if (!keptIds.has(id)) { disposeRuntime(id); rtState.delete(id) }
+  { const other = D.idsOf(D.otherDeck()); for (const id of [...rtState.keys()]) if (!keptIds.has(id) && !other.has(id)) { disposeRuntime(id); rtState.delete(id) } }
   if (keptIds.size) nextId = Math.max(nextId, ...keptIds) + 1
 
   const col = (c) => 60 + c * 240
@@ -817,9 +857,10 @@ function onKey(e) {
   else if (!mod && e.key === 'm') showModulatedBodies()
 }
 function clearAll() {
+  for (const n of nodes) { disposeRuntime(n.id); rtState.delete(n.id) } // this deck's runtime only
   nodes.splice(0)
   edges.splice(0)
-  rtState.clear()
+  links.splice(0)
   persist()
 }
 
@@ -1037,8 +1078,7 @@ function pval(n, key) {
   const lv = liveParams.get(n.id)
   return lv && key in lv ? lv[key] : n.params[key]
 }
-function applyLinks(now) {
-  liveParams.clear()
+function applyLinks(now) { // per deck; the caller clears liveParams once per tick
   for (const l of links) {
     const from = nodes.find((n) => n.id === l.from)
     const tgt = nodes.find((n) => n.id === l.node)
@@ -1402,7 +1442,7 @@ function autoMap(n) {
 // (the node id it is warming for), el, ready, loaded, born, ctl, scene }.
 const frameList = reactive([])
 let frameKey = 1
-const MAX_STANDBY = 8
+const MAX_STANDBY = 8 // upper bound; the capacity plan may lower it (deckPlan.standby)
 const isFrameNode = (n) => (n.type === 'effect' || n.type === 'filter') && n.params?.slug
 function newFrame(src, nodeId, forNode = null) {
   return { key: 'f' + frameKey++, src, nodeId, forNode, el: null, ready: false, loaded: false, born: performance.now(), ctl: null, scene: null }
@@ -1416,7 +1456,7 @@ function bindFrame(f, el) {
 // sketch/seed changed, and create a (cold) frame for any node without one.
 function syncFrames() {
   const want = new Map()
-  for (const n of nodes) if (isFrameNode(n)) want.set(n.id, effectSrc(n))
+  for (const n of D.allNodes()) if (isFrameNode(n)) want.set(n.id, effectSrc(n))
   for (let i = frameList.length - 1; i >= 0; i--) {
     const f = frameList[i]
     if (f.nodeId != null && want.get(f.nodeId) !== f.src) frameList.splice(i, 1)
@@ -1425,14 +1465,26 @@ function syncFrames() {
     if (!frameList.some((f) => f.nodeId === id)) frameList.push(newFrame(src, id))
   }
 }
+// Where a cue loads: the edited deck normally; with decks on, the off-air deck,
+// so it can warm and then fade in while the on-air deck keeps playing.
+const cueDeck = () => (mix.enabled ? decks[1 - D.onAirIdx()] : D.editDeck())
+// The id map a graph would get if loaded into `deck` right now (ids the other
+// deck owns get renumbered) — so standby frames can be adopted under final ids.
+function planCueIds(snap, deck) {
+  const other = deck === decks[0] ? decks[1] : decks[0]
+  return planIdMap((snap?.nodes || []).map((n) => n.id), D.idsOf(other), Math.max(nextId, D.maxId() + 1)).map
+}
 // The frames a cue needs that aren't already live (a node that keeps the same
-// sketch + seed across the cue keeps its running iframe).
-function frameNeeds(snap) {
+// sketch + seed across the cue keeps its running iframe). nodeId is the cue's
+// own id; liveness is checked under the id it would get on load.
+function frameNeeds(snap, deck = cueDeck()) {
+  const map = planCueIds(snap, deck)
   const needs = []
   for (const n of snap?.nodes || []) {
     if (!isFrameNode(n)) continue
     const src = effectSrc(n)
-    if (frameList.some((f) => f.nodeId === n.id && f.src === src)) continue
+    const id = map.has(n.id) ? map.get(n.id) : n.id
+    if (frameList.some((f) => f.nodeId === id && f.src === src)) continue
     needs.push({ nodeId: n.id, src })
   }
   return needs
@@ -1441,7 +1493,7 @@ const standbyFor = (nd) => frameList.find((f) => f.nodeId == null && f.forNode =
 // Warm a cue's effects in hidden standby iframes, replacing any standby set
 // prepared for a different cue. Passing null just clears the standby pool.
 function prepareStandby(cue) {
-  const needs = cue?.snap ? frameNeeds(cue.snap).slice(0, MAX_STANDBY) : []
+  const needs = cue?.snap ? frameNeeds(cue.snap).slice(0, Math.min(MAX_STANDBY, deckPlan.value.standby)) : []
   for (let i = frameList.length - 1; i >= 0; i--) {
     const f = frameList[i]
     if (f.nodeId == null && !needs.some((nd) => nd.nodeId === f.forNode && nd.src === f.src)) frameList.splice(i, 1)
@@ -1473,16 +1525,20 @@ function whenStandbyReady(cue, capMs) {
 // Promote a cue's warmed frames to live nodes just before its snapshot is
 // applied, so applySnap finds each node's iframe already running.
 function adoptStandby(cue) {
+  const deck = cueDeck()
+  const map = planCueIds(cue.snap, deck)
   const adopted = []
   for (const f of frameList) {
     if (f.nodeId != null || f.forNode == null) continue
     const n = cue.snap?.nodes?.find((x) => x.id === f.forNode && isFrameNode(x) && effectSrc(x) === f.src)
     if (!n) continue
-    f.nodeId = f.forNode; f.forNode = null; f.scene = null
+    f.nodeId = map.has(f.forNode) ? map.get(f.forNode) : f.forNode
+    f.forNode = null; f.scene = null
     if (f.el) st(f.nodeId).iframe = f.el
     if (f.ctl) effectControls.set(f.nodeId, { schema: f.ctl.schema, values: { ...f.ctl.values }, mappings: f.ctl.mappings.map((m) => ({ ...m })), state: f.ctl.state ?? null })
     adopted.push(f)
   }
+  stagedMap = map // the snapshot load that follows uses exactly this id map
   // an adopted frame replaces whatever was live for the same node id
   for (const a of adopted) for (let i = frameList.length - 1; i >= 0; i--) if (frameList[i] !== a && frameList[i].nodeId === a.nodeId) frameList.splice(i, 1)
 }
@@ -2293,8 +2349,8 @@ function evalNode(node) {
 
 // Topological order (cycles tolerated: leftovers appended → 1-frame feedback).
 // Memoised: the sort reruns only when the wiring changes, not every frame.
-const orderCached = makeOrderCache()
-const evalOrder = () => orderCached(nodes, edges)
+const orderCaches = [makeOrderCache(), makeOrderCache()] // one per deck (alternating would thrash a shared cache)
+const evalOrder = () => orderCaches[D.scopeIdx()](nodes, edges)
 
 let raf = 0
 // Adaptive throttling: a full compositor pass can get expensive (big
@@ -2322,6 +2378,7 @@ const renderPaused = ref(false)
 function toggleRenderPaused() {
   renderPaused.value = !renderPaused.value
   for (const s of rtState.values()) s.iframe?.contentWindow?.postMessage({ type: 'sketch:pause', paused: renderPaused.value }, '*')
+  for (const f of frameList) f.paused = renderPaused.value // the deck policy re-pauses what it needs next pass
 }
 // Per-node composite cost (ms, smoothed) surfaced reactively for the slow badge.
 const nodeCost = reactive({})
@@ -2347,40 +2404,116 @@ function nodeCostLevel(n) {
 let fpsWindow = 0
 let costWindow = 0
 
+// --- decks: who renders, and how often --------------------------------------
+// live    on air (airWeight > 0) or fading in: iframes draw, evaluated every pass.
+// cued    off air but being edited, and the machine can afford both decks: iframes
+//         draw; we blit at half rate (saves the CPU blit, not the GPU).
+// paused  off air and unwatched: not evaluated, iframes paused — RAM held, no
+//         GPU/CPU (the cost model's "memory is held, GPU time is not").
+// pulse   the edited off-air deck on a machine that can't afford both: paused,
+//         but resumed for a few frames every ~½ s ('warm' then one 'live' pass)
+//         so its preview and thumbnails still move, at ~1/8 the cost.
+// off     deck B while the decks feature is disabled.
+const PULSE_PERIOD = 30 // passes (~0.5 s at 60 Hz)
+function deckMode(i) {
+  if (!mix.enabled) return i === 0 ? 'live' : 'off'
+  if (D.airWeight(i) > 0.001 || mix.fading?.to === i) return 'live'
+  if (i === D.editIdx.value) {
+    if (deckPlan.value.offAirMode !== 'paused') return 'cued'
+    const ph = passToggle % PULSE_PERIOD
+    return ph < 4 ? (ph === 3 ? 'live' : 'warm') : 'paused'
+  }
+  return 'paused'
+}
+// Pause/resume a deck's iframes to match its mode (a frame is only paused once
+// it has loaded, so a freshly cued deck still warms up and draws a first frame).
+function applyDeckPause(i, mode, byNode) {
+  const want = mode === 'paused' || mode === 'off'
+  for (const n of decks[i].nodes) {
+    const f = byNode.get(n.id)
+    if (!f || !f.el || (want && !f.loaded) || !!f.paused === want) continue
+    f.paused = want
+    try { f.el.contentWindow?.postMessage({ type: 'sketch:pause', paused: want }, '*') } catch { /* frame gone */ }
+  }
+}
+// Output canvas of a deck (its Output node's render target), or null.
+function deckOut(i) {
+  return D.withDeck(decks[i], () => {
+    const o = nodes.find((n) => n.type === 'output')
+    return o ? rtState.get(o.id)?.out ?? null : null
+  })
+}
+// What the stage / popup shows. Single-deck cases return the deck's own canvas
+// (no extra copy); only a real crossfade pays for a composite.
+const masterCanvas = document.createElement('canvas')
+masterCanvas.width = W
+masterCanvas.height = H
+function masterSource() {
+  const a = deckOut(0)
+  if (!mix.enabled || D.airWeight(1) <= 0.001) return a
+  const b = deckOut(1)
+  if (D.airWeight(0) <= 0.001) return b
+  if (masterCanvas.width !== W || masterCanvas.height !== H) { masterCanvas.width = W; masterCanvas.height = H }
+  D.compose(masterCanvas.getContext('2d'), W, H, a, b)
+  return masterCanvas
+}
+let passToggle = 0
+const pvwEl = ref(null) // DeckBar's preview canvas (the edited deck's output)
+
 function loop(ts) {
   const now = ts ?? performance.now()
   if (renderPaused.value) { raf = requestAnimationFrame(loop); return } // held — keep the editor snappy
   broadcastBeat(now)
   if (show.state.mode === 'timeline' && show.state.playing) show.tickShow(now)
-  applyLinks(now) // drive params from Input nodes first
+  D.tickFade(now)
+  passToggle++
+  const modes = [deckMode(0), deckMode(1)]
+  liveParams.clear()
+  const byNode = new Map() // one O(F) index per tick instead of a scan per node
+  for (const f of frameList) if (f.nodeId != null) byNode.set(f.nodeId, f)
+  for (let i = 0; i < 2; i++) {
+    applyDeckPause(i, modes[i], byNode)
+    if (modes[i] === 'live' || modes[i] === 'cued') D.withDeck(decks[i], () => applyLinks(now)) // drive params from Input nodes first
+  }
   if (skipLeft > 0) {
     skipLeft--
   } else {
     const t0 = performance.now()
-    for (const n of evalOrder()) {
-      const te = performance.now()
-      evalNode(n)
-      const s = rtState.get(n.id)
-      if (s) s.cost = (s.cost ?? 0) * 0.9 + (performance.now() - te) * 0.1
+    for (let i = 0; i < 2; i++) {
+      const mode = modes[i]
+      if (mode !== 'live' && !(mode === 'cued' && (passToggle & 1))) continue
+      D.withDeck(decks[i], () => {
+        for (const n of evalOrder()) {
+          const te = performance.now()
+          evalNode(n)
+          const s = rtState.get(n.id)
+          if (s) s.cost = (s.cost ?? 0) * 0.9 + (performance.now() - te) * 0.1
+        }
+      })
     }
-    // Blit the (last) Output node to the fullscreen stage.
-    const out = nodes.find((n) => n.type === 'output')
+    // Blit the master (the on-air deck's Output, or the A/B crossfade) to the stage.
+    const src = masterSource()
     const cnv = stage.value
     if (cnv) {
       const cx = cnv.getContext('2d')
       cx.fillStyle = '#000'
       cx.fillRect(0, 0, cnv.width, cnv.height)
-      if (out) {
-        const s = rtState.get(out.id)
-        if (s) {
-          const scale = Math.max(cnv.width / W, cnv.height / H)
-          const w = W * scale
-          const h = H * scale
-          cx.drawImage(s.out, (cnv.width - w) / 2, (cnv.height - h) / 2, w, h)
-        }
+      if (src) {
+        const scale = Math.max(cnv.width / W, cnv.height / H)
+        const w = W * scale
+        const h = H * scale
+        cx.drawImage(src, (cnv.width - w) / 2, (cnv.height - h) / 2, w, h)
       }
       // Cue crossfade: the frozen previous frame fades out over the new one.
       show.drawXfade(cx, cnv)
+    }
+    // Preview monitor: the edited deck's own output, whether or not it's on air.
+    if (pvwEl.value && mix.enabled) {
+      const pv = deckOut(D.editIdx.value)
+      const pc = pvwEl.value.getContext('2d')
+      pc.fillStyle = '#000'
+      pc.fillRect(0, 0, pvwEl.value.width, pvwEl.value.height)
+      if (pv) pc.drawImage(pv, 0, 0, pvwEl.value.width, pvwEl.value.height)
     }
     blitPopup()
     passCost = passCost * 0.85 + (performance.now() - t0) * 0.15
@@ -2496,14 +2629,13 @@ function blitPopup() {
     c.width = pw
     c.height = ph
   }
-  const out = nodes.find((n) => n.type === 'output')
-  const s = out && rtState.get(out.id)
+  const src = masterSource()
   const cx = c.getContext('2d')
   cx.fillStyle = '#000'
   cx.fillRect(0, 0, pw, ph)
-  if (s) {
+  if (src) {
     const scale = Math.max(pw / W, ph / H)
-    cx.drawImage(s.out, (pw - W * scale) / 2, (ph - H * scale) / 2, W * scale, H * scale)
+    cx.drawImage(src, (pw - W * scale) / 2, (ph - H * scale) / 2, W * scale, H * scale)
   }
 }
 
@@ -2669,9 +2801,9 @@ function clearSvgShape(id) {
 // Effect scenes: each effect sketch's own param values + input mappings, keyed
 // by node id. Captured with the patch (cues, saved routings, autosave) and
 // re-applied to the live iframes. Shared by the show sequencer and file I/O.
-function currentEffects() {
+function currentEffects(ids = null) { // ids: limit to one deck's nodes (default: all)
   const out = {}
-  for (const [id, c] of effectControls) out[id] = { values: { ...c.values }, mappings: c.mappings.map((m) => ({ ...m })), state: c.state ?? null }
+  for (const [id, c] of effectControls) if (!ids || ids.has(id)) out[id] = { values: { ...c.values }, mappings: c.mappings.map((m) => ({ ...m })), state: c.state ?? null }
   return out
 }
 // Re-apply captured effect-sketch param values once each effect iframe is live
@@ -2693,7 +2825,15 @@ function applyPendingEffects() {
 }
 // Queue a set of effect scenes to re-apply once their iframes are live (used
 // by cue playback, saved-routing loads and the autosave restore).
-function queueEffects(fx) { pendingEffects = { ...(fx || {}) }; nextTick(applyPendingEffects) }
+function queueEffects(fx) {
+  // a cue just loaded into a deck may have had ids renumbered; translate its keys
+  const m = lastMap
+  lastMap = null
+  let f = fx || {}
+  if (m && m.size) { f = {}; for (const [k, v] of Object.entries(fx || {})) f[m.has(+k) ? m.get(+k) : +k] = v }
+  pendingEffects = { ...(pendingEffects || {}), ...f }
+  nextTick(applyPendingEffects)
+}
 
 // The cue list, timeline playback engine and saved-show library live in
 // ../composables/useShow.js; <ShowPanel> renders them. The graph/effect-touch
@@ -2702,8 +2842,10 @@ const show = useShow({
   nodes,
   snapshot,
   applySnap,
-  currentEffects,
+  currentEffects: () => currentEffects(D.idsOf(D.editDeck())), // a cue captures the edited deck only
   queueEffects,
+  decksOn: () => mix.enabled,
+  takeCue: (cue, secs) => takeCue(cue, secs),
   effectControls,
   postToEffect,
   stage,
@@ -2715,6 +2857,123 @@ const show = useShow({
   adoptStandby,
   precacheShow,
 })
+
+// --- decks: capacity plan, edit/fork/cue, cut & fade --------------------------
+// What this machine can carry is decided by the cost model (lib/patch/budget.js)
+// from device signals, never from a timing run. The tier is auto-detected and
+// can be overridden (Settings-style) via the deck bar.
+const capProbe = probeCapability()
+const TIER_KEY = 'sketchbook-patch-tier'
+const tierPref = ref(localStorage.getItem(TIER_KEY) || 'auto')
+const tier = computed(() => (tierPref.value === 'auto' ? classifyTier(capProbe) : tierPref.value))
+function setTierPref(v) { tierPref.value = v; localStorage.setItem(TIER_KEY, v) }
+const slugInfo = (slug) => ({ weight: costOfSlug(slug, perfScores), three: !!store.bySlug(slug)?.tech?.includes('three') })
+const deckCosts = computed(() => {
+  resLabel.value // resolution changes W/H (plain lets), so depend on the ref that accompanies them
+  return decks.map((d) => deckCost(d.nodes, { pixels: W * H, info: slugInfo }))
+})
+const deckPlan = computed(() => {
+  const on = D.onAirIdx()
+  return planDecks(tier.value, { on: deckCosts.value[on], off: deckCosts.value[1 - on] }, { cap: capProbe, pixels: W * H })
+})
+const deckBackup = reactive([null, null]) // one-level "restore previous" per deck
+
+function selectDeck(i) {
+  if (i === D.editIdx.value) return
+  D.setEdit(i)
+  clearSelection()
+  // undo history belongs to one graph; start fresh for the deck now in the editor
+  undoStack.splice(0); redoStack.splice(0)
+  lastSnap = snapshot()
+  nextTick(() => layoutTick.value++)
+}
+function toggleDecks(on) {
+  mix.enabled = on
+  if (!on) { mix.fading = null; mix.pos = 0; selectDeck(0) }
+  else if (!decks[1].nodes.length) showToast('Deck B is empty — fork A into it, or cue an effect')
+  persist()
+}
+function cutTo(i) { mix.enabled = true; D.cut(i); persist() }
+function fadeToDeck(i, secs = mix.fadeSecs) {
+  mix.enabled = true
+  // a deck that's been paused needs a moment to resume before it's faded in
+  D.fadeTo(i, secs, performance.now(), deckMode(i) === 'paused' ? 250 : 0)
+}
+const isOnAir = (i) => D.airWeight(i) > 0.001
+
+// Replace a deck's graph (remembering the old one for one restore).
+function replaceDeck(i, data, fx = {}) {
+  const d = decks[i]
+  deckBackup[i] = {
+    nodes: JSON.parse(JSON.stringify(d.nodes)), edges: JSON.parse(JSON.stringify(d.edges)), links: JSON.parse(JSON.stringify(d.links)),
+    effects: currentEffects(D.idsOf(d)),
+  }
+  const old = d.nodes.map((n) => n.id)
+  D.withDeck(d, () => {
+    nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
+    edges.splice(0, edges.length, ...data.edges)
+    links.splice(0, links.length, ...(data.links ?? []))
+    for (const n of nodes) st(n.id)
+  })
+  for (const id of old) if (!data.nodes.some((n) => n.id === id)) { disposeRuntime(id); rtState.delete(id); effectControls.delete(id) }
+  syncNextId()
+  pendingEffects = { ...(pendingEffects || {}), ...fx }
+  nextTick(applyPendingEffects)
+  persist()
+}
+function restoreDeck(i) {
+  const b = deckBackup[i]
+  if (!b) return
+  const data = { nodes: b.nodes, edges: b.edges, links: b.links, effects: b.effects }
+  applyIdMap(data, planIdMap(data.nodes.map((n) => n.id), D.idsOf(decks[1 - i]), Math.max(nextId, D.maxId() + 1)).map)
+  replaceDeck(i, data, data.effects)
+  deckBackup[i] = null // restoring isn't itself undoable
+  showToast(`Restored deck ${decks[i].name}`)
+}
+
+// Fork: copy the edited deck (graph + every effect's params, same seeds → the
+// same look) into the other deck under fresh ids, then edit the copy — the
+// original keeps running, so you can experiment on the side and fade it in.
+function forkDeck() {
+  const from = D.editIdx.value
+  const to = 1 - from
+  const src = decks[from]
+  if (!src.nodes.length) { showToast('Nothing to fork — this deck is empty'); return }
+  if (mix.enabled && isOnAir(to)) { showToast(`Deck ${decks[to].name} is on air — fade to ${src.name} first, so the fork can't disturb it`); return }
+  const data = JSON.parse(JSON.stringify({ nodes: src.nodes, edges: src.edges, links: src.links }))
+  data.effects = currentEffects(D.idsOf(src))
+  const start = Math.max(nextId, D.maxId() + 1)
+  applyIdMap(data, new Map(data.nodes.map((n, i) => [n.id, start + i]))) // every node gets a fresh id
+  nextId = start + data.nodes.length
+  if (!mix.enabled) mix.enabled = true
+  replaceDeck(to, data, data.effects)
+  selectDeck(to)
+  showToast(`Forked ${decks[from].name} → ${decks[to].name} — experiment here, then fade it in`)
+}
+// Cue an effect: load a fresh Effect → Output graph onto the off-air deck (and
+// edit it there). It warms and renders in the preview; fade it in when ready.
+function cueEffect(slug) {
+  if (!slug || !store.bySlug(slug)) return
+  const to = mix.enabled ? 1 - D.onAirIdx() : 1
+  if (mix.enabled && D.onAirIdx() === to) return
+  const eff = { id: nextId++, type: 'effect', x: 60, y: 90, params: { slug, seed: randSeed() } }
+  const out = { id: nextId++, type: 'output', x: 330, y: 90, params: {} }
+  mix.enabled = true
+  replaceDeck(to, { nodes: [eff, out], edges: [{ from: eff.id, to: out.id, port: 0 }], links: [] })
+  selectDeck(to)
+  showToast(`Cued ${store.bySlug(slug).title} on deck ${decks[to].name}`)
+}
+// A show cue with decks on: load it onto the off-air deck (adopting the effects
+// warmed in standby) and fade it in — a live-to-live crossfade, not a frozen frame.
+function takeCue(cue, secs) {
+  if (mix.fading) D.cut(mix.fading.to) // settle an in-flight fade before reusing a deck
+  const to = 1 - D.onAirIdx()
+  adoptStandby(cue)
+  D.withDeck(decks[to], () => applySnap(JSON.stringify(cue.snap)))
+  queueEffects({ ...(cue.effects || {}) })
+  if (secs > 0) D.fadeTo(to, secs, performance.now(), 250)
+  else D.cut(to)
+}
 
 // --- saved routings: named snapshots of the node graph in localStorage ----
 const SAVED_KEY = 'sketchbook-patch-saved'
@@ -2859,17 +3118,14 @@ function loadRouting(r) {
   // throws DataCloneError on Vue's reactive proxies).
   const data = JSON.parse(JSON.stringify(r))
   normalizeNodes(data.nodes)
-  nodes.splice(0, nodes.length, ...data.nodes.map((n) => reactive(n)))
-  edges.splice(0, edges.length, ...data.edges)
-  links.splice(0, links.length, ...(data.links ?? []))
+  installGraph(data)
   migrateGraph(nodes, edges) // reconnect legacy Polygon-Mask routings
   pruneOrphans()
-  nextId = nodes.length ? Math.max(...nodes.map((n) => n.id)) + 1 : 1
+  syncNextId()
   // Keep runtime state (canvases, bound iframes/video) for node ids that
   // survive the swap — Vue won't re-mount same-keyed iframes, so clearing
   // their state would leave effect nodes black. Drop only vanished ids.
-  const ids = new Set(nodes.map((n) => n.id))
-  for (const id of [...rtState.keys()]) if (!ids.has(id)) { disposeRuntime(id); rtState.delete(id) }
+  pruneRuntime()
   for (const n of nodes) st(n.id)
   // Restore each effect sketch's own params once its iframe is live.
   pendingEffects = { ...(data.effects || {}) }
@@ -3118,7 +3374,7 @@ onBeforeUnmount(() => {
 watch(() => nodes.map((n) => n.id).join(','), publishTargetsSoon)
 // Keep the iframe list in step with the graph (pre-flush, so promoted/new frames
 // exist before the DOM patches). Immediate: frames must exist for first render.
-watch(() => nodes.map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) : '')).join('|'), syncFrames, { flush: 'pre', immediate: true })
+watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) : '')).join('|'), syncFrames, { flush: 'pre', immediate: true })
 </script>
 
 <template>
@@ -3548,6 +3804,26 @@ watch(() => nodes.map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) : '')).
 
     <!-- show sequencer: cue list (manual) or timeline (auto + param ramps) -->
     <ShowPanel :show="show" />
+
+    <!-- two-deck console: edit one patch while the other is on air; fork, cue, fade -->
+    <DeckBar
+      v-show="!outputOnly"
+      :mix="mix" :edit-idx="D.editIdx.value"
+      :weights="[D.airWeight(0), D.airWeight(1)]"
+      :names="[decks[0].name, decks[1].name]"
+      :counts="[decks[0].nodes.length, decks[1].nodes.length]"
+      :effects="effectOptions"
+      :backups="[!!deckBackup[0], !!deckBackup[1]]"
+      :plan="deckPlan" :tier="tier" :tier-pref="tierPref" :tiers="TIERS"
+      :lift="show.state.open ? '42vh' : '0px'"
+      @toggle="toggleDecks" @select="selectDeck"
+      @pos="(v) => { mix.fading = null; mix.pos = v }"
+      @blend="(b) => { mix.blend = b; persist() }"
+      @secs="(v) => { mix.fadeSecs = v; persist() }"
+      @cut="cutTo" @auto="(i) => fadeToDeck(i)"
+      @fork="forkDeck" @cue="cueEffect" @restore="restoreDeck" @tier="setTierPref"
+      @pvw="(el) => (pvwEl = el)"
+    />
 
     <!-- Autopilot transport + options — surfaced when engaged; the graph stays
          hand-editable while it runs. -->

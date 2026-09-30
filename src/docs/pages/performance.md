@@ -50,3 +50,26 @@ These numbers are starting points chosen to be conservative. They are constants 
 `src/lib/patch/budget.js`; adjust them there if you calibrate against real
 hardware, and the unit tests in `tests/patchBudget.test.js` pin the model's shape
 (linear in pixels, additive per node, decks multiply).
+
+## Two decks
+
+A second deck roughly doubles the GPU term and the memory term, so the plan
+decides how the **off-air** deck runs:
+
+| Mode | Used when | GPU | Memory |
+|---|---|---|---|
+| **live / cued** | on air, or both decks fit the tier's budget | full (its effects draw every frame); *cued* only halves the compositor's blit | held |
+| **paused** | off air and the pair would exceed the budget | none — its pages are paused | held |
+| **pulsed preview** | the *edited* off-air deck on a machine that can't run both | ~1/8 — resumed for a few frames every ½ s so the preview and thumbnails still move | held |
+
+Only pausing saves GPU work, because each effect draws at its own frame rate. So
+Patch runs both decks together only when `on-air + off-air ≤ budget`; otherwise the
+off-air deck is held and the crossfade brings it up as it fades in. The deck bar's
+capacity badge shows the on-air deck's load against the budget and lists any
+warnings (over budget, memory, resolution above the tier's target). The
+*Device class* menu overrides the detected tier.
+
+**Show cues** warm up in standby frames ahead of time (at most as many as the
+plan allows), so a change finds its effects already running. Standby frames cost
+memory like any other page, which is why the allowed number shrinks on small
+devices.

@@ -64,6 +64,7 @@ describe('planDecks', () => {
     expect(p.liveFade).toBe(false)
     expect(p.offAirMode).toBe('paused')
     expect(p.warnings.join(' ')).toMatch(/two decks/i)
+    expect(p.warnings.join(' ')).toMatch(/previews? at a low rate|~2 fps/)
   })
   it('warns when the on-air deck alone is over budget', () => {
     const heavy = deckCost(Array.from({ length: 12 }, (_, i) => fx(i + 1)), { info: info(12) })
