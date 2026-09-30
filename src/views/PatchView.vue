@@ -28,6 +28,7 @@ import ShowPanel from '../components/patch/ShowPanel.vue'
 import ShapeTracer from '../components/patch/ShapeTracer.vue'
 import { useAutopilot } from '../composables/useAutopilot.js'
 import { useShow } from '../composables/useShow.js'
+import { precacheSketches } from '../lib/precache.js'
 import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTileUrl, decodeElev as demDecode } from '../lib/geoTiles.js'
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
@@ -1393,8 +1394,110 @@ function reseedNode(n) {
 function autoMap(n) {
   rtState.get(n.id)?.iframe?.contentWindow?.postMessage({ type: 'sketch:auto-map' }, '*')
 }
-function bindFrame(id, el) {
-  if (el) st(id).iframe = el
+// --- effect frames: live + standby -------------------------------------------
+// Every effect/filter iframe lives in one list so a *standby* iframe (warmed in
+// the background for an upcoming cue) can be promoted to a node without being
+// reparented — moving an iframe in the DOM reloads it, which is the stutter
+// we're avoiding. A frame is { key, src, nodeId (null while standby), forNode
+// (the node id it is warming for), el, ready, loaded, born, ctl, scene }.
+const frameList = reactive([])
+let frameKey = 1
+const MAX_STANDBY = 8
+const isFrameNode = (n) => (n.type === 'effect' || n.type === 'filter') && n.params?.slug
+function newFrame(src, nodeId, forNode = null) {
+  return { key: 'f' + frameKey++, src, nodeId, forNode, el: null, ready: false, loaded: false, born: performance.now(), ctl: null, scene: null }
+}
+function bindFrame(f, el) {
+  if (!el) return
+  f.el = el
+  if (f.nodeId != null) st(f.nodeId).iframe = el
+}
+// Reconcile live frames with the graph: drop frames whose node is gone or whose
+// sketch/seed changed, and create a (cold) frame for any node without one.
+function syncFrames() {
+  const want = new Map()
+  for (const n of nodes) if (isFrameNode(n)) want.set(n.id, effectSrc(n))
+  for (let i = frameList.length - 1; i >= 0; i--) {
+    const f = frameList[i]
+    if (f.nodeId != null && want.get(f.nodeId) !== f.src) frameList.splice(i, 1)
+  }
+  for (const [id, src] of want) {
+    if (!frameList.some((f) => f.nodeId === id)) frameList.push(newFrame(src, id))
+  }
+}
+// The frames a cue needs that aren't already live (a node that keeps the same
+// sketch + seed across the cue keeps its running iframe).
+function frameNeeds(snap) {
+  const needs = []
+  for (const n of snap?.nodes || []) {
+    if (!isFrameNode(n)) continue
+    const src = effectSrc(n)
+    if (frameList.some((f) => f.nodeId === n.id && f.src === src)) continue
+    needs.push({ nodeId: n.id, src })
+  }
+  return needs
+}
+const standbyFor = (nd) => frameList.find((f) => f.nodeId == null && f.forNode === nd.nodeId && f.src === nd.src)
+// Warm a cue's effects in hidden standby iframes, replacing any standby set
+// prepared for a different cue. Passing null just clears the standby pool.
+function prepareStandby(cue) {
+  const needs = cue?.snap ? frameNeeds(cue.snap).slice(0, MAX_STANDBY) : []
+  for (let i = frameList.length - 1; i >= 0; i--) {
+    const f = frameList[i]
+    if (f.nodeId == null && !needs.some((nd) => nd.nodeId === f.forNode && nd.src === f.src)) frameList.splice(i, 1)
+  }
+  const fx = cue?.effects || {}
+  for (const nd of needs) {
+    let f = standbyFor(nd)
+    if (!f) { f = newFrame(nd.src, null, nd.nodeId); frameList.push(f) }
+    f.scene = fx[nd.nodeId] ?? null
+  }
+}
+// Warm once the sketch has rendered its first frames (sketch:loaded); sketches
+// that never send it fall back to ready + a grace period, then a hard timeout.
+function frameWarm(f) {
+  const age = performance.now() - f.born
+  return f.loaded || (f.ready && age > 2500) || age > 6000
+}
+// A need with no standby frame (over the cap) can't be warmed, so it doesn't block.
+function standbyReady(cue) {
+  return frameNeeds(cue?.snap).every((nd) => { const f = standbyFor(nd); return !f || frameWarm(f) })
+}
+function whenStandbyReady(cue, capMs) {
+  return new Promise((resolve) => {
+    const t0 = performance.now()
+    const poll = () => (standbyReady(cue) || performance.now() - t0 >= capMs ? resolve() : setTimeout(poll, 40))
+    poll()
+  })
+}
+// Promote a cue's warmed frames to live nodes just before its snapshot is
+// applied, so applySnap finds each node's iframe already running.
+function adoptStandby(cue) {
+  const adopted = []
+  for (const f of frameList) {
+    if (f.nodeId != null || f.forNode == null) continue
+    const n = cue.snap?.nodes?.find((x) => x.id === f.forNode && isFrameNode(x) && effectSrc(x) === f.src)
+    if (!n) continue
+    f.nodeId = f.forNode; f.forNode = null; f.scene = null
+    if (f.el) st(f.nodeId).iframe = f.el
+    if (f.ctl) effectControls.set(f.nodeId, { schema: f.ctl.schema, values: { ...f.ctl.values }, mappings: f.ctl.mappings.map((m) => ({ ...m })), state: f.ctl.state ?? null })
+    adopted.push(f)
+  }
+  // an adopted frame replaces whatever was live for the same node id
+  for (const a of adopted) for (let i = frameList.length - 1; i >= 0; i--) if (frameList[i] !== a && frameList[i].nodeId === a.nodeId) frameList.splice(i, 1)
+}
+// Optional: fetch every sketch page + script a show uses so nothing boots over
+// the network. The production service worker already precaches these; this
+// covers first visits, dev servers and hosts without the SW.
+async function precacheShow(cues) {
+  const slugs = new Set()
+  for (const n of nodes) if (isFrameNode(n)) slugs.add(n.params.slug)
+  for (const c of cues) for (const n of c.snap?.nodes || []) if (isFrameNode(n)) slugs.add(n.params.slug)
+  const urls = [...slugs].map((sl) => store.bySlug(sl)?.url).filter(Boolean)
+  if (!urls.length) { showToast('No effects to preload'); return }
+  showToast(`Preloading ${urls.length} effect${urls.length > 1 ? 's' : ''}…`)
+  const r = await precacheSketches(urls)
+  showToast(r.failed ? `Preloaded — ${r.failed} fetch(es) failed` : `Preloaded ${r.pages} effect${r.pages > 1 ? 's' : ''} (${r.assets} assets)`)
 }
 // --- media node: shared camera + library playback -------------------------
 const cameraOn = ref(sharedCameraOn())
@@ -1763,7 +1866,21 @@ function toggleParams(id) {
 }
 function onEffectMessage(e) {
   const d = e.data
-  if (d?.type !== 'sketch:ready' && d?.type !== 'sketch:state') return
+  if (d?.type !== 'sketch:ready' && d?.type !== 'sketch:state' && d?.type !== 'sketch:loaded') return
+  const fr = frameList.find((x) => x.el?.contentWindow === e.source)
+  if (fr) {
+    if (d.type === 'sketch:loaded') { fr.loaded = true; return }
+    if (d.type === 'sketch:ready') fr.ready = true
+    if (fr.nodeId == null) {
+      // a standby frame: keep its announced controls until it's promoted, and
+      // push the cue's saved params now so it warms up with the right settings
+      if (d.type === 'sketch:ready') {
+        fr.ctl = { schema: d.schema ?? {}, values: { ...d.values }, mappings: (d.mappings ?? []).map((m) => ({ ...m })), state: d.state ?? null }
+        if (fr.scene) fr.el.contentWindow.postMessage(plain({ type: 'sketch:apply-scene', values: fr.scene.values, mappings: fr.scene.mappings, state: fr.scene.state ?? null }), '*')
+      } else if (fr.ctl) fr.ctl.state = d.state
+      return
+    }
+  }
   for (const n of nodes) {
     if (n.type !== 'effect' && n.type !== 'filter') continue
     if (rtState.get(n.id)?.iframe?.contentWindow === e.source) {
@@ -2590,6 +2707,11 @@ const show = useShow({
   stage,
   showToast,
   alertBadFile,
+  prepareStandby,
+  standbyReady,
+  whenStandbyReady,
+  adoptStandby,
+  precacheShow,
 })
 
 // --- saved routings: named snapshots of the node graph in localStorage ----
@@ -2992,6 +3114,9 @@ onBeforeUnmount(() => {
 // Republish the phone target list when the set of controllable nodes changes
 // (a node added/removed, or an effect announced its schema).
 watch(() => nodes.map((n) => n.id).join(','), publishTargetsSoon)
+// Keep the iframe list in step with the graph (pre-flush, so promoted/new frames
+// exist before the DOM patches). Immediate: frames must exist for first render.
+watch(() => nodes.map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) : '')).join('|'), syncFrames, { flush: 'pre', immediate: true })
 </script>
 
 <template>
@@ -3000,15 +3125,15 @@ watch(() => nodes.map((n) => n.id).join(','), publishTargetsSoon)
 
     <!-- hidden capture sources (iframes render at the compositor resolution) -->
     <div class="sources" aria-hidden="true">
-      <template v-for="n in nodes" :key="'src' + n.id">
-        <iframe
-          v-if="(n.type === 'effect' || n.type === 'filter') && n.params.slug"
-          :ref="(el) => bindFrame(n.id, el)"
-          :src="effectSrc(n)"
-          :style="{ width: frameSize.w + 'px', height: frameSize.h + 'px' }"
-          allow="microphone; camera; midi; accelerometer; gyroscope"
-        />
-      </template>
+      <!-- live frames (bound to a node) and standby frames (warming for a cue) -->
+      <iframe
+        v-for="f in frameList"
+        :key="f.key"
+        :ref="(el) => bindFrame(f, el)"
+        :src="f.src"
+        :style="{ width: frameSize.w + 'px', height: frameSize.h + 'px' }"
+        allow="microphone; camera; midi; accelerometer; gyroscope"
+      />
     </div>
 
     <!-- toolbar: two layers — build the graph on top, run the show below -->

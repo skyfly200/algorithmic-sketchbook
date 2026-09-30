@@ -70,6 +70,17 @@ adjusting the graph here without disturbing the output. A timeline of **cues**
 lets you snapshot the whole patch (graph + params) and crossfade between saved
 looks.
 
+**Smooth cue changes.** With the 🔥 **Pre-warm** toggle on (default), the show
+panel loads the *next* cue's effects in hidden standby frames ahead of time — on
+the timeline, four seconds before the cue lands; with manual GO, as soon as the
+previous cue fires. When the cue changes, those already-running frames are
+promoted in place, so nothing boots at the moment of the cut. If a cue isn't
+warm yet, GO waits up to 1.5 s (the old patch keeps playing) rather than
+stuttering. The ☁ **Preload** button also fetches every effect the show uses, so
+nothing is downloaded mid-show (the installed offline build already has them).
+Sketches report `sketch:loaded` once they've rendered their first frames; one
+that loads assets asynchronously can delay it with `rt.holdLoad(promise)`.
+
 ## Autopilot mode
 
 Patch can also drive itself. The **Manual / Autopilot** toggle in the run
