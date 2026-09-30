@@ -51,27 +51,52 @@ export function migrateGraph(nodesArr, edgesArr) {
 // --- topology ---------------------------------------------------------------
 // Kahn topological sort of the node list; nodes left in a cycle are appended in
 // their original order so a feedback loop still renders (holding last frame).
+// O(V + E): adjacency lists + a head index instead of per-node edge scans and
+// Array.shift (the naive form is O(V·E) and ran every frame).
 export function evalOrder(nodes, edges) {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
   const indeg = new Map(nodes.map((n) => [n.id, 0]))
-  for (const e of edges) indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1)
+  const out = new Map() // id → downstream ids, in edge order
+  for (const e of edges) {
+    indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1)
+    let l = out.get(e.from)
+    if (!l) out.set(e.from, (l = []))
+    l.push(e.to)
+  }
   const queue = nodes.filter((n) => (indeg.get(n.id) ?? 0) === 0)
   const order = []
   const seen = new Set()
-  while (queue.length) {
-    const n = queue.shift()
+  for (let head = 0; head < queue.length; head++) {
+    const n = queue[head]
     if (seen.has(n.id)) continue
     seen.add(n.id)
     order.push(n)
-    for (const e of edges.filter((e) => e.from === n.id)) {
-      indeg.set(e.to, indeg.get(e.to) - 1)
-      if (indeg.get(e.to) === 0) {
-        const t = nodes.find((x) => x.id === e.to)
+    for (const to of out.get(n.id) ?? []) {
+      indeg.set(to, indeg.get(to) - 1)
+      if (indeg.get(to) === 0) {
+        const t = byId.get(to)
         if (t) queue.push(t)
       }
     }
   }
   for (const n of nodes) if (!seen.has(n.id)) order.push(n) // cyclic remainder
   return order
+}
+// Per-frame callers shouldn't redo the sort while the wiring is unchanged. The
+// cache keys on a cheap O(V + E) signature of ids + edges (node *positions and
+// params* don't affect order), so the sort itself runs only when the topology
+// changes. Returns a function (nodes, edges) → ordered node objects.
+export function makeOrderCache() {
+  let sig = '', ids = []
+  return (nodes, edges) => {
+    let s = ''
+    for (const n of nodes) s += n.id + ','
+    s += '|'
+    for (const e of edges) s += e.from + '>' + e.to + ','
+    if (s !== sig) { sig = s; ids = evalOrder(nodes, edges).map((n) => n.id) }
+    const byId = new Map(nodes.map((n) => [n.id, n]))
+    return ids.map((id) => byId.get(id))
+  }
 }
 // Whether a node participates in any video edge or control link (i.e. it's
 // actually wired into the routing, not a disconnected orphan).
@@ -87,6 +112,48 @@ export function ancestorsOf(id, edges) {
     for (const e of edges) if (e.to === cur && !anc.has(e.from)) { anc.add(e.from); stack.push(e.from) }
   }
   return anc
+}
+
+// --- deck id hygiene ----------------------------------------------------------
+// Two decks share one runtime (iframes, canvases, effect params are all keyed by
+// node id), so node ids must be unique across decks. Graph data loaded into a
+// deck (a snapshot, a cue, a fork) may reuse ids the other deck already owns;
+// renumber just the colliding nodes.
+//
+// planIdMap: decide the renumbering without touching anything → { map (old→new,
+// changed ids only), nextId }. applyIdMap: apply a map to {nodes, edges, links,
+// effects?} in place. Splitting them lets a caller plan ahead (e.g. to adopt a
+// pre-warmed iframe under its final id) and apply later with the same result.
+export function planIdMap(nodeIds, taken, startId) {
+  const map = new Map()
+  const used = new Set(taken)
+  let next = startId
+  for (const id of nodeIds) {
+    if (!used.has(id)) { used.add(id); continue }
+    while (used.has(next)) next++
+    map.set(id, next)
+    used.add(next++)
+  }
+  return { map, nextId: next }
+}
+export function applyIdMap(data, map) {
+  if (!map.size) return data
+  const m = (id) => (map.has(id) ? map.get(id) : id)
+  for (const n of data.nodes) n.id = m(n.id)
+  for (const e of data.edges ?? []) { e.from = m(e.from); e.to = m(e.to) }
+  for (const l of data.links ?? []) { l.from = m(l.from); l.node = m(l.node) }
+  if (data.effects) {
+    const fx = {}
+    for (const [k, v] of Object.entries(data.effects)) fx[m(+k)] = v
+    data.effects = fx
+  }
+  return data
+}
+// plan + apply in one step; returns { map, nextId }.
+export function remapGraphIds(data, taken, startId) {
+  const r = planIdMap(data.nodes.map((n) => n.id), taken, startId)
+  applyIdMap(data, r.map)
+  return r
 }
 
 // --- layout / placement -----------------------------------------------------

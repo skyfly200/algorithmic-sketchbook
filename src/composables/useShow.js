@@ -5,16 +5,22 @@
 // bits that touch the live graph and effect iframes (snapshot/applySnap,
 // currentEffects, queueEffects, effectControls, postToEffect, the stage canvas)
 // are injected via `ctx`, and <ShowPanel> renders the returned state.
-import { reactive } from 'vue'
+import { reactive, watch } from 'vue'
 import { topoMatch, applyRamp as rampParams } from '../lib/patch/graph.js'
 import { loadJson, saveJson, fileSlug, downloadJson, pickJsonFile, buildShowFile, parseShowImport } from '../lib/patch/library.js'
 
 const SHOW_KEY = 'sketchbook-patch-show'    // the live/working cue set
 const SHOWS_KEY = 'sketchbook-patch-shows'  // named, saved show files
+const PREWARM_KEY = 'sketchbook-patch-prewarm' // pre-warm upcoming cues (on/off)
+const WARM_WAIT_MS = 1500  // max a cue change waits for its standby effects to warm
+const WARM_LEAD = 4        // timeline: start warming a cue this many seconds ahead
 
 // ctx: { nodes, snapshot(), applySnap(s), currentEffects(), queueEffects(fx),
 //        effectControls (Map), postToEffect(id,msg), stage (ref → canvas),
-//        showToast(msg), alertBadFile() }
+//        showToast(msg), alertBadFile(),
+//        prepareStandby(cue|null), standbyReady(cue), whenStandbyReady(cue, ms),
+//        adoptStandby(cue), precacheShow(cues),
+//        decksOn(), takeCue(cue, fadeSecs) }
 export function useShow(ctx) {
   function loadShow() {
     try { return JSON.parse(localStorage.getItem(SHOW_KEY)) || [] } catch { return [] }
@@ -28,6 +34,9 @@ export function useShow(ctx) {
     playing: false,
     loop: false,
     playhead: 0,         // seconds
+    prewarm: loadJson(PREWARM_KEY, true), // warm upcoming cues' effects in hidden standby frames
+    waiting: -1,         // cue index a GO is waiting on (its effects still warming)
+    preloading: false,   // precacheShow in flight
     newShowName: '',
     // timeline strip: a little headroom past the last cue so its marker is draggable
     get length() { return this.cues.length ? Math.max(...this.cues.map((c) => c.time || 0)) : 0 },
@@ -75,12 +84,35 @@ export function useShow(ctx) {
     ctx.queueEffects({ ...(cue.effects || {}) })
   }
   // Crossfade: freeze the current stage, swap the patch, fade the frozen frame
-  // out — hides the black flash while new effect iframes boot.
+  // out. With pre-warm on, the incoming effects are already running in standby
+  // iframes (promoted in place by adoptStandby), so the swap doesn't boot
+  // anything; the frozen-frame fade just covers the cut. A cue that isn't warm
+  // yet is waited on (the old patch keeps playing) for up to WARM_WAIT_MS.
   let xfade = null // { img, t0, dur }
-  function goCue(i, opts = {}) {
+  let goToken = 0
+  async function goCue(i, opts = {}) {
     if (i < 0 || i >= state.cues.length) return
     const cue = state.cues[i]
+    const token = ++goToken // a newer GO supersedes one still waiting
+    state.waiting = -1
+    if (state.prewarm) {
+      ctx.prepareStandby(cue)
+      if (!ctx.standbyReady(cue)) {
+        state.waiting = i
+        await ctx.whenStandbyReady(cue, WARM_WAIT_MS)
+        if (token !== goToken) return
+        state.waiting = -1
+      }
+    }
     const dur = ((opts.fade != null ? opts.fade : cue.fade) || 0) * 1000
+    // Decks on: the cue loads onto the off-air deck and fades in live (the
+    // outgoing deck keeps running through the fade) — no frozen frame.
+    if (ctx.decksOn?.()) {
+      ctx.takeCue(cue, dur / 1000)
+      state.activeCue = i
+      prepareNext()
+      return
+    }
     const cnv = ctx.stage.value
     if (dur > 0 && cnv && cnv.width) {
       const img = document.createElement('canvas')
@@ -88,9 +120,29 @@ export function useShow(ctx) {
       img.getContext('2d').drawImage(cnv, 0, 0)
       xfade = { img, t0: performance.now(), dur }
     }
+    if (state.prewarm) ctx.adoptStandby(cue)
     applyCueState(cue)
     state.activeCue = i
+    prepareNext()
   }
+  // Warm whatever a manual GO would play next (idle cost: a few hidden iframes).
+  function prepareNext() {
+    if (!state.prewarm) return
+    const next = state.cues[state.activeCue + 1]
+    if (next) ctx.prepareStandby(next)
+  }
+  function setPrewarm(on) {
+    state.prewarm = !!on
+    saveJson(PREWARM_KEY, state.prewarm)
+    if (state.prewarm) prepareNext()
+    else ctx.prepareStandby(null) // free the standby iframes
+  }
+  async function preloadShow() {
+    if (state.preloading) return
+    state.preloading = true
+    try { await ctx.precacheShow(state.cues) } finally { state.preloading = false }
+  }
+  watch(() => [state.open, state.cues.length], () => { if (state.open) prepareNext() })
   function nextCue() { goCue(Math.min(state.cues.length - 1, state.activeCue + 1)) }
   function prevCue() { goCue(Math.max(0, state.activeCue - 1)) }
   // Called from the compositor's blit each frame while a crossfade is live.
@@ -105,10 +157,11 @@ export function useShow(ctx) {
   function showLength() { return state.length }
   let lastShowTs = 0
   let curSeg = -1
-  function playShow() { if (!state.cues.length) return; state.playing = true; lastShowTs = performance.now(); curSeg = -1 }
+  let warmedFor = null // cue id the timeline has already asked to warm
+  function playShow() { if (!state.cues.length) return; state.playing = true; lastShowTs = performance.now(); curSeg = -1; warmedFor = null }
   function pauseShow() { state.playing = false }
-  function stopShow() { state.playing = false; state.playhead = 0; curSeg = -1 }
-  function seekShow(t) { state.playhead = Math.max(0, Math.min(showLength(), t)); curSeg = -1 }
+  function stopShow() { state.playing = false; state.playhead = 0; curSeg = -1; warmedFor = null }
+  function seekShow(t) { state.playhead = Math.max(0, Math.min(showLength(), t)); curSeg = -1; warmedFor = null }
   // Ramp the live graph's numeric params (and point arrays) from cue A→B by f.
   const applyRamp = (a, b, f) => rampParams(ctx.nodes, a, b, f)
   // Ramp each effect sketch's *internal* params between two cues by streaming
@@ -154,13 +207,23 @@ export function useShow(ctx) {
     if (i !== curSeg) {
       // Skip the reload when we're flowing forward through a ramped, same-topology
       // segment (the graph is already sitting at this cue from the last ramp).
-      const rampedAdjacent = i === curSeg + 1 && curSeg >= 0 && topoMatch(sorted[curSeg].snap, sorted[i].snap)
+      const rampedAdjacent = !ctx.decksOn?.() && i === curSeg + 1 && curSeg >= 0 && topoMatch(sorted[curSeg].snap, sorted[i].snap)
       if (rampedAdjacent) state.activeCue = state.cues.indexOf(sorted[i])
       else goCue(state.cues.indexOf(sorted[i]), { fade: sorted[i].fade })
       curSeg = i
     }
     const next = sorted[i + 1]
-    if (next && topoMatch(sorted[i].snap, next.snap)) {
+    // Look ahead: warm the next cue's effects WARM_LEAD seconds before it lands
+    // (a same-topology ramp keeps its iframes, so only true cuts need warming).
+    if (state.prewarm) {
+      const target = next ?? (state.loop ? sorted[0] : null)
+      const until = next ? (next.time || 0) - state.playhead : showLength() - state.playhead
+      if (target && target.id !== warmedFor && until <= WARM_LEAD && !(next && topoMatch(sorted[i].snap, next.snap))) {
+        warmedFor = target.id
+        ctx.prepareStandby(target)
+      }
+    }
+    if (!ctx.decksOn?.() && next && topoMatch(sorted[i].snap, next.snap)) { // (with decks, the deck crossfade replaces per-param ramping)
       const span = (next.time || 0) - (sorted[i].time || 0)
       const f = span > 0 ? Math.min(1, Math.max(0, (state.playhead - (sorted[i].time || 0)) / span)) : 0
       applyRamp(sorted[i].snap, next.snap, f)
@@ -241,7 +304,7 @@ export function useShow(ctx) {
   return {
     state, persistShow,
     captureCue, updateCue, deleteCue, moveCue,
-    goCue, nextCue, prevCue, drawXfade,
+    goCue, nextCue, prevCue, drawXfade, setPrewarm, preloadShow,
     showLength, playShow, pauseShow, stopShow, seekShow, tickShow,
     pct, fmtTime, tlSeek, tlAddCueAt, tlCueDown,
     exportShow, importShow, saveShowAs, loadShowFile, deleteShowFile,

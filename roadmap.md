@@ -45,9 +45,10 @@ with a software renderer, so frame rates there are only useful *relatively*.
   motion-extraction, warp — keep theirs.)
 
 ### Patch scheduling (`src/lib/patch/scheduler.js`, 15 tests)
-- Culls nodes that cannot reach the Output, including a layer hidden behind an opaque
-  Normal blend
-- Culled nodes idle at 3 fps in rotation (paused in output-only mode)
+- One plan + rate controller per deck (merged with the two-deck compositor from main); culls nodes
+  that cannot reach the Output, including a layer hidden behind an opaque Normal blend
+- Culled nodes idle at 3 fps in rotation (1 fps in output-only mode); throttle only — pausing is left
+  to the deck policy (`deckMode` / `applyDeckPause`)
 - Under load, low-priority / expensive live nodes step down 60→30→20→15→10→6 fps and recover
   when there's headroom; selected / dragged nodes are protected
 - `sketch:throttle` message handled in `sketches/_lib/runtime.js` (random phase per sketch)
@@ -69,7 +70,9 @@ with a software renderer, so frame rates there are only useful *relatively*.
 3. **Test the Patch scheduler on real graphs** — chains of 4-8 filters over video; check that
    throttling triggers sensibly, that culled thumbnails look OK, and that nothing flickers
    when a node is selected / unselected. Tune `FPS_STEPS`, `BACKGROUND_FPS`, thresholds.
-4. **Apply the same scheduling to Mixer and Autopilot.** Autopilot already has its own
+4. **Apply the same scheduling to Mixer and Autopilot.** (Patch's deck policy and cost model
+   live in `src/lib/patch/budget.js`; the per-node scheduler could feed that model real throttled
+   rates instead of assuming full rate.) Autopilot already has its own
    occlusion culling; Mixer has none. Both could use `liveNodes`-style culling and
    `sketch:throttle`.
 5. **Remaining CPU-bound filters** not yet ported: anything else still using

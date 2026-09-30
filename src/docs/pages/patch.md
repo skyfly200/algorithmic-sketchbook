@@ -70,6 +70,43 @@ adjusting the graph here without disturbing the output. A timeline of **cues**
 lets you snapshot the whole patch (graph + params) and crossfade between saved
 looks.
 
+**Smooth cue changes.** With the 🔥 **Pre-warm** toggle on (default), the show
+panel loads the *next* cue's effects in hidden standby frames ahead of time — on
+the timeline, four seconds before the cue lands; with manual GO, as soon as the
+previous cue fires. When the cue changes, those already-running frames are
+promoted in place, so nothing boots at the moment of the cut. If a cue isn't
+warm yet, GO waits up to 1.5 s (the old patch keeps playing) rather than
+stuttering. The ☁ **Preload** button also fetches every effect the show uses, so
+nothing is downloaded mid-show (the installed offline build already has them).
+Sketches report `sketch:loaded` once they've rendered their first frames; one
+that loads assets asynchronously can delay it with `rt.holdLoad(promise)`.
+
+## Decks — edit one patch while another is on air
+
+Turn on **Decks** (bottom-right console) and Patch runs **two full patches, A and
+B**, like a DJ's two decks. A master **crossfader** blends them onto the stage
+and the projector output; the deck you click is the one the editor shows, so you
+can build and tweak on the side while the other keeps playing.
+
+- **Fork A → B** copies the deck you're editing into the other one — graph, every
+  effect's settings and seeds, so it looks identical — and opens the copy.
+  Experiment there; the on-air deck is untouched. (A deck that's currently on air
+  can't be overwritten by a fork.)
+- **Cue effect…** loads a fresh *Effect → Output* onto the off-air deck so you can
+  audition it in the **PVW** preview and tune it before it goes out.
+- **CUT** jumps to the other deck; **AUTO** fades over the time next to it. Both
+  decks keep running through the fade, so it's a true live crossfade — nothing
+  freezes and nothing boots at the moment of the change.
+- **Blend** chooses how the decks combine: *Mix* (dissolve), or *Add / Screen /
+  Multiply / Difference* with the fader as the opacity of deck B over A.
+- **Restore** puts back what a deck held before the last fork or cue.
+- With Decks on, **show cues** load onto the off-air deck and fade in over the
+  cue's fade time (the deck crossfade replaces per-parameter ramping).
+
+Each deck's effects are real pages, so two decks cost roughly twice one — see
+**Performance** for how Patch decides what your machine can carry and what it
+does when both decks don't fit.
+
 ## Autopilot mode
 
 Patch can also drive itself. The **Manual / Autopilot** toggle in the run

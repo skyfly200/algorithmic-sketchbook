@@ -41,6 +41,8 @@ defineProps({
           </v-list>
         </v-card>
       </v-menu>
+      <v-btn icon="mdi-fire" size="x-small" variant="text" :color="show.state.prewarm ? 'primary' : undefined" :title="show.state.prewarm ? 'Pre-warm on: upcoming cues load in the background so changes are smooth (click to turn off)' : 'Pre-warm off: cues boot their effects when they fire (click to turn on)'" @click="show.setPrewarm(!show.state.prewarm)" />
+      <v-btn icon="mdi-cloud-download-outline" size="x-small" variant="text" :loading="show.state.preloading" :disabled="!show.state.cues.length" title="Preload every effect this show uses, so nothing is fetched over the network mid-show" @click="show.preloadShow()" />
       <v-btn icon="mdi-download" size="x-small" variant="text" :disabled="!show.state.cues.length" title="Export current show as a .json file" @click="show.exportShow()" />
       <v-btn icon="mdi-upload" size="x-small" variant="text" title="Import a show .json file" @click="show.importShow()" />
       <v-btn icon="mdi-close" size="x-small" variant="text" @click="show.state.open = false" />
@@ -49,7 +51,7 @@ defineProps({
     <!-- transport: manual GO stack, or timeline play/scrub -->
     <div v-if="show.state.mode === 'cues'" class="show-transport">
       <v-btn icon="mdi-skip-previous" size="small" variant="text" :disabled="show.state.activeCue <= 0" title="Previous cue" @click="show.prevCue()" />
-      <button class="go-btn" :disabled="!show.state.cues.length" title="Go to the next cue" @click="show.state.activeCue < 0 ? show.goCue(0) : show.nextCue()">GO</button>
+      <button class="go-btn" :disabled="!show.state.cues.length" title="Go to the next cue" @click="show.state.activeCue < 0 ? show.goCue(0) : show.nextCue()">{{ show.state.waiting >= 0 ? '…' : 'GO' }}</button>
       <v-btn icon="mdi-skip-next" size="small" variant="text" :disabled="show.state.activeCue >= show.state.cues.length - 1" title="Next cue" @click="show.nextCue()" />
       <span class="show-hint">Click a cue to jump to it. GO steps through in order.</span>
     </div>

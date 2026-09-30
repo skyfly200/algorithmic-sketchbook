@@ -32,24 +32,15 @@ You can grant **the mouse to one layer** so its pointer interactions play live
 while the rest keep running — good for a piece that blooms or steers under the
 cursor sitting on top of a calmer bed.
 
-## Motion extraction feedback
+## Filter layers
 
-A **Motion Extraction** layer is special: it automatically ingests the
-*composite of the layers below it* as its source. Stack it on top and it pulls
-motion out of everything underneath — a self-referential feedback that reacts to
-the whole mix, not just a camera.
+A **filter** layer (Blur, CRT, Halftone, Motion Extraction, …) does not draw a
+picture of its own — it processes whatever is underneath. Every filter layer
+automatically takes the *composite of the layers below it* as its source, so a
+filter near the top of the stack treats the whole mix beneath it, and a filter
+low in the stack only sees what is under it. Put a **Motion Extraction** layer on
+top and it pulls motion out of everything beneath — a self-referential feedback
+that reacts to the whole mix, not just a camera.
 
-## Saving a mix
-
-A mix can be saved and later reopened. Under the hood a mix is stored the same
-way as a Patch routing, which is why they share a home in the
-[Library](#/docs/scenes) and why the [Patch](#/docs/patch) board can open a mix
-as a graph.
-
-## Open in Patch
-
-The **Open in Patch** button converts the current layer stack into a node graph
-and drops it onto the [Patch](#/docs/patch) board: an Effect node per layer,
-folded together with Blend nodes that carry each layer's blend mode and opacity,
-then an Output. From there you can rewire it, insert filters and control nodes,
-or hand it to Patch's own autopilot mode.
+With nothing under it, a filter falls back to the camera, a dropped file or its
+built-in demo scene.

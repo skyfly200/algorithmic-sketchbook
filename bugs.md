@@ -38,14 +38,17 @@ but has not been looked at on real hardware or in the real UI.
 
 ### Patch scheduler (`PatchView.vue`, `src/lib/patch/scheduler.js`)
 - Only exercised with a seeded 6-node graph in headless Chromium (culled nodes dropped to
-  ~2-3 fps as intended, no console errors). Not tested: output-only mode pausing, selection
-  protection, occluded-blend culling in the live UI, cycles, Input/XY/Tracker control links.
+  ~2-3 fps as intended, no console errors) — re-checked after merging main's two-deck compositor.
+  Not tested: two decks live at once / crossfading, output-only mode (culled nodes go to 1 fps),
+  selection protection, occluded-blend culling in the live UI, cycles, Input/XY/Tracker control links.
 - The display-refresh estimate never goes below 60 Hz, so on a 30/50 Hz display the controller
   will think it is always behind and over-throttle.
 - Culled nodes show their last frame (or blank if never rendered) in thumbnails.
 - `show.drawXfade` (cue crossfade) and the pop-out window redraw every pass; only the node
   evaluation is skipped when unchanged.
 - Mixer and Autopilot do not use the scheduler yet.
+- The cost model in `src/lib/patch/budget.js` still assumes every live effect draws at full rate; it
+  does not yet know about per-node throttling, so it is conservative for throttled graphs.
 
 ### Shader infrastructure
 - `glpipe.js` keeps every `target()` it ever created in an internal list (fixed-size targets

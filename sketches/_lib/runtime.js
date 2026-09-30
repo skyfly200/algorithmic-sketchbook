@@ -31,6 +31,11 @@
  * source × amount × (max − min) to the param's base value. Legacy 'beat.*'
  * source names (older saved scenes) still resolve.
  *
+ * Two host messages: `sketch:ready` (params announced — early) and
+ * `sketch:loaded` (first frames rendered, so shaders/GPU state are warm). A
+ * sketch that loads assets asynchronously can delay the latter with
+ * rt.holdLoad(promise).
+ *
  * Everything is opt-in — sketches that ignore all of this still work.
  */
 import { createBeatDetector } from './beat.js'
@@ -640,6 +645,23 @@ export function createRuntime() {
     if (best) { learning = false; window.parent?.postMessage({ type: 'sketch:learned', source: best }, '*') }
   }
 
+  // `sketch:loaded` — sent once the sketch has *rendered* its first frames (and
+  // released any rt.holdLoad() promises). `sketch:ready` fires much earlier, at
+  // rt.params() time, before shaders compile or assets upload; a host that wants
+  // to know the GPU state is warm (Patch's cue standby) waits for this instead.
+  const LOADED_FRAMES = 3
+  let tickCount = 0, loadHolds = 0, loadedSent = false
+  function checkLoaded() {
+    if (loadedSent || loadHolds > 0 || tickCount < LOADED_FRAMES) return
+    loadedSent = true
+    // let the last frame actually present before we report (rAF never fires in a
+    // hidden tab, so a short timer backs it up)
+    let done = false
+    const send = () => { if (done) return; done = true; window.parent?.postMessage({ type: 'sketch:loaded' }, '*') }
+    requestAnimationFrame(send)
+    setTimeout(send, 120)
+  }
+
   function announce() {
     if (announced) return
     announced = true
@@ -679,6 +701,7 @@ export function createRuntime() {
       // A host that missed the one-shot sketch:ready (it can race the host's
       // iframe bookkeeping) asks us to say it again with the current state.
       window.parent?.postMessage(readyMsg(), '*')
+      if (loadedSent) window.parent?.postMessage({ type: 'sketch:loaded' }, '*')
     } else if (msg.type === 'sketch:action') {
       actions[msg.name]?.()
     } else if (msg.type === 'sketch:pause') {
@@ -788,7 +811,17 @@ export function createRuntime() {
       if (!noDefaultMap) setMappings([...mappings, { source, param, amount, smooth }])
     },
 
+    // Delay `sketch:loaded` until a promise settles — for sketches that fetch
+    // models/textures or compile shaders asynchronously (e.g. three's
+    // renderer.compileAsync). Call before the first frame.
+    holdLoad(promise) {
+      loadHolds++
+      Promise.resolve(promise).catch(() => {}).finally(() => { loadHolds--; checkLoaded() })
+    },
+
     tick(now = performance.now()) {
+      tickCount++
+      checkLoaded()
       fpsTick?.(now)
       reportFps(now)
       beat.update(now)

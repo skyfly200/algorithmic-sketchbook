@@ -99,8 +99,36 @@ sketch can still pass its own `createSource({ demo })`.
 
 ## Patch scheduling
 
-`src/lib/patch/scheduler.js` (used by `PatchView`): culls nodes that can't reach
-the Output (including layers hidden behind an opaque Normal blend), idles culled
-nodes at a few fps in rotation, and steps low-priority live nodes down through
-`FPS_STEPS` when the compositor can't hold the display rate. Sketches honour it
-through the `sketch:throttle` message handled in `sketches/_lib/runtime.js`.
+Two layers, both in `PatchView`:
+
+- **Between decks** (`deckMode()`, see below): which deck is live, cued, paused or
+  pulsing. Decides whether a deck is evaluated at all.
+- **Within an evaluated deck** (`src/lib/patch/scheduler.js`): culls nodes that can't
+  reach the deck's Output (including layers hidden behind an opaque Normal blend),
+  ticks culled nodes over at a few fps in rotation, and steps low-priority live
+  nodes down through `FPS_STEPS` when the compositor can't hold the display rate.
+  There is one plan and one `RateController` per deck. It only ever *throttles*
+  (`sketch:throttle`, handled in `sketches/_lib/runtime.js`) — it never pauses an
+  iframe, because pausing belongs to the deck policy and the two would fight.
+
+## Patch decks (two-graph compositor)
+
+`src/views/PatchView.vue` runs two patch graphs ("decks" A/B) behind a master
+crossfader; logic lives in `src/composables/useDecks.js`. Things to know before
+editing it:
+
+- `nodes` / `edges` / `links` are **scoped arrays** (`src/lib/patch/scoped.js`)
+  that point at the deck in scope — the edited deck, or the one the render loop is
+  evaluating inside `D.withDeck(deck, fn)`. Existing code that reads them works
+  per deck unchanged; don't capture the underlying arrays across a deck switch.
+- **Node ids are unique across both decks** (runtime maps — `rtState`,
+  `effectControls`, `frameList` — are keyed by id). Anything that loads graph data
+  into a deck must go through `installGraph()` / `planIdMap()` / `applyIdMap()`
+  (`src/lib/patch/graph.js`) so colliding ids get renumbered.
+- Effect/filter iframes live in one `frameList` (live + standby). A standby frame
+  is promoted to a node in place (`adoptStandby`) — never move an iframe in the
+  DOM, it reloads.
+- Limits come from the cost model (`src/lib/patch/budget.js`, tested in
+  `tests/patchBudget.test.js`), not from timing a machine. Keep new per-frame work
+  O(V+E); the topo order is memoised per deck.
+

@@ -22,6 +22,7 @@ const ORDER = [
   ['settings', 'mdi-cog-outline'],
   ['authoring', 'mdi-code-tags'],
   ['runtime', 'mdi-api'],
+  ['performance', 'mdi-speedometer'],
   ['offline', 'mdi-wifi-off'],
 ]
 
