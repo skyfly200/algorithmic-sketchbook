@@ -1,19 +1,24 @@
-// Painterly — repaint any source with oriented brush strokes. A reduced copy of
-// the frame gives a colour + gradient field; strokes are laid perpendicular to
-// the gradient (i.e. along contours) so they flow around forms, exactly how a
-// painter follows edges. The medium (watercolour / oil / charcoal / ink /
-// pastel / spray) changes the stroke shape, opacity, colour treatment and
-// paper — spray swaps the bristle strokes for soft airbrushed stipple clouds
-// with overspray grain and the odd drip, graffiti-on-a-wall style.
+// Painterly — repaint any source with oriented brush strokes. Strokes are laid
+// perpendicular to the image gradient (i.e. along contours) so they flow around
+// forms, exactly how a painter follows edges. The medium (watercolour / oil /
+// charcoal / ink / pastel / spray) changes the stroke shape, opacity, colour
+// treatment and paper — spray swaps the bristle strokes for soft airbrushed
+// clouds with overspray grain, graffiti-on-a-wall style.
+//
+// It all happens in one fragment shader: every pixel checks the jittered stroke
+// cells around it, reads each stroke's colour and contour direction from a
+// mipmapped copy of the source (cheap, pre-blurred taps), and composites the
+// strokes in painter's order — a coarse pass, then a finer pass that re-inks the
+// edges. Nothing is read back to the CPU and there are no per-stroke draw calls.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
+
+const STYLES = ['Watercolour', 'Oil', 'Charcoal', 'Ink', 'Pastel', 'Spray']
 
 const rt = createRuntime()
-const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-
 const params = rt.params({
-  style: { value: 'Watercolour', type: 'select', options: ['Watercolour', 'Oil', 'Charcoal', 'Ink', 'Pastel', 'Spray'], label: 'Medium' },
+  style: { value: 'Watercolour', type: 'select', options: STYLES, label: 'Medium' },
   brush: { value: 1, min: 0.4, max: 3, step: 0.05, label: 'Brush size' },
   sizeVary: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Brush size variation' },
   lengthVary: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Stroke length variation' },
@@ -26,219 +31,176 @@ const params = rt.params({
 })
 rt.mapInput('audio.level', 'density', 0.3)
 
-const src = createSource()
-// reduced field buffer (colour + luminance/gradient sampled from here)
-const fb = document.createElement('canvas')
-const fbx = fb.getContext('2d', { willReadFrequently: true })
-let fw = 2, fh = 2, fdata = null, lum = null
-// paper texture, baked once
-let paper = null
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform int u_style;      // 0 watercolour, 1 oil, 2 charcoal, 3 ink, 4 pastel, 5 spray
+uniform float u_base;     // base brush size (px)
+uniform float u_sizeVary;
+uniform float u_lenVary;
+uniform float u_texAmt;
+uniform float u_density;
+uniform float u_length;
+uniform float u_edges;
+uniform float u_paper;
+uniform float u_pr;
+out vec4 outColor;
 
-let W = 0, H = 0, PR = 1
-function buildPaper() {
-  paper = document.createElement('canvas'); paper.width = W; paper.height = H
-  const p = paper.getContext('2d')
-  p.fillStyle = '#f3ecdd'; p.fillRect(0, 0, W, H)
-  for (let i = 0; i < (W * H) / 400; i++) {
-    const x = Math.random() * W, y = Math.random() * H
-    p.fillStyle = `rgba(${Math.random() < 0.5 ? '150,140,120' : '255,255,245'},${Math.random() * 0.06})`
-    p.fillRect(x, y, 1.5 * PR, 1.5 * PR)
-  }
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
 }
-function resize() {
-  PR = rt.pixelRatio
-  W = canvas.width = Math.floor(window.innerWidth * PR)
-  H = canvas.height = Math.floor(window.innerHeight * PR)
-  const long = 300
-  fw = W >= H ? long : Math.round(long * (W / H))
-  fh = W >= H ? Math.round(long * (H / W)) : long
-  fb.width = fw; fb.height = fh
-  buildPaper()
+vec2 hash22(vec2 p) {
+  float n = hash21(p);
+  return vec2(n, hash21(p + n + 17.3));
 }
-
-function coverInto(c, cv, sw, sh, tw, th) {
-  const s = Math.max(tw / sw, th / sh)
-  c.drawImage(cv, (tw - sw * s) / 2, (th - sh * s) / 2, sw * s, sh * s)
-}
-
-function styleBg() {
-  const s = params.style
-  if (s === 'Ink') return '#f6f3ec'
-  if (s === 'Charcoal') return '#d9d3c6'
-  if (s === 'Spray') return '#3c4048' // a concrete wall for the paint to bite into
-  return null // watercolour/oil/pastel start from the paper
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
-// A spray-paint dab: a soft airbrushed core of the sampled colour, a scatter of
-// fine overspray dots with jittered colour/alpha (the grainy halo you get off a
-// rattle-can), and the occasional running drip. Drawn in world space.
-function sprayDab(x, y, rad, r, g, b, tex) {
-  const a = 0.14 + tex * 0.13
-  const g0 = ctx.createRadialGradient(x, y, 0, x, y, rad)
-  g0.addColorStop(0, `rgba(${r | 0},${g | 0},${b | 0},${a})`)
-  g0.addColorStop(0.55, `rgba(${r | 0},${g | 0},${b | 0},${a * 0.45})`)
-  g0.addColorStop(1, `rgba(${r | 0},${g | 0},${b | 0},0)`)
-  ctx.fillStyle = g0
-  ctx.beginPath(); ctx.arc(x, y, rad, 0, 6.283); ctx.fill()
-  const dots = (5 + tex * 16) | 0
-  for (let k = 0; k < dots; k++) {
-    const ang = Math.random() * 6.283, rr = rad * (0.45 + Math.random())
-    const jit = (Math.random() * 2 - 1) * 26 * tex
-    ctx.fillStyle = `rgba(${clampC(r + jit) | 0},${clampC(g + jit) | 0},${clampC(b + jit) | 0},${a * (0.3 + Math.random() * 0.6)})`
-    ctx.beginPath(); ctx.arc(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr, Math.random() * 1.7 * PR + 0.4, 0, 6.283); ctx.fill()
-  }
-  // an occasional running drip — the graffiti signature
-  if (Math.random() < 0.012 * (0.3 + tex)) {
-    const dl = rad * (2 + Math.random() * 6)
-    const g1 = ctx.createLinearGradient(x, y, x, y + dl)
-    g1.addColorStop(0, `rgba(${r | 0},${g | 0},${b | 0},${Math.min(0.9, a * 2.2)})`)
-    g1.addColorStop(1, `rgba(${r | 0},${g | 0},${b | 0},0)`)
-    ctx.strokeStyle = g1
-    ctx.lineWidth = Math.max(1, rad * 0.16); ctx.lineCap = 'round'
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (Math.random() * 2 - 1) * rad * 0.12, y + dl); ctx.stroke()
-    ctx.fillStyle = `rgba(${r | 0},${g | 0},${b | 0},${Math.min(0.9, a * 2)})`
-    ctx.beginPath(); ctx.arc(x + (Math.random() * 2 - 1) * rad * 0.1, y + dl, rad * 0.13, 0, 6.283); ctx.fill() // bead at the tip
-  }
-}
+// One layer of strokes. 'base' is the brush size, 'seed' decorrelates layers,
+// 'minGrad' skips strokes on flat areas (used by the fine edge pass).
+void layer(inout vec3 col, vec2 px, float base, float seed, float minGrad) {
+  float cell = base / sqrt(1.6 * u_density);
+  vec2 cid0 = floor(px / cell);
+  // analysis taps read a blurred mip, like the reduced field buffer of the CPU version
+  float L = max(u_res.x, u_res.y);
+  float lod = max(log2(L / 300.0), 0.0);
+  vec2 o = vec2(L / 300.0) / u_res;
 
-const clampC = (v) => v < 0 ? 0 : v > 255 ? 255 : v
-// A textured brush stroke in local space (already translated + rotated so the
-// stroke runs along +x). Instead of one perfect line it is: a slightly bowed
-// body, a shorter brighter core (so the ends taper), a couple of offset bristle
-// streaks with jittered colour/alpha (paint pickup), and an occasional
-// dry-brush dash break — so no two strokes read the same.
-function texturedStroke(len, lw, r, g, b, a, tex) {
-  const bow = (Math.random() * 2 - 1) * lw * (0.5 + tex * 1.2)
-  const body = (l, off, w) => { ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(-l / 2, off); ctx.quadraticCurveTo(0, off + bow, l / 2, off); ctx.stroke() }
-  if (tex > 0.02 && Math.random() < tex * 0.45) ctx.setLineDash([lw * (1 + Math.random() * 2.5), lw * (0.3 + Math.random() * 1.2) * tex])
-  ctx.strokeStyle = `rgba(${r | 0},${g | 0},${b | 0},${a * 0.55})`
-  body(len, 0, lw)
-  ctx.strokeStyle = `rgba(${r | 0},${g | 0},${b | 0},${a})`
-  body(len * 0.7, 0, lw * 0.6) // brighter core → tapered, less uniform ends
-  ctx.setLineDash([])
-  if (tex > 0.05) {
-    const n = lw > 4 * PR ? 2 : 1
-    for (let k = 0; k < n; k++) {
-      const off = (Math.random() * 2 - 1) * lw * 0.42
-      const jit = (Math.random() * 2 - 1) * 34 * tex
-      ctx.strokeStyle = `rgba(${clampC(r + jit) | 0},${clampC(g + jit) | 0},${clampC(b + jit) | 0},${a * (0.3 + Math.random() * 0.4)})`
-      body(len * (0.55 + Math.random() * 0.45), off, lw * (0.1 + Math.random() * 0.18))
+  float wMax = base * 0.5 * (1.0 + 0.8 * u_sizeVary) * (u_style == 0 ? 1.6 : 1.2);
+  float halfLenMax = 1.6 * cell;
+  float bound = (u_style == 5) ? base * 2.6 : halfLenMax + wMax;
+
+  for (int j = -2; j <= 2; j++) {
+    for (int i = -2; i <= 2; i++) {
+      vec2 id = cid0 + vec2(float(i), float(j));
+      vec2 h = hash22(id + seed);
+      vec2 centre = (id + 0.5 + (h - 0.5)) * cell;
+      vec2 d = px - centre;
+      if (dot(d, d) > bound * bound) continue;
+
+      vec2 h2 = hash22(id + seed + 5.3);
+      float h3 = hash21(id + seed + 9.1);
+      vec2 uvc = centre / u_res;
+      vec3 c = textureLod(u_tex, uvc, lod).rgb;
+      float lum = dot(c, LUMA);
+      float gx = dot(textureLod(u_tex, uvc + vec2(o.x, 0.0), lod).rgb - textureLod(u_tex, uvc - vec2(o.x, 0.0), lod).rgb, LUMA);
+      float gy = dot(textureLod(u_tex, uvc + vec2(0.0, o.y), lod).rgb - textureLod(u_tex, uvc - vec2(0.0, o.y), lod).rgb, LUMA);
+      float grad = length(vec2(gx, gy));
+      if (grad < minGrad) continue;
+
+      float svar = 1.0 + (h2.x * 2.0 - 1.0) * u_sizeVary * 0.8;
+      float lvar = 1.0 + (h2.y * 2.0 - 1.0) * u_lenVary;
+      float dark = 1.0 - lum;
+
+      if (u_style == 5) {
+        // soft airbrushed dab with a grainy overspray halo
+        float rad = base * 1.3 * (0.8 + grad * 0.7) * svar;
+        float a = (0.14 + u_texAmt * 0.13) * 1.7;
+        float r = length(d) / rad;
+        float core = (1.0 - smoothstep(0.0, 1.0, r)) * a;
+        float halo = smoothstep(0.35, 0.6, r) * (1.0 - smoothstep(1.0, 1.5, r));
+        float grain = step(1.0 - 0.3 * u_texAmt, hash21(floor(px / max(u_pr, 1.0)) + id));
+        vec3 sc = c + (hash21(floor(px) + id) - 0.5) * 0.2 * u_texAmt;
+        col = mix(col, sc, clamp(core + halo * grain * a * 1.6, 0.0, 1.0));
+        continue;
+      }
+
+      float ang = atan(gy, gx) + 1.5708 + (h3 - 0.5) * 0.4 * u_texAmt;
+      float len = max(base * 0.4, base * (1.2 + grad * 2.0) * u_length * lvar);
+      float halfLen = min(len * 0.5, halfLenMax);
+      float wdt = base * 0.5 * svar;
+
+      vec3 sc = c;
+      float a = 0.9;
+      float lw = wdt;
+      if (u_style == 0) { a = 0.22; lw = wdt * 1.6; sc = c * 0.7 + 0.3; }
+      else if (u_style == 4) { a = 0.5; lw = wdt * 1.2; sc = c * 0.75 + vec3(0.92, 0.90, 0.88) * 0.25; }
+      else if (u_style == 1) { a = 0.92; lw = wdt; }
+      else if (u_style == 2) { sc = vec3(30.0, 28.0, 32.0) / 255.0; a = min(0.7, dark * 0.7 + grad * u_edges); }
+      else {   // ink: linework only where there is an edge or a deep shadow
+        float on = grad * 3.0 * u_edges + max(0.0, dark - 0.55) * 1.5;
+        if (on < 0.12) continue;
+        sc = vec3(20.0, 18.0, 24.0) / 255.0;
+        a = min(0.9, on);
+        lw = wdt * 0.5;
+      }
+
+      float cs = cos(ang), sn = sin(ang);
+      vec2 q = vec2(cs * d.x + sn * d.y, -sn * d.x + cs * d.y);   // u along the stroke, v across
+      float halfW = max(lw * 0.5, 0.75);
+      float t = clamp(abs(q.x) / max(halfLen, 1.0), 0.0, 1.0);
+      float wEff = halfW * (1.0 - 0.3 * t * t);                    // tapered ends
+      float distBody = length(vec2(max(abs(q.x) - max(halfLen - halfW, 0.0), 0.0), q.y));
+      float body = 1.0 - smoothstep(wEff - 1.0, wEff, distBody);
+      float coreLen = halfLen * 0.7;
+      float coreW = wEff * 0.6;
+      float distCore = length(vec2(max(abs(q.x) - max(coreLen - coreW, 0.0), 0.0), q.y));
+      float core = 1.0 - smoothstep(coreW - 1.0, coreW, distCore);
+      float alpha = a * (0.55 * body + 0.45 * core);
+
+      if (u_texAmt > 0.02) {
+        // bristle streaks along the stroke: colour pickup + dry-brush gaps
+        float streak = vnoise(vec2(q.y / halfW * 3.0 + h3 * 40.0, q.x * 0.03));
+        sc += (streak - 0.5) * 0.27 * u_texAmt;
+        float dry = vnoise(vec2(q.y / halfW * 2.2 + h.x * 30.0, q.x / max(halfW, 1.0) * 0.5 + h.y * 20.0));
+        alpha *= 1.0 - u_texAmt * 0.55 * smoothstep(0.6, 0.88, dry);
+        // the odd dash break
+        alpha *= 1.0 - u_texAmt * 0.6 * step(0.8, vnoise(vec2(q.x / max(halfW, 1.0) * 0.4 + h.y * 50.0, h3 * 9.0))) * step(0.55, h3);
+      }
+      col = mix(col, clamp(sc, 0.0, 1.0), clamp(alpha, 0.0, 1.0));
     }
   }
 }
 
-// A cheap fingerprint of the reduced field + params. Repainting the whole
-// canvas costs thousands of strokes, so only do it when the source frame
-// actually changed (a still image paints once) or a control moved.
-function fieldSum(d) {
-  let s = 0
-  for (let i = 0; i < d.length; i += 149) s = (s + d[i] * (i & 255)) | 0
-  return s
-}
-function paramSig() {
-  return `${params.style}|${params.brush}|${params.sizeVary}|${params.lengthVary}|${params.texture}|${params.density}|${params.length}|${params.edges}|${params.paper}|${params.mirror}|${W}x${H}`
-}
-let lastSum = null, lastSig = ''
+void main() {
+  vec2 px = v_uv * u_res;
+  vec3 ground;
+  if (u_style == 3) ground = vec3(0.965, 0.953, 0.925);
+  else if (u_style == 2) ground = vec3(0.851, 0.827, 0.776);
+  else if (u_style == 5) ground = vec3(0.235, 0.251, 0.282);
+  else ground = vec3(0.953, 0.925, 0.867);
+  // paper tooth
+  float tooth = vnoise(px / (1.5 * u_pr)) * 0.6 + vnoise(px / (4.0 * u_pr)) * 0.4;
+  vec3 paperGround = ground * (0.955 + 0.09 * tooth);
+  vec3 col = paperGround;
+
+  layer(col, px, u_base, 0.0, -1.0);
+  if (u_style != 5) layer(col, px, u_base * 0.5, 17.0, 0.05);   // finer pass re-inks the edges
+
+  // wet media pick up the paper grain on top
+  if ((u_style == 0 || u_style == 4) && u_paper > 0.01) {
+    col *= mix(vec3(1.0), vec3(0.9 + 0.1 * tooth), u_paper * 0.5);
+  }
+  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`
+
+const canvas = document.getElementById('canvas')
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG, mipmaps: true })
+
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-
-  // 1) sample the source into the reduced field buffer + read pixels
-  fbx.clearRect(0, 0, fw, fh)
-  src.draw(fbx, fw, fh, { mirror: params.mirror })
-  fdata = fbx.getImageData(0, 0, fw, fh).data
-  // skip the repaint when nothing changed — the last painting still stands
-  const sum = fieldSum(fdata), sig = paramSig()
-  if (sum === lastSum && sig === lastSig) { requestAnimationFrame(frame); return }
-  lastSum = sum; lastSig = sig
-  if (!lum || lum.length !== fw * fh) lum = new Float32Array(fw * fh)
-  for (let i = 0; i < fw * fh; i++) {
-    const j = i * 4
-    lum[i] = (fdata[j] * 0.299 + fdata[j + 1] * 0.587 + fdata[j + 2] * 0.114) / 255
-  }
-
-  // 2) lay the ground
-  const style = params.style
-  const bg = styleBg()
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  if (bg) { ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H) }
-  else { ctx.drawImage(paper, 0, 0) }
-
-  const sx = W / fw, sy = H / fh
-  const base = (18 * params.brush) * PR
-  const nStrokes = Math.round((W * H) / (base * base) * 1.6 * params.density)
-  ctx.lineCap = 'round'
-
-  for (let n = 0; n < nStrokes; n++) {
-    const gx = (Math.random() * fw) | 0
-    const gy = (Math.random() * fh) | 0
-    const i = gy * fw + gx
-    // sobel gradient at this cell
-    const xl = Math.max(0, gx - 1), xr = Math.min(fw - 1, gx + 1)
-    const yt = Math.max(0, gy - 1), yb = Math.min(fh - 1, gy + 1)
-    const gxv = (lum[gy * fw + xr] - lum[gy * fw + xl])
-    const gyv = (lum[yb * fw + gx] - lum[yt * fw + gx])
-    const grad = Math.hypot(gxv, gyv)
-    const ang = Math.atan2(gyv, gxv) + Math.PI / 2 // along the contour
-    const j = i * 4
-    let r = fdata[j], g = fdata[j + 1], b = fdata[j + 2]
-
-    // per-stroke size & length variation → no two brushes the same
-    const svar = 1 + (Math.random() * 2 - 1) * params.sizeVary * 0.8
-    const lvar = 1 + (Math.random() * 2 - 1) * params.lengthVary
-    const x = gx * sx + (Math.random() - 0.5) * base
-    const y = gy * sy + (Math.random() - 0.5) * base
-    const len = Math.max(base * 0.4, base * (1.2 + grad * 2) * params.length * lvar)
-    const wdt = base * 0.5 * svar
-    const tex = params.texture
-
-    if (style === 'Spray') {
-      // no oriented stroke — lay a soft airbrushed dab, denser on flat areas
-      const rad = base * 1.3 * (0.8 + grad * 0.7) * svar
-      sprayDab(x, y, rad, r, g, b, tex)
-      continue
-    }
-
-    ctx.save()
-    ctx.translate(x, y)
-    ctx.rotate(ang + (Math.random() - 0.5) * 0.4 * tex) // wobble the heading a touch
-
-    if (style === 'Charcoal' || style === 'Ink') {
-      const dark = 1 - lum[i]
-      if (style === 'Ink') {
-        // only draw where there's an edge or deep shadow → linework
-        const on = grad * 3 * params.edges + Math.max(0, dark - 0.55) * 1.5
-        if (on < 0.12) { ctx.restore(); continue }
-        texturedStroke(len, wdt * 0.5, 20, 18, 24, Math.min(0.9, on), tex)
-      } else {
-        texturedStroke(len, wdt, 30, 28, 32, Math.min(0.7, dark * 0.7 + grad * params.edges), tex)
-      }
-      ctx.restore(); continue
-    }
-
-    // colour styles
-    let a = 0.9, lw = wdt
-    if (style === 'Watercolour') { a = 0.22; lw = wdt * 1.6; r = r * 0.7 + 255 * 0.3; g = g * 0.7 + 255 * 0.3; b = b * 0.7 + 255 * 0.3 }
-    else if (style === 'Pastel') { a = 0.5; lw = wdt * 1.2; r = r * 0.75 + 235 * 0.25; g = g * 0.75 + 230 * 0.25; b = b * 0.75 + 225 * 0.25 }
-    else { a = 0.92; lw = wdt } // Oil: opaque impasto
-    texturedStroke(len, lw, r, g, b, a, tex)
-    ctx.restore()
-  }
-
-  // 3) edge accent + paper wash for the wet media
-  if ((style === 'Watercolour' || style === 'Pastel') && params.paper > 0.01) {
-    ctx.globalCompositeOperation = 'multiply'
-    ctx.globalAlpha = params.paper * 0.5
-    ctx.drawImage(paper, 0, 0)
-    ctx.globalAlpha = 1
-    ctx.globalCompositeOperation = 'source-over'
-  }
-
+  const pr = rt.pixelRatio
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    u.i('u_style', Math.max(0, STYLES.indexOf(params.style)))
+    u.f('u_base', 18 * params.brush * pr)
+    u.f('u_sizeVary', params.sizeVary)
+    u.f('u_lenVary', params.lengthVary)
+    u.f('u_texAmt', params.texture)
+    u.f('u_density', params.density)
+    u.f('u_length', params.length)
+    u.f('u_edges', params.edges)
+    u.f('u_paper', params.paper)
+    u.f('u_pr', pr)
+  })
   requestAnimationFrame(frame)
 }
-
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

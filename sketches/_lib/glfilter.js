@@ -21,7 +21,9 @@ void main() {
   gl_Position = vec4(position, 0.0, 1.0);
 }`
 
-export function createGLFilter({ rt, src, canvas, frag }) {
+// `mipmaps: true` builds a mip chain for the source every frame, so a shader can
+// read a pre-blurred version with textureLod(u_tex, uv, lod) in a single cheap tap.
+export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
   const capture = new URLSearchParams(location.search).get('capture') === '1'
   const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: capture })
   const buf = document.createElement('canvas')
@@ -49,7 +51,7 @@ export function createGLFilter({ rt, src, canvas, frag }) {
 
   const tex = gl.createTexture()
   gl.bindTexture(gl.TEXTURE_2D, tex)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mipmaps ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
@@ -88,6 +90,7 @@ export function createGLFilter({ rt, src, canvas, frag }) {
       bctx.clearRect(0, 0, W, H)
       src.draw(bctx, W, H, { mirror })
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, buf)
+      if (mipmaps) gl.generateMipmap(gl.TEXTURE_2D)
       u.v2('u_res', W, H)
       u.f('u_time', time)
       setUniforms?.(u)
