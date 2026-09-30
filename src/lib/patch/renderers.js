@@ -10,7 +10,7 @@ import { portalShapePath, polyPath } from './shapes.js'
 import { ASPECTS, TYPES } from './constants.js'
 import { sharedCameraStream } from '../../stores/media.js'
 
-export function createRenderers({ cover, inputCanvas, pval, mediaEl, spriteImg, textSequence, inputValue, clamp }) {
+export function createRenderers({ cover, inputCanvas, inputVer = () => 0, pval, mediaEl, spriteImg, textSequence, inputValue, clamp }) {
   function renderEffect(node, octx, s) {
     try {
       const cv = s.iframe?.contentDocument?.querySelector('canvas')
@@ -21,8 +21,16 @@ export function createRenderers({ cover, inputCanvas, pval, mediaEl, spriteImg, 
     // Feed the upstream frame into the filter sketch as its mixer:frame source
     // (the shared source pipeline auto-selects it), then capture its canvas.
     const input = inputCanvas(node, 0)
-    if (input && s.iframe?.contentWindow && !s.feeding) {
+    // Only re-feed when the upstream frame actually changed (plus a once-a-second
+    // refresh in case the sketch wasn't listening yet): a still image upstream
+    // costs one transfer instead of one per frame.
+    const ver = inputVer(node, 0)
+    const nowMs = performance.now()
+    const stale = s.fedVer !== ver || nowMs - (s.fedAt ?? 0) > 1000
+    if (input && s.iframe?.contentWindow && !s.feeding && stale) {
       s.feeding = true
+      s.fedVer = ver
+      s.fedAt = nowMs
       createImageBitmap(input)
         .then((bmp) => { s.iframe?.contentWindow?.postMessage({ type: 'mixer:frame', bitmap: bmp }, '*', [bmp]) })
         .catch(() => {})

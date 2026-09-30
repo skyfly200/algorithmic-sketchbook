@@ -12,6 +12,11 @@
  *   const gf = createGLFilter({ rt, src, canvas, frag })
  *   // each frame:
  *   gf.render({ mirror, time }, (u) => { u.f('u_amount', 1); u.i('u_mode', 2) })
+ *
+ * Frames are skipped when nothing changed: the source picture (src.version), the
+ * uniforms, the mirror flag and the size are all unchanged and the shader does
+ * not use u_time. A still image with static params therefore costs ~nothing.
+ * render() returns true when it drew, false when it skipped (or had no source).
  */
 const VERT = `#version 300 es
 in vec2 position;
@@ -59,23 +64,61 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
 
   const locs = {}
   const loc = (n) => (n in locs ? locs[n] : (locs[n] = gl.getUniformLocation(program, n)))
+  // A shader that reads u_time more than once (beyond its declaration) animates
+  // on its own, so it can never skip frames.
+  const animated = (frag.match(/u_time/g) || []).length > 1
+  let sig = ''
   const u = {
-    f: (n, v) => gl.uniform1f(loc(n), v),
-    i: (n, v) => gl.uniform1i(loc(n), v),
-    v2: (n, a, b) => gl.uniform2f(loc(n), a, b),
-    v3: (n, a, b, c) => gl.uniform3f(loc(n), a, b, c),
-    v3arr: (n, flat) => gl.uniform3fv(loc(n), flat),
+    f: (n, v) => { if (animated || n !== 'u_time') sig += v + ','; gl.uniform1f(loc(n), v) },
+    i: (n, v) => { sig += v + ','; gl.uniform1i(loc(n), v) },
+    v2: (n, a, b) => { sig += a + ':' + b + ','; gl.uniform2f(loc(n), a, b) },
+    v3: (n, a, b, c) => { sig += a + ':' + b + ':' + c + ','; gl.uniform3f(loc(n), a, b, c) },
+    v3arr: (n, flat) => { sig += flat.join(':') + ','; gl.uniform3fv(loc(n), flat) },
   }
   gl.uniform1i(loc('u_tex'), 0)
+  let forceDraw = false
+
+  // Extra sampler (LUT, baked overlay …) on its own texture unit. upload() takes
+  // a canvas/ImageData/typed array (+ width/height for raw arrays) and forces the
+  // next render() to draw even if nothing else changed.
+  function addTexture(name, unit, { filter = 'LINEAR', flipY = true } = {}) {
+    const t = gl.createTexture()
+    gl.activeTexture(gl.TEXTURE0 + unit)
+    gl.bindTexture(gl.TEXTURE_2D, t)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl[filter])
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl[filter])
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.uniform1i(loc(name), unit)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, tex)
+    return {
+      upload(source, w, h) {
+        gl.activeTexture(gl.TEXTURE0 + unit)
+        gl.bindTexture(gl.TEXTURE_2D, t)
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, flipY)
+        if (w) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, source)
+        else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, tex)
+        forceDraw = true
+      },
+    }
+  }
 
   let W = 0
   let H = 0
+  let lastVersion = -1
+  let lastMirror = null
+  let lastSig = null
   function resize() {
     W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
     H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
     buf.width = W
     buf.height = H
     gl.viewport(0, 0, W, H)
+    lastVersion = -1 // force a fresh upload + draw
   }
   window.addEventListener('resize', resize)
   resize()
@@ -83,17 +126,30 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
   return {
     get width() { return W },
     get height() { return H },
-    // Draws one frame. Returns false (and draws nothing) until the source is ready.
+    addTexture,
+    // Draws one frame. Returns true if it drew, false if it skipped (nothing
+    // changed) or the source is not ready yet.
     render({ mirror = false, time = 0 } = {}, setUniforms) {
       src.update(time)
       if (!src.ready) return false
-      bctx.clearRect(0, 0, W, H)
-      src.draw(bctx, W, H, { mirror })
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, buf)
-      if (mipmaps) gl.generateMipmap(gl.TEXTURE_2D)
+      sig = ''
       u.v2('u_res', W, H)
       u.f('u_time', time)
       setUniforms?.(u)
+      const fresh = src.version !== lastVersion || mirror !== lastMirror
+      if (!fresh && !animated && !forceDraw && sig === lastSig) return false
+      forceDraw = false
+      if (fresh) {
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, tex)
+        bctx.clearRect(0, 0, W, H)
+        src.draw(bctx, W, H, { mirror })
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, buf)
+        if (mipmaps) gl.generateMipmap(gl.TEXTURE_2D)
+        lastVersion = src.version
+        lastMirror = mirror
+      }
+      lastSig = sig
       gl.drawArrays(gl.TRIANGLES, 0, 3)
       return true
     },

@@ -285,12 +285,31 @@ export function createRuntime() {
   let paused = false
   const heldRaf = []
   const nativeRaf = window.requestAnimationFrame.bind(window)
+  // Frame-rate cap (`sketch:throttle`): a compositor that knows this sketch is
+  // background / low priority asks it to render at N fps instead of the display
+  // rate. Each animation-loop callback keeps its own last-run time, seeded with
+  // a random phase, so several throttled sketches take turns instead of all
+  // waking on the same vsync.
+  let minInterval = 0 // ms between frames; 0 = every frame
+  const lastRun = new WeakMap()
   window.requestAnimationFrame = (cb) => {
     if (paused) {
       heldRaf.push(cb)
       return heldRaf.length
     }
-    return nativeRaf(cb)
+    if (!minInterval) return nativeRaf(cb)
+    const gate = (now) => {
+      if (!minInterval) return cb(now)
+      let last = lastRun.get(cb)
+      if (last === undefined) last = now - Math.random() * minInterval
+      if (now - last >= minInterval - 2) {
+        lastRun.set(cb, now)
+        return cb(now)
+      }
+      lastRun.set(cb, last)
+      nativeRaf(gate)
+    }
+    return nativeRaf(gate)
   }
   function setPaused(p) {
     if (p === paused) return
@@ -662,6 +681,10 @@ export function createRuntime() {
       actions[msg.name]?.()
     } else if (msg.type === 'sketch:pause') {
       setPaused(!!msg.paused)
+    } else if (msg.type === 'sketch:throttle') {
+      // fps <= 0 or >= the display rate removes the cap
+      const f = Number(msg.fps)
+      minInterval = f > 0 && f < 58 ? 1000 / f : 0
     } else if (msg.type === 'sketch:learn') {
       startLearn()
     } else if (msg.type === 'sketch:learn-cancel') {

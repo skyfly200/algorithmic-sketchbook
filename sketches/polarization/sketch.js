@@ -1,10 +1,14 @@
 // Polarization — a live source seen through crossed polarizers over a stressed
 // birefringent film: luminance is read as an optical retardation and mapped
-// through the Michel-Lévy interference-colour chart, so the image dissolves
-// into shimmering bands of spectral colour. A rotating analyzer sweeps the
-// whole palette; thickness sets how many orders of colour appear.
+// through an approximate Michel-Lévy interference-colour chart, so the image
+// dissolves into shimmering bands of spectral colour. A rotating analyzer sweeps
+// the whole palette; thickness sets how many orders of colour appear. The colour
+// chart is evaluated analytically in the fragment shader.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
+
+const idx = (list, v) => Math.max(0, list.indexOf(v))
 
 const rt = createRuntime()
 const params = rt.params({
@@ -19,79 +23,73 @@ const params = rt.params({
 rt.mapInput('audio.mid', 'analyzer', 90)
 rt.mapInput('audio.pulse', 'retardation', 0.5)
 
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform float u_time;
+out vec4 outColor;
+
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+vec3 hsv2rgb(float h, float s, float v) {
+  vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return v * mix(vec3(1.0), k, s);
+}
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+vec2 hash22(vec2 p) {
+  float n = hash21(p);
+  return vec2(n, hash21(p + n + 17.3));
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+vec3 tex(vec2 uv) { return texture(u_tex, uv).rgb; }
+
+uniform float u_ret;
+uniform float u_analyzer;  // radians
+uniform float u_stress;
+uniform float u_mix;
+uniform float u_bright;
+uniform vec2 u_buf;        // the old effect's working resolution (stress bands are in those pixels)
+
+void main() {
+  vec3 c = tex(v_uv);
+  float lum = dot(c, LUMA);
+  vec2 bp = vec2(v_uv.x, 1.0 - v_uv.y) * u_buf;
+  float stress = u_stress * (sin(bp.x * 0.05) + cos(bp.y * 0.05)) * 0.15;
+  float ret = clamp(lum + stress, 0.0, 1.0) * 3000.0 * u_ret;
+  const vec3 lam = vec3(650.0, 550.0, 450.0);
+  vec3 s = sin(3.14159265 * ret * 1000.0 / lam);
+  vec3 crossed = s * s;
+  float m = cos(u_analyzer);
+  m *= m;
+  vec3 pol = crossed * m + (1.0 - crossed) * (1.0 - m);   // crossed <-> parallel polarizers
+  outColor = vec4(clamp(mix(c, pol * u_bright, u_mix), 0.0, 1.0), 1.0);
+}`
+
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-const src = createSource()
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d', { willReadFrequently: true })
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG })
 
-// approximate Michel-Lévy: retardation (nm-ish 0..~3000) → interference colour
-function interference(ret, cross) {
-  // sum of three cos² channels at R,G,B wavelengths, with the analyzer term
-  const lam = [650, 550, 450]
-  const out = [0, 0, 0]
-  for (let c = 0; c < 3; c++) {
-    const phase = (Math.PI * ret) / lam[c] * 1000
-    let v = Math.sin(phase) ** 2
-    v = cross ? v : 1 - v // crossed vs parallel polarizers
-    out[c] = v
-  }
-  return out
-}
-// precompute a 512-entry LUT over retardation
-const LUT = new Float32Array(512 * 3)
-function buildLUT(analyzerDeg) {
-  const cross = true
-  for (let i = 0; i < 512; i++) {
-    const ret = (i / 512) * 3000 * params.retardation
-    const [r, g, b] = interference(ret, cross)
-    // analyzer rotation mixes crossed↔parallel smoothly
-    const a = (analyzerDeg * Math.PI) / 180
-    const m = Math.cos(a) ** 2
-    const p = interference(ret, false)
-    LUT[i * 3] = r * m + p[0] * (1 - m)
-    LUT[i * 3 + 1] = g * m + p[1] * (1 - m)
-    LUT[i * 3 + 2] = b * m + p[2] * (1 - m)
-  }
-}
-
-let W = 0, H = 0, bw = 0, bh = 0
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  const cap = 700; const s = Math.min(1, cap / Math.max(W, H))
-  bw = buf.width = Math.max(2, Math.round(W * s)); bh = buf.height = Math.max(2, Math.round(H * s))
-}
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-  const analyzer = (params.analyzer + t * params.spin * 60) % 180
-  buildLUT(analyzer)
-  src.draw(bctx, bw, bh, { mirror: params.mirror })
-  const img = bctx.getImageData(0, 0, bw, bh); const d = img.data
-  const bright = params.brightness, mix = params.mix
-  for (let i = 0; i < d.length; i += 4) {
-    const r = d[i], g = d[i + 1], b = d[i + 2]
-    let lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-    // stress bands: add spatial ripple to the retardation from position
-    const idx = i / 4
-    const x = idx % bw, y = (idx / bw) | 0
-    const stress = params.stress * (Math.sin(x * 0.05) + Math.cos(y * 0.05)) * 0.15
-    let li = Math.max(0, Math.min(511, Math.round((lum + stress) * 511)))
-    const nr = LUT[li * 3] * 255 * bright
-    const ng = LUT[li * 3 + 1] * 255 * bright
-    const nb = LUT[li * 3 + 2] * 255 * bright
-    d[i] = r * (1 - mix) + nr * mix
-    d[i + 1] = g * (1 - mix) + ng * mix
-    d[i + 2] = b * (1 - mix) + nb * mix
-  }
-  bctx.putImageData(img, 0, 0)
-  ctx.imageSmoothingEnabled = true
-  ctx.drawImage(buf, 0, 0, W, H)
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    const a = ((params.analyzer + now * 0.001 * params.spin * 60) % 180 + 180) % 180
+    const s = Math.min(1, 700 / Math.max(gf.width, gf.height))
+    u.f('u_ret', params.retardation)
+    u.f('u_analyzer', (a * Math.PI) / 180)
+    u.f('u_stress', params.stress)
+    u.f('u_mix', params.mix)
+    u.f('u_bright', params.brightness)
+    u.v2('u_buf', Math.max(2, Math.round(gf.width * s)), Math.max(2, Math.round(gf.height * s)))
+  })
   requestAnimationFrame(frame)
 }
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

@@ -1,9 +1,10 @@
 // Curves — a Photoshop-style curves colour corrector for a live source. Drag
 // control points on the on-canvas graph to reshape the tone response; pick the
 // RGB master or an individual R / G / B channel with the tabs. Each channel's
-// points are fitted with a smooth monotone spline into a 256-entry lookup table,
-// so the whole grade is a single table read per channel. A luminance histogram
-// sits behind the curve so you can see what you're pushing.
+// points are fitted with a smooth monotone spline into a 256-entry lookup table
+// that the fragment shader reads (one texel fetch per channel) — the grade runs
+// on the GPU. The editor and luminance histogram are drawn on a separate overlay
+// canvas, so they are never baked into the output (or a Patch capture).
 //
 // Editing (on the graph): click empty space to add a point, drag a point to move
 // it, double-click a point (or drag it off the top/bottom) to delete it. The two
@@ -11,10 +12,15 @@
 // sliders (mappable) that compose on top of the hand-drawn master curve.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const rt = createRuntime()
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
+// editor + histogram live on a transparent overlay above the WebGL canvas
+const ui = document.createElement('canvas')
+ui.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:2'
+document.body.appendChild(ui)
+const ctx = ui.getContext('2d')
 const preview = new URLSearchParams(location.search).get('preview') === '1'
 
 const CHANS = ['RGB', 'Red', 'Green', 'Blue']
@@ -31,8 +37,11 @@ const params = rt.params({
 })
 
 const src = createSource()
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d', { willReadFrequently: true })
+// tiny copy of the source for the histogram (readback is ~100x smaller than the image)
+const hcan = document.createElement('canvas')
+hcan.width = 128
+hcan.height = 72
+const hctx = hcan.getContext('2d', { willReadFrequently: true })
 
 // per-channel control points, x & y in 0..1, sorted by x; identity by default
 const curves = { rgb: [[0, 0], [1, 1]], r: [[0, 0], [1, 1]], g: [[0, 0], [1, 1]], b: [[0, 0], [1, 1]] }
@@ -86,15 +95,31 @@ function buildLUTs() {
   }
 }
 
-let W = 0, H = 0, PR = 1, bw = 0, bh = 0
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform sampler2D u_lut;   // 256x1: R,G,B = final per-channel curve
+out vec4 outColor;
+float curve(float v, int ch) {
+  vec4 t = texture(u_lut, vec2((floor(clamp(v, 0.0, 1.0) * 255.0 + 0.5) + 0.5) / 256.0, 0.5));
+  return ch == 0 ? t.r : (ch == 1 ? t.g : t.b);
+}
+void main() {
+  vec3 c = texture(u_tex, v_uv).rgb;
+  outColor = vec4(curve(c.r, 0), curve(c.g, 1), curve(c.b, 2), 1.0);
+}`
+const gf = createGLFilter({ rt, src, canvas, frag: FRAG })
+const lutTex = gf.addTexture('u_lut', 1, { filter: 'NEAREST', flipY: false })
+const lutBytes = new Uint8Array(256 * 4)
+
+let W = 0, H = 0, PR = 1
 const hist = new Float32Array(256)
+let histVer = 0
 function resize() {
   PR = rt.pixelRatio
-  W = canvas.width = Math.floor(window.innerWidth * PR)
-  H = canvas.height = Math.floor(window.innerHeight * PR)
-  const cap = 720, s = Math.min(1, cap / Math.max(W, H))
-  bw = buf.width = Math.max(2, Math.round(W * s))
-  bh = buf.height = Math.max(2, Math.round(H * s))
+  W = ui.width = gf.width
+  H = ui.height = gf.height
 }
 
 // --- editor geometry (device px) ---
@@ -211,27 +236,51 @@ window.addEventListener('pointermove', onMove)
 window.addEventListener('pointerup', onUp)
 canvas.addEventListener('dblclick', onDbl)
 
+let lutSig = ''
+let uiSig = ''
+let histAt = -1e9
+let histSrcVer = -1
 function frame(now) {
   rt.tick(now)
   const t = now * 0.001
   src.update(t)
   if (!src.ready) { requestAnimationFrame(frame); return }
-  src.draw(bctx, bw, bh, { mirror: params.mirror })
-  buildLUTs()
-  const img = bctx.getImageData(0, 0, bw, bh)
-  const d = img.data
-  hist.fill(0)
-  for (let i = 0; i < d.length; i += 4) {
-    const r = d[i], g = d[i + 1], b = d[i + 2]
-    hist[(r * 0.299 + g * 0.587 + b * 0.114) | 0]++
-    d[i] = finalR[r]; d[i + 1] = finalG[g]; d[i + 2] = finalB[b]
-  }
-  bctx.putImageData(img, 0, 0)
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.imageSmoothingEnabled = true
-  ctx.drawImage(buf, 0, 0, W, H)
 
-  if (params.showEditor) drawEditor()
+  // rebuild the LUT texture only when a curve or slider moved
+  const sig = JSON.stringify(curves) + '|' + params.amount + '|' + params.contrast + '|' + params.brightness
+  if (sig !== lutSig) {
+    lutSig = sig
+    buildLUTs()
+    for (let i = 0; i < 256; i++) {
+      lutBytes[i * 4] = finalR[i]
+      lutBytes[i * 4 + 1] = finalG[i]
+      lutBytes[i * 4 + 2] = finalB[i]
+      lutBytes[i * 4 + 3] = 255
+    }
+    lutTex.upload(lutBytes, 256, 1)
+  }
+  gf.render({ mirror: params.mirror, time: t })
+
+  // histogram from a tiny copy, a few times a second and only when the picture changed
+  if (params.showEditor && params.histogram && src.version !== histSrcVer && now - histAt > 250) {
+    histAt = now
+    histSrcVer = src.version
+    hctx.clearRect(0, 0, 128, 72)
+    src.draw(hctx, 128, 72, { mirror: params.mirror })
+    const d = hctx.getImageData(0, 0, 128, 72).data
+    hist.fill(0)
+    for (let i = 0; i < d.length; i += 4) hist[(d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0]++
+    histVer++
+  }
+
+  // redraw the overlay only when something it shows changed
+  const us = `${params.showEditor}|${params.histogram}|${params.channel}|${W}x${H}|${histVer}|${drag ? 1 : 0}|${JSON.stringify(curves)}`
+  if (us !== uiSig || drag) {
+    uiSig = us
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.clearRect(0, 0, W, H)
+    if (params.showEditor) drawEditor()
+  }
   requestAnimationFrame(frame)
 }
 

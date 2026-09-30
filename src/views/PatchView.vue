@@ -32,6 +32,7 @@ import { lonToTileX, latToTileY, mapTileUrl as tileUrl, terrainTileUrl as demTil
 import { hsvToHsl, hsvCss, geoSig, disposeObject, updateObject, drawGeoGlyph, createGeometryKit } from '../lib/patch/geometry.js'
 import { POLY_SHAPES, PORTAL_SHAPES, portalShapePath, polyPath, svgToPathData } from '../lib/patch/shapes.js'
 import { createRenderers } from '../lib/patch/renderers.js'
+import { liveNodes, RateController, backgroundSlot, BACKGROUND_FPS } from '../lib/patch/scheduler.js'
 import { NODE_W, HEAD_H, THUMB_H, RESOLUTIONS, TYPES, OUT_LABELS, PARAM_RANGES, SPRITE_MOTIONS, TEXT_TRANSITIONS, TEXT_FONTS, BLENDS, MIX_BLENDS, ASPECTS, INPUT_CURVES, GEO_SHAPES, GEO_MATERIALS, GEO_SOURCES, GEO_CLOUDS, GEO_VOXELS, GEO_LAYERS, GEO_PLACES, PRESET_BLOCKS, NL_EXAMPLES, PATCH_TOUR_STEPS } from '../lib/patch/constants.js'
 import { normalizeNodes, migrateGraph, applyCurve, usedInGraph, evalOrder as orderGraph, ancestorsOf as ancestorsIn, graphCost as costOfGraph, slugCost as costOfSlug, freeSpot as placeFree, layoutByDepth as layoutDepth } from '../lib/patch/graph.js'
 import { loadJson, saveJson, fileSlug, downloadJson, pickJsonFile, captureBlockData, stampBlock, fillPreset, buildPatchFile, parsePatchImport } from '../lib/patch/library.js'
@@ -1898,6 +1899,12 @@ function inputCanvas(node, port) {
   if (!e) return null
   return rtState.get(e.from)?.out ?? null
 }
+// How many times the upstream node has re-rendered — lets a consumer skip work
+// when its input hasn't changed since it last looked.
+function inputVer(node, port) {
+  const e = edges.find((e) => e.to === node.id && e.port === port)
+  return e ? (rtState.get(e.from)?.ver ?? 0) : 0
+}
 
 // Trace a normalized polygon into the compositor space. When inverted we wrap
 // the whole frame first so an even-odd fill punches the polygon out as a hole.
@@ -2160,7 +2167,7 @@ function geoGoto(node, key) { const g = GEO_PLACES[key]; if (g) { Object.assign(
 // view's live compositor helpers once; geo/vcam/geodata keep their own
 // evaluators here. evalNode clears the canvas then dispatches with (W, H).
 const NODE_RENDERERS = {
-  ...createRenderers({ cover, inputCanvas, pval, mediaEl, spriteImg, textSequence, inputValue, clamp }),
+  ...createRenderers({ cover, inputCanvas, inputVer, pval, mediaEl, spriteImg, textSequence, inputValue, clamp }),
   geo: (n, octx) => evalGeo(n, octx), vcam: (n, octx) => evalCamera(n, octx), geodata: (n, octx) => drawGeodata(n, octx),
 }
 function evalNode(node) {
@@ -2228,8 +2235,108 @@ function nodeCostLevel(n) {
 let fpsWindow = 0
 let costWindow = 0
 
+// --- render scheduling -------------------------------------------------------
+// Every effect/filter node is a whole sketch in its own iframe, so cost is the
+// sum of what's *running*. liveNodes() works out which nodes can reach the
+// Output (culling dangling branches and layers hidden behind an opaque blend);
+// the RateController steps the least important, most expensive live nodes down
+// through lower frame rates when the compositor can't hold the display rate, and
+// back up when there's headroom. Culled nodes idle at a few fps (or pause in
+// output-only mode) and are refreshed one at a time in rotation. See
+// lib/patch/scheduler.js.
+const rateCtl = new RateController()
+let plan = { live: new Set(), dist: new Map(), rates: new Map(), protect: new Set(), all: true }
+let planAt = 0
+// Display refresh estimate: the shortest rAF interval seen over the last ~4-8 s
+// (two rotating buckets). Never taken below 60 Hz — under sustained load frames
+// stretch, which must not be mistaken for a slow display — but a 120/144 Hz
+// panel is recognised so its throttling threshold scales up with it.
+let refreshMs = 16.7
+let minA = Infinity
+let minB = Infinity
+let bucketAt = 0
+let lastTs = 0
+const isSketchNode = (n) => (n.type === 'effect' || n.type === 'filter') && !!n.params.slug
+
+function refreshPlan(now) {
+  if (now - planAt < 250) return
+  planAt = now
+  const hasOut = nodes.some((n) => n.type === 'output')
+  let live, dist
+  if (hasOut) ({ live, dist } = liveNodes({ nodes, edges, links, mixOf: (n) => pval(n, 'mix') }))
+  else { live = new Set(nodes.map((n) => n.id)); dist = new Map(nodes.map((n) => [n.id, 1])) } // nothing to cull against
+  const protect = new Set([...selectedSet, ...(drag.ids ?? [])])
+  if (selected.value != null) protect.add(selected.value)
+  if (frontNodeId.value != null) protect.add(frontNodeId.value)
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const rates = rateCtl.update({
+    now, live, dist, protect,
+    costOf: (id) => { const n = byId.get(id); return n?.params?.slug ? slugCost(n.params.slug) : 1 },
+    measuredFps: fps.value,
+    targetFps: Math.min(240, 1000 / refreshMs),
+    throttleable: (id) => { const n = byId.get(id); return !!n && isSketchNode(n) },
+  })
+  plan = { live, dist, rates, protect, all: !hasOut }
+  // tell each sketch iframe how fast to run (re-sent every couple of seconds in
+  // case it wasn't listening yet)
+  if (renderPaused.value) return
+  for (const n of nodes) {
+    if (!isSketchNode(n)) continue
+    const s = rtState.get(n.id)
+    if (!s?.iframe) continue
+    const isLive = live.has(n.id)
+    const want = isLive ? (rates.get(n.id) ?? 60) : (outputOnly.value && !protect.has(n.id) ? 0 : BACKGROUND_FPS)
+    if (want === s.fpsSent && now - (s.fpsAt ?? 0) < 2000) continue
+    s.fpsSent = want
+    s.fpsAt = now
+    if (want === 0) { postToEffect(n.id, { type: 'sketch:pause', paused: true }); s.idlePaused = true; continue }
+    if (s.idlePaused) { postToEffect(n.id, { type: 'sketch:pause', paused: false }); s.idlePaused = false }
+    postToEffect(n.id, { type: 'sketch:throttle', fps: want >= 58 ? 0 : want })
+  }
+}
+let bgCursor = 0
+// Should this node be re-rendered on this compositor pass?
+function shouldEval(n, s, now) {
+  if (!plan.live.has(n.id)) {
+    if (plan.protect.has(n.id)) return true
+    return backgroundSlot(bgCursor++, passCount, 6) // idle previews take turns
+  }
+  if (isSketchNode(n)) {
+    // the iframe only produces frames at its assigned rate — don't copy faster
+    const fpsWant = plan.rates.get(n.id) ?? 60
+    if (fpsWant < 58 && s.lastEval && now - s.lastEval < 1000 / fpsWant - 4) return false
+    return true
+  }
+  if (n.type === 'blend' || n.type === 'output') {
+    // pure functions of their inputs: redo them only when an input re-rendered
+    // or (for a blend) its mode / mix / swap changed
+    let sig = `${W}x${H}`
+    for (const e of edges) if (e.to === n.id) sig += `|${e.port}:${rtState.get(e.from)?.ver ?? 0}`
+    if (n.type === 'blend') sig += `|${n.params.mode}|${pval(n, 'mix')}|${n.params.swap ? 1 : 0}`
+    if (s.sig === sig) return false
+    s.sig = sig
+  }
+  if (n.type === 'media') {
+    // a still image only needs drawing once per change of its params / size
+    const el = mediaEl(n)
+    if (el && el.tagName === 'IMG') {
+      const sig = `${W}x${H}|${JSON.stringify(n.params)}|${el.src}`
+      if (s.staticSig === sig) return false
+      s.staticSig = sig
+    }
+  }
+  return true
+}
+
 function loop(ts) {
   const now = ts ?? performance.now()
+  if (lastTs) {
+    const dt = now - lastTs
+    if (dt > 6.5 && dt < 100) { minA = Math.min(minA, dt); minB = Math.min(minB, dt) }
+    if (!bucketAt) bucketAt = now
+    if (now - bucketAt > 4000) { bucketAt = now; refreshMs = Math.min(16.7, Math.min(minA, minB)); minA = minB; minB = Infinity }
+  }
+  lastTs = now
   if (renderPaused.value) { raf = requestAnimationFrame(loop); return } // held — keep the editor snappy
   broadcastBeat(now)
   if (show.state.mode === 'timeline' && show.state.playing) show.tickShow(now)
@@ -2238,11 +2345,16 @@ function loop(ts) {
     skipLeft--
   } else {
     const t0 = performance.now()
+    refreshPlan(now)
+    bgCursor = 0
     for (const n of evalOrder()) {
+      const s = st(n.id)
+      if (!shouldEval(n, s, now)) continue
       const te = performance.now()
       evalNode(n)
-      const s = rtState.get(n.id)
-      if (s) s.cost = (s.cost ?? 0) * 0.9 + (performance.now() - te) * 0.1
+      s.ver = (s.ver ?? 0) + 1
+      s.lastEval = now
+      s.cost = (s.cost ?? 0) * 0.9 + (performance.now() - te) * 0.1
     }
     // Blit the (last) Output node to the fullscreen stage.
     const out = nodes.find((n) => n.type === 'output')

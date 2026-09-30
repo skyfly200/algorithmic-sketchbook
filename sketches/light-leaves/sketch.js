@@ -55,12 +55,18 @@ const planes = [
 ]
 const mask = document.createElement('canvas')
 const mx = mask.getContext('2d')
+// scratch layers, allocated once (they used to be created every frame)
+const shade = document.createElement('canvas')
+const sc2 = shade.getContext('2d')
+const warm = document.createElement('canvas')
+const wc = warm.getContext('2d')
 
 let W = 0, H = 0
 function resize() {
   W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
   H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  mask.width = Math.max(2, W >> 1); mask.height = Math.max(2, H >> 1)
+  mask.width = shade.width = warm.width = Math.max(2, W >> 1)
+  mask.height = shade.height = warm.height = Math.max(2, H >> 1)
 }
 function tile(img, ox, oy, scale) {
   const mw = mask.width, mh = mask.height
@@ -97,41 +103,42 @@ function frame(now) {
   mx.globalAlpha = 1
   mx.globalCompositeOperation = 'source-over'
 
-  // darken the scene by the inverse of the mask (shadows), keep light in gaps
+  // darken the scene by the inverse of the mask (shadows), keep light in gaps.
+  // The softening blur runs at mask (half) resolution and the result is scaled
+  // up, instead of filtering a full-resolution draw.
   const shadow = (1 - params.coverage)
+  const temp = params.temp
+  // shadows take the complementary cool tint when the sunlight is warm
+  sc2.globalCompositeOperation = 'source-over'
+  sc2.fillStyle = `rgb(${58 + shadow * 40 - temp * 10},${55 + shadow * 40},${52 + shadow * 40 + temp * 16})`
+  sc2.fillRect(0, 0, mw, mh)
+  sc2.globalCompositeOperation = 'screen'
+  sc2.filter = `blur(${params.softness * 8 * rt.pixelRatio * 0.5}px)`
+  sc2.drawImage(mask, 0, 0)
+  sc2.filter = 'none'
   ctx.save()
   ctx.globalCompositeOperation = 'multiply'
-  ctx.filter = `blur(${params.softness * 8 * rt.pixelRatio}px)`
-  // draw a mid-gray tinted mask: bright gaps = light, dark = shadow
-  // compose: base darkness + mask lightness
-  const tmp = document.createElement('canvas'); tmp.width = mw; tmp.height = mh
-  const tc = tmp.getContext('2d')
-  // shadows take the complementary cool tint when the sunlight is warm
-  const temp = params.temp
-  tc.fillStyle = `rgb(${58 + shadow * 40 - temp * 10},${55 + shadow * 40},${52 + shadow * 40 + temp * 16})`
-  tc.fillRect(0, 0, mw, mh)
-  tc.globalCompositeOperation = 'screen'
-  tc.drawImage(mask, 0, 0)
-  ctx.drawImage(tmp, 0, 0, W, H)
+  ctx.imageSmoothingEnabled = true
+  ctx.drawImage(shade, 0, 0, W, H)
   ctx.restore()
 
   // warm light-pools added where the canopy is open
-  ctx.save()
-  ctx.globalCompositeOperation = 'lighter'
-  ctx.filter = `blur(${params.softness * 6 * rt.pixelRatio}px)`
-  ctx.globalAlpha = params.contrast
-  const warm = document.createElement('canvas'); warm.width = mw; warm.height = mh
-  const wc = warm.getContext('2d')
-  // colour temperature: cool blue-white shade light → warm golden sun
+  // colour temperature: cool blue-white shade light -> warm golden sun
   const lr = 176 + (255 - 176) * temp, lg = 204 + (206 - 204) * temp, lb = 236 + (128 - 236) * temp
+  wc.globalCompositeOperation = 'source-over'
+  wc.clearRect(0, 0, mw, mh)
   wc.fillStyle = `rgb(${lr | 0},${lg | 0},${lb | 0})`
   wc.fillRect(0, 0, mw, mh)
   wc.globalCompositeOperation = 'destination-in'
+  wc.filter = `blur(${params.softness * 6 * rt.pixelRatio * 0.5}px)`
   wc.drawImage(mask, 0, 0)
+  wc.filter = 'none'
+  ctx.save()
+  ctx.globalCompositeOperation = 'lighter'
+  ctx.globalAlpha = params.contrast
   ctx.drawImage(warm, 0, 0, W, H)
   ctx.restore()
   ctx.globalAlpha = 1
-  ctx.filter = 'none'
   ctx.globalCompositeOperation = 'source-over'
   requestAnimationFrame(frame)
 }

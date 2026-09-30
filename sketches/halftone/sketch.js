@@ -4,9 +4,17 @@
  * dots whose size carries the tone. Mono mode is one ink screen at 45°; CMYK
  * mode lays four multiply-blended screens at the classic press angles
  * (C 15°, M 75°, Y 0°, K 45°), and the rosette pattern emerges on its own.
+ *
+ * Each dot screen is evaluated per pixel in a fragment shader: a pixel finds
+ * the nearest lattice points of the rotated grid, reads the tone at each from a
+ * mipmapped copy of the source and tests its distance against that dot's radius.
+ * No pixel readback, no per-dot draw calls.
  */
 import { createRuntime } from '../_lib/runtime.js'
-import { createSource, clamp } from '../_lib/source.js'
+import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
+
+const idx = (list, v) => Math.max(0, list.indexOf(v))
 
 const rt = createRuntime()
 const params = rt.params({
@@ -21,132 +29,129 @@ const params = rt.params({
 // Beats fatten the dots a touch — the page "breathes" with the music.
 rt.mapInput('audio.pulse', 'scale', 0.25)
 
-const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-const src = createSource()
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform float u_time;
+out vec4 outColor;
 
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d', { willReadFrequently: true })
-let bufW = 0
-let bufH = 0
-
-// Cap the backing resolution: the number of screen cells (and their arcs)
-// scales with the canvas area × 4 CMYK passes, so a native-res sheet is by
-// far the slowest path. Rendering to ~1100px and letting the browser upscale
-// keeps the rosette crisp for a fraction of the cost.
-const RENDER_CAP = 1100
-function effPR() {
-  const long = Math.max(window.innerWidth, window.innerHeight)
-  return Math.min(rt.pixelRatio, RENDER_CAP / long)
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+vec3 hsv2rgb(float h, float s, float v) {
+  vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return v * mix(vec3(1.0), k, s);
 }
-let PR = effPR()
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+vec2 hash22(vec2 p) {
+  float n = hash21(p);
+  return vec2(n, hash21(p + n + 17.3));
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+vec3 tex(vec2 uv) { return texture(u_tex, uv).rgb; }
 
-let W = 0
-let H = 0
-function resize() {
-  PR = effPR()
-  W = canvas.width = Math.floor(window.innerWidth * PR)
-  H = canvas.height = Math.floor(window.innerHeight * PR)
-  const cap = 480
-  const s = Math.min(1, cap / Math.max(W, H))
-  bufW = Math.max(2, Math.round(W * s))
-  bufH = Math.max(2, Math.round(H * s))
-  buf.width = bufW
-  buf.height = bufH
+uniform float u_cell;      // dot pitch (px)
+uniform float u_contrast;
+uniform float u_scale;
+uniform float u_lod;
+uniform float u_ang[4];    // screen angles (radians) for plates 0..3
+uniform bool u_cmyk;
+uniform bool u_paper;
+
+// ink coverage 0..1 that plate 'kind' wants for colour c
+float ink(vec3 c, int kind) {
+  if (u_paper) {
+    if (u_cmyk) {
+      if (kind == 0) return 1.0 - c.r;          // cyan
+      if (kind == 1) return 1.0 - c.g;          // magenta
+      if (kind == 2) return 1.0 - c.b;          // yellow
+      float k = 1.0 - max(c.r, max(c.g, c.b));  // black only where genuinely dark
+      return k * k;
+    }
+    return 1.0 - dot(c, LUMA);
+  }
+  if (u_cmyk) return kind == 0 ? c.r : (kind == 1 ? c.g : c.b);
+  return dot(c, LUMA);
 }
 
-// Draw one rotated dot screen. `value(r,g,b)` returns 0..1 ink coverage.
-function screen(angleDeg, color, value, data, cellPx) {
-  const a = (angleDeg * Math.PI) / 180
-  const cosA = Math.cos(a)
-  const sinA = Math.sin(a)
-  const maxR = cellPx * 0.7 * params.scale
-  // Cover the canvas in the rotated grid: iterate grid coords over the
-  // bounding box of the rotated canvas.
-  const diag = Math.hypot(W, H)
-  const n = Math.ceil(diag / cellPx) + 2
-  const cx = W / 2
-  const cy = H / 2
-  ctx.fillStyle = color
-  ctx.beginPath()
-  for (let gy = -n / 2; gy < n / 2; gy++) {
-    for (let gx = -n / 2; gx < n / 2; gx++) {
-      // Grid point in screen space.
-      const u = gx * cellPx
-      const v = gy * cellPx
-      const x = cx + u * cosA - v * sinA
-      const y = cy + u * sinA + v * cosA
-      if (x < -cellPx || x > W + cellPx || y < -cellPx || y > H + cellPx) continue
-      const bx = clamp(Math.round((x / W) * bufW), 0, bufW - 1)
-      const by = clamp(Math.round((y / H) * bufH), 0, bufH - 1)
-      const i = (by * bufW + bx) * 4
-      let val = value(data[i], data[i + 1], data[i + 2])
-      val = clamp((val - 0.5) * params.contrast + 0.5, 0, 1)
-      const r = Math.sqrt(val) * maxR
-      if (r < 0.25) continue
-      ctx.moveTo(x + r, y)
-      ctx.arc(x, y, r, 0, Math.PI * 2)
+// dot coverage of one rotated screen at pixel px (y-down)
+float plate(vec2 px, float ang, int kind) {
+  float cs = cos(ang), sn = sin(ang);
+  vec2 cen = u_res * 0.5;
+  vec2 d = px - cen;
+  vec2 loc = vec2(cs * d.x + sn * d.y, -sn * d.x + cs * d.y);   // into grid space
+  vec2 g0 = floor(loc / u_cell + 0.5);
+  float maxR = u_cell * 0.7 * u_scale;
+  float cov = 0.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 u = (g0 + vec2(float(i), float(j))) * u_cell;
+      vec2 pos = cen + vec2(u.x * cs - u.y * sn, u.x * sn + u.y * cs);
+      vec3 c = textureLod(u_tex, clamp(vec2(pos.x / u_res.x, 1.0 - pos.y / u_res.y), 0.0, 1.0), u_lod).rgb;
+      float v = clamp((ink(c, kind) - 0.5) * u_contrast + 0.5, 0.0, 1.0);
+      float r = sqrt(v) * maxR;
+      if (r < 0.25) continue;
+      cov = max(cov, 1.0 - smoothstep(r - 0.75, r + 0.75, length(px - pos)));
     }
   }
-  ctx.fill()
+  return cov;
 }
+
+void main() {
+  vec2 px = vec2(v_uv.x, 1.0 - v_uv.y) * u_res;
+  vec3 col;
+  if (u_paper) {
+    col = vec3(244.0, 241.0, 232.0) / 255.0;
+    if (u_cmyk) {
+      col *= mix(vec3(1.0), vec3(0.0, 174.0, 239.0) / 255.0, plate(px, u_ang[0], 0));
+      col *= mix(vec3(1.0), vec3(236.0, 0.0, 140.0) / 255.0, plate(px, u_ang[1], 1));
+      col *= mix(vec3(1.0), vec3(255.0, 242.0, 0.0) / 255.0, plate(px, u_ang[2], 2));
+      col *= mix(vec3(1.0), vec3(20.0, 18.0, 16.0) / 255.0, plate(px, u_ang[3], 3));
+    } else {
+      col *= mix(vec3(1.0), vec3(24.0, 22.0, 26.0) / 255.0, plate(px, u_ang[3], 3));
+    }
+  } else {
+    col = vec3(6.0, 6.0, 8.0) / 255.0;   // glowing dots on black: additive screens
+    if (u_cmyk) {
+      col += vec3(255.0, 40.0, 40.0) / 255.0 * plate(px, u_ang[0], 0);
+      col += vec3(40.0, 255.0, 40.0) / 255.0 * plate(px, u_ang[1], 1);
+      col += vec3(60.0, 60.0, 255.0) / 255.0 * plate(px, u_ang[2], 2);
+    } else {
+      col += vec3(235.0, 235.0, 240.0) / 255.0 * plate(px, u_ang[3], 3);
+    }
+  }
+  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`
+
+const canvas = document.getElementById('canvas')
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG, mipmaps: true })
 
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) {
-    requestAnimationFrame(frame)
-    return
-  }
-
-  let data
-  try {
-    src.draw(bctx, bufW, bufH, { mirror: params.mirror })
-    data = bctx.getImageData(0, 0, bufW, bufH).data
-  } catch {
-    requestAnimationFrame(frame)
-    return
-  }
-
-  const cellPx = params.cell * PR
-  const base = params.angle
-
-  ctx.globalCompositeOperation = 'source-over'
-  if (params.paper) {
-    ctx.fillStyle = '#f4f1e8'
-    ctx.fillRect(0, 0, W, H)
-    ctx.globalCompositeOperation = 'multiply'
-    if (params.cmyk) {
-      // Ink coverage = 1 - channel (subtractive), keyed by the classic angles.
-      screen(base + 15, 'rgb(0,174,239)', (r, g, b) => 1 - r / 255, data, cellPx)
-      screen(base + 75, 'rgb(236,0,140)', (r, g, b) => 1 - g / 255, data, cellPx)
-      screen(base + 0, 'rgb(255,242,0)', (r, g, b) => 1 - b / 255, data, cellPx)
-      screen(base + 45, 'rgb(20,18,16)', (r, g, b) => {
-        const k = 1 - Math.max(r, g, b) / 255
-        return k * k // black plate only where it's genuinely dark
-      }, data, cellPx)
-    } else {
-      screen(base + 45, 'rgb(24,22,26)', (r, g, b) => 1 - (0.299 * r + 0.587 * g + 0.114 * b) / 255, data, cellPx)
-    }
-  } else {
-    // Glowing dots on black: additive screens sized by brightness.
-    ctx.fillStyle = '#060608'
-    ctx.fillRect(0, 0, W, H)
-    ctx.globalCompositeOperation = 'lighter'
-    if (params.cmyk) {
-      screen(base + 15, 'rgb(255,40,40)', (r) => r / 255, data, cellPx)
-      screen(base + 75, 'rgb(40,255,40)', (r, g) => g / 255, data, cellPx)
-      screen(base + 0, 'rgb(60,60,255)', (r, g, b) => b / 255, data, cellPx)
-    } else {
-      screen(base + 45, 'rgb(235,235,240)', (r, g, b) => (0.299 * r + 0.587 * g + 0.114 * b) / 255, data, cellPx)
-    }
-  }
-  ctx.globalCompositeOperation = 'source-over'
-
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    const base = params.angle
+    const rad = (d) => ((base + d) * Math.PI) / 180
+    // plates 0..3 = C, M, Y at the press angles and K at 45°; mono uses plate 3
+    u.f('u_ang[0]', rad(15))
+    u.f('u_ang[1]', rad(75))
+    u.f('u_ang[2]', rad(0))
+    u.f('u_ang[3]', rad(45))
+    u.f('u_cell', params.cell * rt.pixelRatio)
+    u.f('u_contrast', params.contrast)
+    u.f('u_scale', params.scale)
+    u.f('u_lod', Math.max(0, Math.log2(Math.max(gf.width, gf.height) / 480)))
+    u.i('u_cmyk', params.cmyk ? 1 : 0)
+    u.i('u_paper', params.paper ? 1 : 0)
+  })
   requestAnimationFrame(frame)
 }
-
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

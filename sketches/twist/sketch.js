@@ -1,14 +1,15 @@
 // Twist — Photoshop's Twirl for a live source: rotate the image around a centre
 // by an angle that falls off with radius, so the middle spins hard and the edges
 // stay put. Positive and negative angles wind opposite ways; the centre and
-// radius are placeable, and a gentle live sway makes it churn.
+// radius are placeable, and a gentle live sway makes it churn. A single
+// fragment-shader warp with hardware bilinear sampling.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
+
+const idx = (list, v) => Math.max(0, list.indexOf(v))
 
 const rt = createRuntime()
-const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-
 const params = rt.params({
   angle: { value: 220, min: -720, max: 720, step: 5, label: 'Twist angle°' },
   radius: { value: 0.8, min: 0.1, max: 1.5, step: 0.02, label: 'Radius' },
@@ -20,64 +21,66 @@ const params = rt.params({
 })
 rt.mapInput('audio.pulse', 'angle', 0.3)
 
-const src = createSource()
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d', { willReadFrequently: true })
-let W = 0, H = 0, bw = 0, bh = 0
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform float u_time;
+out vec4 outColor;
 
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  const cap = 640, s = Math.min(1, cap / Math.max(W, H))
-  bw = buf.width = Math.max(2, Math.round(W * s))
-  bh = buf.height = Math.max(2, Math.round(H * s))
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+vec3 hsv2rgb(float h, float s, float v) {
+  vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return v * mix(vec3(1.0), k, s);
 }
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+vec2 hash22(vec2 p) {
+  float n = hash21(p);
+  return vec2(n, hash21(p + n + 17.3));
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+vec3 tex(vec2 uv) { return texture(u_tex, uv).rgb; }
 
-let t0 = 0
+uniform vec2 u_c;          // centre in px, y down
+uniform float u_R;         // radius in px
+uniform float u_ang;       // radians
+uniform float u_fall;
+
+void main() {
+  vec2 p = vec2(v_uv.x, 1.0 - v_uv.y) * u_res;       // y-down px
+  vec2 d = p - u_c;
+  float r = length(d);
+  vec2 s = p;
+  if (r < u_R) {
+    float a = u_ang * pow(1.0 - r / u_R, u_fall);      // twist inversely from the source pixel
+    float cs = cos(a), sn = sin(a);
+    s = u_c + vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+  }
+  outColor = vec4(tex(clamp(vec2(s.x / u_res.x, 1.0 - s.y / u_res.y), 0.0, 1.0)), 1.0);
+}`
+
+const canvas = document.getElementById('canvas')
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG })
+
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-  src.draw(bctx, bw, bh, { mirror: params.mirror })
-  const srcData = bctx.getImageData(0, 0, bw, bh)
-  const sd = srcData.data
-  const out = bctx.createImageData(bw, bh)
-  const od = out.data
-  const cx = params.centerX * bw, cy = params.centerY * bh
-  const R = params.radius * Math.max(bw, bh) * 0.5
-  const ang = (params.angle * Math.PI / 180) + Math.sin(t * 0.6) * params.swirl
-  const fall = params.falloff
-  for (let y = 0; y < bh; y++) {
-    for (let x = 0; x < bw; x++) {
-      const dx = x - cx, dy = y - cy
-      const r = Math.hypot(dx, dy)
-      let sx = x, sy = y
-      if (r < R) {
-        const a = ang * Math.pow(1 - r / R, fall)  // twist inversely from the source pixel
-        const cs = Math.cos(a), sn = Math.sin(a)
-        sx = cx + dx * cs - dy * sn
-        sy = cy + dx * sn + dy * cs
-      }
-      // bilinear sample
-      const ix = sx < 0 ? 0 : sx > bw - 1 ? bw - 1 : sx
-      const iy = sy < 0 ? 0 : sy > bh - 1 ? bh - 1 : sy
-      const x0 = ix | 0, y0 = iy | 0, fx = ix - x0, fy = iy - y0
-      const x1 = x0 + 1 < bw ? x0 + 1 : x0, y1 = y0 + 1 < bh ? y0 + 1 : y0
-      const o = (y * bw + x) * 4
-      for (let k = 0; k < 4; k++) {
-        const a00 = sd[(y0 * bw + x0) * 4 + k], a10 = sd[(y0 * bw + x1) * 4 + k]
-        const a01 = sd[(y1 * bw + x0) * 4 + k], a11 = sd[(y1 * bw + x1) * 4 + k]
-        od[o + k] = a00 * (1 - fx) * (1 - fy) + a10 * fx * (1 - fy) + a01 * (1 - fx) * fy + a11 * fx * fy
-      }
-    }
-  }
-  bctx.putImageData(out, 0, 0)
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.imageSmoothingEnabled = true
-  ctx.drawImage(buf, 0, 0, W, H)
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    const W = gf.width, H = gf.height
+    u.v2('u_c', params.centerX * W, params.centerY * H)
+    u.f('u_R', params.radius * Math.max(W, H) * 0.5)
+    u.f('u_ang', (params.angle * Math.PI) / 180 + Math.sin(now * 0.001 * 0.6) * params.swirl)
+    u.f('u_fall', params.falloff)
+  })
   requestAnimationFrame(frame)
 }
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)
