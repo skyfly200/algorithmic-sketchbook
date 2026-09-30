@@ -101,11 +101,20 @@ function bokehBlur(r) {
   ctx.globalAlpha = 1
 }
 
+// A blur is a pure function of the source picture and its settings, so when
+// neither changed (a still image, static sliders) the canvas already shows the
+// right result and the frame is skipped.
+let lastSig = ''
+let lastVer = -1
 function frame(now) {
   rt.tick(now)
   const t = now * 0.001
   src.update(t)
   if (!src.ready) { requestAnimationFrame(frame); return }
+  const sig = [params.mode, params.algorithm, params.amount, params.angle, params.samples, params.centerX, params.centerY, params.mirror, W, H].join('|')
+  if (src.version === lastVer && sig === lastSig) { requestAnimationFrame(frame); return }
+  lastVer = src.version
+  lastSig = sig
   bctx.clearRect(0, 0, W, H)
   src.draw(bctx, W, H, { mirror: params.mirror })
 
