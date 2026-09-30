@@ -156,6 +156,30 @@ export function remapGraphIds(data, taken, startId) {
   return r
 }
 
+// Plan copying one deck's graph into another while keeping the target's running
+// iframes for nodes that didn't change. `key(node)` identifies a reusable node
+// (null = never reuse; effect/filter nodes key on type + sketch + seed). Each
+// source node is mapped to the id of an unclaimed target node with the same key,
+// else to a fresh id from `startId`. The map is injective, so applyIdMap can
+// renumber the copy in one pass. Returns { map (source id → id in target), nextId }.
+export function planMirrorIds(srcNodes, dstNodes, startId, key) {
+  const pool = new Map() // key → target ids not yet claimed
+  for (const n of dstNodes) {
+    const k = key(n)
+    if (k == null) continue
+    if (!pool.has(k)) pool.set(k, [])
+    pool.get(k).push(n.id)
+  }
+  const map = new Map()
+  let next = startId
+  for (const n of srcNodes) {
+    const k = key(n)
+    const reuse = k == null ? undefined : pool.get(k)?.shift()
+    map.set(n.id, reuse ?? next++)
+  }
+  return { map, nextId: next }
+}
+
 // --- layout / placement -----------------------------------------------------
 // Slide a proposed node box downward until it no longer overlaps any existing
 // (non-ignored) node plus a margin — keeps freshly-placed nodes from stacking.
