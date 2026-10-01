@@ -110,6 +110,24 @@ New effects should declare params and use `rt.mapInput` so they are immediately
 mappable, scene-saveable and projectable. See `CLAUDE.md` for the authoring
 conventions, including how to keep per-pixel filters on the GPU.
 
+### To explore: text-based sketch tagging for Autopilot
+
+Autopilot picks sketches from hand-written tags. Tags miss mood and energy, so picks feel random.
+[Laya](https://github.com/NandhaKishorM/laya) is a text-only classifier. It answers typed
+questions (choice, 1-N score, yes/no probability) over text in one forward pass.
+
+- **Idea:** Run each sketch's `title`, `description` and `tags` through questions such as
+  "mood: calm / aggressive / glitchy" and "energy, 1 to 5". Store the answers in `sketch.json`.
+  Autopilot then picks the next sketch by mood or energy.
+- **Constraint:** The app is static. A 300-400M parameter model cannot ship in the bundle.
+  Run it offline in a build-time script only.
+- **Option:** A prompt-driven Autopilot ("something underwater and slow") could score every
+  sketch against the prompt text.
+- **Not a fit:** Beat detection (use `rt.onBeat`) and performance scheduling
+  (`scheduler.js`, `budget.js`). Both are deterministic and need no model.
+- **First step:** Compare Laya with a small embedding model or a one-off LLM call over the
+  manifests. Pick whichever is cheapest to run and review by hand.
+
 ---
 
 ## Suggested order from here
@@ -122,3 +140,4 @@ conventions, including how to keep per-pixel filters on the GPU.
    real throttled rates instead of assuming full rate.
 4. **Output mapping** (edge-blend / keystone) for projectors.
 5. More filters and effects from the lists above.
+6. **Explore** build-time mood and energy tagging for Autopilot (see above).
