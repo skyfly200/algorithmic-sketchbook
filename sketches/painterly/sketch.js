@@ -5,14 +5,16 @@
 // treatment and paper — spray swaps the bristle strokes for soft airbrushed
 // clouds with overspray grain, graffiti-on-a-wall style.
 //
-// It all happens in one fragment shader: every pixel checks the jittered stroke
-// cells around it, reads each stroke's colour and contour direction from a
-// mipmapped copy of the source (cheap, pre-blurred taps), and composites the
-// strokes in painter's order — a coarse pass, then a finer pass that re-inks the
-// edges. Nothing is read back to the CPU and there are no per-stroke draw calls.
+// Two kinds of pass, all on the GPU. A small bake pass reads each jittered
+// stroke cell's colour and contour direction once from a mipmapped copy of the
+// source (cheap, pre-blurred taps) and stores them in a per-layer cell texture.
+// The main pass checks the cells around every pixel, fetches that baked data
+// with one texelFetch each, and composites the strokes in painter's order: a
+// coarse layer, then a finer layer that re-inks the edges. Nothing is read back
+// to the CPU and there are no per-stroke draw calls.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
-import { createGLFilter } from '../_lib/glfilter.js'
+import { createGLPipe } from '../_lib/glpipe.js'
 
 const STYLES = ['Watercolour', 'Oil', 'Charcoal', 'Ink', 'Pastel', 'Spray']
 
@@ -34,9 +36,12 @@ rt.mapInput('audio.level', 'density', 0.3)
 const FRAG = `#version 300 es
 precision highp float;
 in vec2 v_uv;
-uniform sampler2D u_tex;
+uniform sampler2D u_bake0;   // baked cells, coarse layer
+uniform sampler2D u_bake1;   // baked cells, fine layer
 uniform vec2 u_res;
-uniform int u_style;      // 0 watercolour, 1 oil, 2 charcoal, 3 ink, 4 pastel, 5 spray
+uniform float u_cell0;
+uniform float u_cell1;
+uniform int u_style;     // 0 watercolour, 1 oil, 2 charcoal, 3 ink, 4 pastel, 5 spray
 uniform float u_base;     // base brush size (px)
 uniform float u_sizeVary;
 uniform float u_lenVary;
@@ -67,13 +72,8 @@ float vnoise(vec2 p) {
 
 // One layer of strokes. 'base' is the brush size, 'seed' decorrelates layers,
 // 'minGrad' skips strokes on flat areas (used by the fine edge pass).
-void layer(inout vec3 col, vec2 px, float base, float seed, float minGrad) {
-  float cell = base / sqrt(1.6 * u_density);
+void layer(inout vec3 col, vec2 px, float base, float cell, float seed, float minGrad, sampler2D bake) {
   vec2 cid0 = floor(px / cell);
-  // analysis taps read a blurred mip, like the reduced field buffer of the CPU version
-  float L = max(u_res.x, u_res.y);
-  float lod = max(log2(L / 300.0), 0.0);
-  vec2 o = vec2(L / 300.0) / u_res;
 
   float wMax = base * 0.5 * (1.0 + 0.8 * u_sizeVary) * (u_style == 0 ? 1.6 : 1.2);
   float halfLenMax = 1.6 * cell;
@@ -82,19 +82,21 @@ void layer(inout vec3 col, vec2 px, float base, float seed, float minGrad) {
   for (int j = -2; j <= 2; j++) {
     for (int i = -2; i <= 2; i++) {
       vec2 id = cid0 + vec2(float(i), float(j));
-      vec2 h = hash22(id + seed);
+      // baked per cell: contour angle, jitter (h) and a per-stroke random in the right texel
+      ivec2 ti = ivec2(id) + 2;
+      vec4 ah = texelFetch(bake, ivec2(ti.x * 2 + 1, ti.y), 0);
+      vec2 h = ah.gb;
       vec2 centre = (id + 0.5 + (h - 0.5)) * cell;
       vec2 d = px - centre;
       if (dot(d, d) > bound * bound) continue;
 
       vec2 h2 = hash22(id + seed + 5.3);
-      float h3 = hash21(id + seed + 9.1);
-      vec2 uvc = centre / u_res;
-      vec3 c = textureLod(u_tex, uvc, lod).rgb;
+      float h3 = ah.a;
+      // colour + gradient sit in the left texel
+      vec4 cg = texelFetch(bake, ivec2(ti.x * 2, ti.y), 0);
+      vec3 c = cg.rgb;
       float lum = dot(c, LUMA);
-      float gx = dot(textureLod(u_tex, uvc + vec2(o.x, 0.0), lod).rgb - textureLod(u_tex, uvc - vec2(o.x, 0.0), lod).rgb, LUMA);
-      float gy = dot(textureLod(u_tex, uvc + vec2(0.0, o.y), lod).rgb - textureLod(u_tex, uvc - vec2(0.0, o.y), lod).rgb, LUMA);
-      float grad = length(vec2(gx, gy));
+      float grad = cg.a * 2.0;
       if (grad < minGrad) continue;
 
       float svar = 1.0 + (h2.x * 2.0 - 1.0) * u_sizeVary * 0.8;
@@ -114,7 +116,7 @@ void layer(inout vec3 col, vec2 px, float base, float seed, float minGrad) {
         continue;
       }
 
-      float ang = atan(gy, gx) + 1.5708 + (h3 - 0.5) * 0.4 * u_texAmt;
+      float ang = ah.r * 6.2831853 - 1.5707963 + (h3 - 0.5) * 0.4 * u_texAmt;
       float len = max(base * 0.4, base * (1.2 + grad * 2.0) * u_length * lvar);
       float halfLen = min(len * 0.5, halfLenMax);
       float wdt = base * 0.5 * svar;
@@ -173,8 +175,8 @@ void main() {
   vec3 paperGround = ground * (0.955 + 0.09 * tooth);
   vec3 col = paperGround;
 
-  layer(col, px, u_base, 0.0, -1.0);
-  if (u_style != 5) layer(col, px, u_base * 0.5, 17.0, 0.05);   // finer pass re-inks the edges
+  layer(col, px, u_base, u_cell0, 0.0, -1.0, u_bake0);
+  if (u_style != 5) layer(col, px, u_base * 0.5, u_cell1, 17.0, 0.05, u_bake1);   // finer pass re-inks the edges
 
   // wet media pick up the paper grain on top
   if ((u_style == 0 || u_style == 4) && u_paper > 0.01) {
@@ -183,24 +185,101 @@ void main() {
   outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`
 
-const canvas = document.getElementById('canvas')
-const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG, mipmaps: true })
+// Bake pass: one cell per texel pair. Texel 2i holds colour + gradient, texel
+// 2i+1 the contour angle, stroke jitter and a stroke random, all scaled into 0..1 so an RGBA8 fallback still works.
+// Cell ids start at -2 so the main pass can read two cells past each edge.
+const BAKE = `#version 300 es
+precision highp float;
+uniform sampler2D u_src;
+uniform vec2 u_full;     // output size in pixels (u_res is the bake target here)
+uniform float u_cell;
+uniform float u_seed;
+out vec4 outColor;
 
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+vec2 hash22(vec2 p) {
+  float n = hash21(p);
+  return vec2(n, hash21(p + n + 17.3));
+}
+void main() {
+  ivec2 f = ivec2(gl_FragCoord.xy);
+  vec2 id = vec2(float(f.x >> 1) - 2.0, float(f.y) - 2.0);
+  vec2 h = hash22(id + u_seed);
+  vec2 uvc = (id + 0.5 + (h - 0.5)) * u_cell / u_full;
+  // analysis taps read a blurred mip, like the reduced field buffer of the CPU version
+  float L = max(u_full.x, u_full.y);
+  float lod = max(log2(L / 300.0), 0.0);
+  vec2 o = vec2(L / 300.0) / u_full;
+  vec3 c = textureLod(u_src, uvc, lod).rgb;
+  float gx = dot(textureLod(u_src, uvc + vec2(o.x, 0.0), lod).rgb - textureLod(u_src, uvc - vec2(o.x, 0.0), lod).rgb, LUMA);
+  float gy = dot(textureLod(u_src, uvc + vec2(0.0, o.y), lod).rgb - textureLod(u_src, uvc - vec2(0.0, o.y), lod).rgb, LUMA);
+  if ((f.x & 1) == 0) outColor = vec4(c, min(length(vec2(gx, gy)) * 0.5, 1.0));
+  else outColor = vec4((atan(gy, gx) + 3.1415927) / 6.2831853, h, hash21(id + u_seed + 9.1));
+}`
+
+const canvas = document.getElementById('canvas')
+const pipe = createGLPipe({ rt, src: createSource(), canvas, mipmaps: true })
+const pBake = pipe.program(BAKE)
+const pMain = pipe.program(FRAG)
+
+// One bake target per layer. It only grows, so audio-driven density changes do
+// not reallocate it every frame.
+const layers = [0, 17].map((seed) => ({ seed, target: null, cap: [0, 0], cell: 0 }))
+function bakeLayer(L, cell) {
+  const nx = Math.ceil(pipe.width / cell) + 6
+  const ny = Math.ceil(pipe.height / cell) + 6
+  let grew = false
+  if (!L.target || L.cap[0] < nx || L.cap[1] < ny) {
+    pipe.release(L.target)
+    L.cap = [Math.ceil(nx * 1.25), Math.ceil(ny * 1.25)]
+    L.target = pipe.target({ width: L.cap[0] * 2, height: L.cap[1], float: true, filter: 'NEAREST' })
+    grew = true
+  }
+  if (!pipe.changed && !grew && L.cell === cell) return
+  L.cell = cell
+  pipe.run(pBake, { u_src: pipe.source }, L.target, (u) => {
+    u.v2('u_full', pipe.width, pipe.height)
+    u.f('u_cell', cell)
+    u.f('u_seed', L.seed)
+  })
+}
+
+// Frames are skipped when the source picture and every parameter are unchanged.
+let lastSig = null
 function frame(now) {
   rt.tick(now)
-  const pr = rt.pixelRatio
-  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
-    u.i('u_style', Math.max(0, STYLES.indexOf(params.style)))
-    u.f('u_base', 18 * params.brush * pr)
-    u.f('u_sizeVary', params.sizeVary)
-    u.f('u_lenVary', params.lengthVary)
-    u.f('u_texAmt', params.texture)
-    u.f('u_density', params.density)
-    u.f('u_length', params.length)
-    u.f('u_edges', params.edges)
-    u.f('u_paper', params.paper)
-    u.f('u_pr', pr)
-  })
+  if (pipe.begin({ mirror: params.mirror, time: now * 0.001 })) {
+    const pr = rt.pixelRatio
+    const base = 18 * params.brush * pr
+    const sig = [params.style, params.brush, params.sizeVary, params.lengthVary, params.texture, params.density,
+      params.length, params.edges, params.paper, pr, pipe.width, pipe.height].join(',')
+    if (pipe.changed || sig !== lastSig) {
+      const cell0 = base / Math.sqrt(1.6 * params.density)
+      const cell1 = (base * 0.5) / Math.sqrt(1.6 * params.density)
+      bakeLayer(layers[0], cell0)
+      bakeLayer(layers[1], cell1)
+      pipe.run(pMain, { u_bake0: layers[0].target, u_bake1: layers[1].target }, null, (u) => {
+        u.i('u_style', Math.max(0, STYLES.indexOf(params.style)))
+        u.f('u_base', base)
+        u.f('u_cell0', cell0)
+        u.f('u_cell1', cell1)
+        u.f('u_sizeVary', params.sizeVary)
+        u.f('u_lenVary', params.lengthVary)
+        u.f('u_texAmt', params.texture)
+        u.f('u_density', params.density)
+        u.f('u_length', params.length)
+        u.f('u_edges', params.edges)
+        u.f('u_paper', params.paper)
+        u.f('u_pr', pr)
+      })
+      lastSig = sig
+    }
+  }
   requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)

@@ -55,9 +55,14 @@ but has not been looked at on real hardware or in the real UI.
 
   The draw call blocks while the GPU runs the shader. The upload stall (1.66 ms) comes from writing the
   source texture while the previous draw still reads it. Ping-pong source textures would remove that stall
-  but would not raise the frame rate, because the shader sets the frame time. To speed up painterly, cut
-  shader work: 25 jittered cells per layer, two layers, five `textureLod` taps and `atan`/`sin`/`cos` per
-  candidate stroke. Bake per-cell colour and angle into a small target first.
+  but would not raise the frame rate, because the shader sets the frame time.
+  Fix applied: painterly now bakes per-cell colour, gradient, angle and jitter into a small float target
+  per layer (`createGLPipe`), and the main pass reads them with `texelFetch`. The bake reruns only when the
+  source picture or the cell size changes, and the draw is skipped when nothing changed.
+  Measured with the same harness (alternating old and new builds, 7 runs each, landscape demo, 1280x720):
+  median about 35 fps before and about 47 fps after. Single runs vary widely on this machine, so repeat on
+  your own hardware. Output differs from the old shader by under 0.3 of 255 on average across all 6
+  styles and 2 demo scenes (half-float rounding of the baked jitter).
   Integrated GPUs are still untested.
 - `src/registry/perf.json` grades are static complexity estimates, not timings. Regenerate with
   `npm run perf` (no browser or dev server needed).
