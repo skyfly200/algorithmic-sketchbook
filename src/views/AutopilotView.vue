@@ -25,6 +25,7 @@ import perfScores from '../registry/perf.json'
 import { traitsOf } from '../registry/traits'
 import { FILTER_SLUGS } from '../registry/filters'
 import { handOffToPatch } from '../lib/mixToPatch'
+import { StackThrottle } from '../lib/stackScheduler.js'
 import { mediaLibrary, mediaById, sharedCameraOn, sharedCameraStream, startSharedCamera, stopSharedCamera } from '../stores/media'
 
 const router = useRouter()
@@ -1179,6 +1180,21 @@ function updateOcclusion() {
   }
 }
 
+// --- frame-rate throttling -----------------------------------------------------
+// Culling is not possible here: a layer under an opaque filter is hidden on screen
+// but still feeds the filter. Under load the costliest layers far from the top
+// step down in frame rate instead (and back up when there is headroom). Layers
+// that are fading in or out, and locked ones, are protected so a crossfade never
+// stutters. This runs ahead of the fps-floor thinning below, which removes layers.
+const throttle = new StackThrottle()
+function throttleLayers(now) {
+  const items = stack.map((l, i) => ({
+    key: l.id, el: frames.get(l.id), live: true, dist: stack.length - 1 - i,
+    cost: cost(l.slug), protect: l.locked || l.state !== 'live', throttleable: true,
+  }))
+  throttle.update({ now, items, measuredFps: fps.value })
+}
+
 // --- smooth changes: a final blend step across the whole composite ----------
 // The optional "final blend" that smooths every change: when a change commits
 // we freeze the outgoing on-screen composite onto a top canvas and cross-fade
@@ -1440,6 +1456,7 @@ function loop(now) {
     frameCount = 0
     winStart = now
   }
+  throttleLayers(now)
 
   if (now - lastSecond >= 1000) {
     lastSecond = now
