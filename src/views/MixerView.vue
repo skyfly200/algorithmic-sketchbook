@@ -19,6 +19,9 @@ import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { inputParams } from '../lib/inputParams'
 import { isFilterSketch } from '../registry/filters'
+import perfScores from '../registry/perf.json'
+import { slugCost } from '../lib/patch/graph.js'
+import { planStack, StackThrottle, TRANSPARENT_SKETCHES } from '../lib/stackScheduler.js'
 import { mixToPatch, handOffToPatch } from '../lib/mixToPatch'
 
 const router = useRouter()
@@ -237,9 +240,48 @@ function numericParamsOf(layer) {
   return c ? Object.keys(c.schema).filter((k) => typeof c.schema[k].min === 'number') : []
 }
 
+// --- render scheduling -------------------------------------------------------
+// Every layer is a whole sketch in an iframe. planStack() finds the layers that
+// can still change the picture (a normal-blend, full-opacity layer hides what is
+// under it, except for the filters above it that read it); the rest idle at a few
+// fps. Under load StackThrottle steps the costliest, lowest layers down, and back
+// up when there is headroom. See lib/stackScheduler.js.
+const throttle = new StackThrottle()
+const isStandalone = (layer) => !!store.bySlug(layer.slug)?.standalone
+let fpsFrames = 0
+let fpsStart = 0
+let measuredFps = 0
+function scheduleLayers(ts) {
+  if (!fpsStart) fpsStart = ts
+  fpsFrames++
+  if (ts - fpsStart >= 500) {
+    measuredFps = (fpsFrames * 1000) / (ts - fpsStart)
+    fpsFrames = 0
+    fpsStart = ts
+  }
+  const L = layers.value
+  const { live, dist } = planStack(L, {
+    isFilter: (l) => isFilterSketch({ slug: l.slug }),
+    opaque: (l) => !isStandalone(l) && !TRANSPARENT_SKETCHES.has(l.slug),
+  })
+  const items = []
+  L.forEach((lay, i) => {
+    const el = layerEls.get(lay)
+    if (!el) return
+    items.push({
+      key: i, el, live: live.has(i), dist: dist.get(i) ?? 9,
+      cost: slugCost(lay.slug, perfScores),
+      protect: interactLayer.value === lay || openControls.get(lay) === true,
+      throttleable: !isStandalone(lay),
+    })
+  })
+  throttle.update({ now: ts, items, measuredFps })
+}
+
 let raf = 0
 function captureLoop(ts) {
   beat.update(ts)
+  scheduleLayers(ts)
   // Feed beat state to every live layer (pulse is derived per-layer from the
   // beat flag, so it is not sent).
   const bs = beat.state

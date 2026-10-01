@@ -69,14 +69,14 @@ with a software renderer, so frame rates there are only useful *relatively*.
 3. **Test the Patch scheduler on real graphs** — chains of 4-8 filters over video; check that
    throttling triggers sensibly, that culled thumbnails look OK, and that nothing flickers
    when a node is selected / unselected. Tune `FPS_STEPS`, `BACKGROUND_FPS`, thresholds.
-4. **Apply the same scheduling to Mixer and Autopilot.** (Patch's deck policy and cost model
-   live in `src/lib/patch/budget.js`; the per-node scheduler could feed that model real throttled
-   rates instead of assuming full rate.) Autopilot already has its own
-   occlusion culling; Mixer has none. Both could use `liveNodes`-style culling and
-   `sketch:throttle`.
-5. **Remaining CPU-bound filters** not yet ported: anything else still using
-   `getImageData` per frame (`grep -l getImageData sketches/*/sketch.js`), e.g. light-show's
-   gobo bake is cached but other effects were only triaged, not measured.
+4. ~~Apply the same scheduling to Mixer and Autopilot.~~ Done in `src/lib/stackScheduler.js`.
+   Mixer idles layers hidden by a covering layer (normal blend, opacity near 1, zoom 1) at 3 fps,
+   except layers a live filter above still reads. Mixer and Autopilot step costly, low layers down under
+   load through Patch's `RateController`. Autopilot only throttles: layers under an opaque filter still
+   feed it. Untested on real hardware: crossfades under load, standalone (external) layers.
+5. Remaining `getImageData` callers are triaged. `curves`, `lens-flare`, `light-show` and
+   `stencil-spray` read tiny or cached canvases. `dither` reads a downscaled frame and now skips the
+   pass when the source and parameters are unchanged.
 6. **More filters** from the Photoshop list not built yet: Median, Oil paint, Crystal/Facet
    variants, Lens blur with highlight boost, Difference of Gaussians, Unsharp with radius
    falloff, Motion-blur-aware sharpen.

@@ -148,11 +148,17 @@ function dither(imageData, mode, levels, colour) {
   }
 }
 
+let lastSig = null
 function frame(now) {
   rt.tick(now)
   const t = now * 0.001
   src.update(t)
   if (!src.ready) { requestAnimationFrame(frame); return }
+
+  // Skip the CPU dither when nothing it depends on changed (Random re-rolls its noise each frame).
+  const sig = [src.version, params.mode, params.levels, params.scale, params.colour, params.mirror, W, H].join(',')
+  if (sig === lastSig && params.mode !== 'Random') { requestAnimationFrame(frame); return }
+  lastSig = sig
 
   const scale = Math.round(params.scale)
   const sw = Math.max(1, Math.round(W / scale))
