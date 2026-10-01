@@ -44,7 +44,20 @@ but has not been looked at on real hardware or in the real UI.
   | camera-lens | 513 | 1.95 | 1.06 | GPU |
   | ridgeline | 969 | 1.03 | 0.20 | GPU |
 
-  All run above 60 fps on this machine. painterly spends 8 ms per frame in JS. Look there first.
+  All run above 60 fps on this machine. painterly shows 8 ms of JS per frame, but that is a GPU stall.
+  Timing inside `createGLFilter.render()` (Chrome, real GPU, 1280x720, landscape demo) shows:
+
+  | sketch | source draw ms | texImage2D ms | generateMipmap ms | drawArrays ms |
+  |---|---|---|---|---|
+  | painterly | 0.18 | 1.66 | 0.01 | 10.55 |
+  | kuwahara | 0.15 | 0.07 | 0 | 0.10 |
+  | camera-lens | 0.17 | 0.12 | 0 | 0.07 |
+
+  The draw call blocks while the GPU runs the shader. The upload stall (1.66 ms) comes from writing the
+  source texture while the previous draw still reads it. Ping-pong source textures would remove that stall
+  but would not raise the frame rate, because the shader sets the frame time. To speed up painterly, cut
+  shader work: 25 jittered cells per layer, two layers, five `textureLod` taps and `atan`/`sin`/`cos` per
+  candidate stroke. Bake per-cell colour and angle into a small target first.
   Integrated GPUs are still untested.
 - `src/registry/perf.json` grades are static complexity estimates, not timings. Regenerate with
   `npm run perf` (no browser or dev server needed).
