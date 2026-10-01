@@ -55,7 +55,7 @@ import { pickFromGooglePhotos, setGooglePhotosClientId, googlePhotosConfigured }
 // feed, so in the graph they live behind a dedicated Filter node type that
 // pipes its video input straight into them.
 import { FILTER_SLUGS, CHAINABLE_SLUG_SET } from '../registry/filters'
-import { makeChainCache } from '../lib/patch/filterChain.js'
+import { makeChainCache, chainSets, chainSchedule } from '../lib/patch/filterChain.js'
 import { createChainRunner } from '../lib/patch/chainRunner.js'
 
 const router = useRouter()
@@ -2385,7 +2385,12 @@ function refreshChains(now) {
     const s = rtState.get(n.id)
     if (!s?.iframe) continue
     if (curChains.index.has(n.id)) {
-      if (!s.chainOn && now - (s.chainAt ?? 0) > CHAIN_RETRY_MS) { s.chainAt = now; s.chainAsked = true; postToEffect(n.id, { type: 'filter:chain', on: true }) }
+      // (re)ask until the program arrives, and again when the compositor size changes
+      const size = W + 'x' + H
+      if ((!s.chainOn && now - (s.chainAt ?? 0) > CHAIN_RETRY_MS) || (s.chainOn && s.chainSize !== size)) {
+        s.chainAt = now; s.chainAsked = true; s.chainSize = size
+        postToEffect(n.id, { type: 'filter:chain', on: true, width: W, height: H })
+      }
     } else if (s.chainAsked) {
       s.chainAsked = false
       s.chainOn = false
@@ -2548,16 +2553,19 @@ function refreshPlan(i, now) {
   const byId = new Map(nodes.map((n) => [n.id, n]))
   const rates = rateCtls[i].update({
     now, live, dist, protect,
-    costOf: (id) => { const n = byId.get(id); return n?.params?.slug ? slugCost(n.params.slug) : 1 },
     measuredFps: fps.value,
     targetFps: Math.min(240, 1000 / refreshMs),
-    throttleable: (id) => { const n = byId.get(id); return !!n && isSketchNode(n) },
+    // a filter chain is one unit: only its tail is throttled, charged the whole chain
+    ...chainSchedule(curChains.index, {
+      costOf: (id) => { const n = byId.get(id); return n?.params?.slug ? slugCost(n.params.slug) : 1 },
+      throttleable: (id) => { const n = byId.get(id); return !!n && isSketchNode(n) },
+    }),
   })
   plan = plans[i] = { live, dist, rates, protect, all: !hasOut }
   // Display-only: the on-air deck's load at the rates the scheduler actually runs
   // (culled nodes idle at ~3 fps). Plan decisions keep the full-rate cost.
   if (i === D.onAirIdx()) {
-    throttledGpu.value = deckCost(nodes, { pixels: W * H, info: slugInfo, rateOf: (n) => (rates.has(n.id) ? rates.get(n.id) : 3) }).gpu
+    throttledGpu.value = deckCost(nodes, { pixels: W * H, info: slugInfo, chain: chainSets(curChains.index), rateOf: (n) => (rates.has(n.id) ? rates.get(n.id) : 3) }).gpu
   }
   // Tell each sketch iframe how fast to run (re-sent every couple of seconds in
   // case it wasn't listening yet). Throttle only: pausing/resuming frames is the
@@ -2698,8 +2706,8 @@ function loop(ts) {
       const mode = modes[i]
       if (mode !== 'live' && !(mode === 'cued' && (passToggle & 1))) continue
       D.withDeck(decks[i], () => {
-        refreshPlan(i, now)
         refreshChains(now)
+        refreshPlan(i, now)
         bgCursor = 0
         for (const n of evalOrder()) {
           const s = st(n.id)
@@ -3098,7 +3106,7 @@ function setTierPref(v) { tierPref.value = v; localStorage.setItem(TIER_KEY, v) 
 const slugInfo = (slug) => ({ weight: costOfSlug(slug, perfScores), three: !!store.bySlug(slug)?.tech?.includes('three') })
 const deckCosts = computed(() => {
   resLabel.value // resolution changes W/H (plain lets), so depend on the ref that accompanies them
-  return decks.map((d) => deckCost(d.nodes, { pixels: W * H, info: slugInfo }))
+  return decks.map((d, i) => deckCost(d.nodes, { pixels: W * H, info: slugInfo, chain: chainRunner ? chainSets(chainCaches[i](d.nodes, d.edges, isChainNode).index) : null }))
 })
 const throttledGpu = ref(null) // set by refreshPlan; display only
 const deckPlan = computed(() => {

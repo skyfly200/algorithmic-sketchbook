@@ -30,6 +30,13 @@ export const IFRAME_BUFFERS = 3    // front + back + preserveDrawingBuffer copy
 export const THREE_EXTRA_MB = 60   // geometry/texture/program overhead of three.js sketches
 export const NODE_COST = 0.25      // compositing a non-sketch node, in weight units
 export const FILTER_UPLOAD = 0.5   // extra weight for the per-frame ImageBitmap upload
+// Shared filter chains (lib/patch/filterChain.js): members after the head skip the
+// upload and the per-node canvas copy; the head still uploads once, but as a
+// same-document texImage2D with no postMessage. PROVISIONAL, not yet measured: the
+// head figure is a guess (half the full upload). Members never draw, so their iframe
+// canvases shrink to 1x1 and hold no frame buffers; the shared chain runner owns 3.
+export const CHAIN_HEAD_UPLOAD = 0.25
+export const CHAIN_RUNNER_BUFFERS = 3
 export const FRAME_MEMORY_SHARE = 0.35 // fraction of device memory we allow for patch frames
 export const BASE_MEMORY_MB = 350  // the app + browser itself
 
@@ -40,9 +47,10 @@ const mb = (pixels) => (pixels * 4) / (1024 * 1024)
 const DEFAULT_INFO = () => ({ weight: 4, three: false })
 
 // Cost of one deck's graph at `pixels` (W·H): { gpu, ram, fx, nodes }.
+// chain ({ members, heads } id sets, see chainSets) prices shared filter chains.
 // rateOf(node) → fps (optional): a throttled effect draws rate/60 of its frames, so
 // its GPU term scales by that. Omit it for the conservative full-rate estimate.
-export function deckCost(nodes, { pixels = REF_PIXELS, info = DEFAULT_INFO, rateOf = null } = {}) {
+export function deckCost(nodes, { pixels = REF_PIXELS, info = DEFAULT_INFO, rateOf = null, chain = null } = {}) {
   const scale = pixels / REF_PIXELS
   let gpu = 0, ram = 0, fx = 0
   for (const n of nodes) {
@@ -51,12 +59,15 @@ export function deckCost(nodes, { pixels = REF_PIXELS, info = DEFAULT_INFO, rate
       fx++
       const i = info(n.params.slug) ?? DEFAULT_INFO()
       const share = rateOf ? Math.min(1, (rateOf(n) ?? 60) / 60) : 1
-      gpu += (i.weight + (n.type === 'filter' ? FILTER_UPLOAD : 0)) * scale * share
-      ram += IFRAME_BASE_MB + mb(pixels) * IFRAME_BUFFERS + (i.three ? THREE_EXTRA_MB : 0)
+      const chained = n.type === 'filter' && !!chain?.members.has(n.id)
+      const upload = n.type !== 'filter' ? 0 : !chained ? FILTER_UPLOAD : chain.heads.has(n.id) ? CHAIN_HEAD_UPLOAD : 0
+      gpu += (i.weight + upload) * scale * share
+      ram += IFRAME_BASE_MB + (chained ? 0 : mb(pixels) * IFRAME_BUFFERS) + (i.three ? THREE_EXTRA_MB : 0)
     } else {
       gpu += NODE_COST * scale
     }
   }
+  if (chain?.members.size) ram += mb(pixels) * CHAIN_RUNNER_BUFFERS
   return { gpu: +gpu.toFixed(2), ram: Math.round(ram), fx, nodes: nodes.length }
 }
 

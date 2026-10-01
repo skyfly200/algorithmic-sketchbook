@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { findChains, chainIndex, makeChainCache } from '../src/lib/patch/filterChain.js'
+import { findChains, chainIndex, makeChainCache, chainSets, chainSchedule } from '../src/lib/patch/filterChain.js'
 
 const f = (id) => ({ id, type: 'filter', params: { slug: 'invert' } })
 const x = (id, type = 'effect') => ({ id, type, params: {} })
@@ -75,5 +75,29 @@ describe('makeChainCache', () => {
     expect(b).not.toBe(a)
     expect(b.chains).toEqual([])
     expect(cache(nodes, [], isChainable).chains).toEqual([])
+  })
+})
+
+describe('chainSets', () => {
+  it('lists members and heads', () => {
+    const { members, heads } = chainSets(chainIndex([[2, 3, 4], [6, 7]]))
+    expect([...members].sort()).toEqual([2, 3, 4, 6, 7])
+    expect([...heads].sort()).toEqual([2, 6])
+  })
+})
+
+describe('chainSchedule', () => {
+  const idx = chainIndex([[2, 3, 4]])
+  const sched = chainSchedule(idx, { costOf: (id) => id })
+  it('only lets the tail be throttled', () => {
+    expect([2, 3, 4, 9].map(sched.throttleable)).toEqual([false, false, true, true])
+  })
+  it('charges the tail for the whole chain', () => {
+    expect(sched.costOf(4)).toBe(9)
+    expect(sched.costOf(3)).toBe(3)
+    expect(sched.costOf(9)).toBe(9)
+  })
+  it('still honours the caller throttleable()', () => {
+    expect(chainSchedule(idx, { throttleable: () => false }).throttleable(4)).toBe(false)
   })
 })

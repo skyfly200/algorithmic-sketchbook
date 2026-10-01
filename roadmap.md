@@ -82,8 +82,15 @@ with a software renderer, so frame rates there are only useful *relatively*.
    falloff, Motion-blur-aware sharpen.
 7. **Ridgeline** overdraw: fills are drawn front-to-back for early-z; if it is still heavy on
    integrated GPUs, reduce column density by `rt.detail`.
-8. ~~Shared filter chain in Patch.~~ First pass done (see CLAUDE.md, "Shared filter chains"). Open:
-   widen `CHAINABLE_SLUGS` beyond the 13 simple filters, check chained vs unchained looks at
-   real compositor sizes (pixel-radius shaders like Kuwahara differ), test on a real GPU with
-   camera input and decks crossfading, and decide whether `budget.js` should cost a chain
-   below the sum of its members.
+8. ~~Shared filter chain in Patch.~~ Done for 38 stateless single-pass filters (CLAUDE.md, "Shared
+   filter chains"); blur, glow, mist, warp, kaleidoscope, funhouse-mirror, birefringence and
+   edge-detect were ported to fragment shaders for it. The scheduler treats a chain as a unit, and
+   `deckCost` takes a `chain` option. Open: benchmark chained vs unchained to replace the
+   provisional `CHAIN_HEAD_UPLOAD`, use `KHR_parallel_shader_compile` so a slow shader compile
+   (kuwahara + halftone on a software renderer stalls startup for several seconds) doesn't block the
+   compositor, and check the ported filters' looks on a real GPU (they approximate the old canvas
+   blurs with mip-chain taps; warp samples backwards, so Pinch / Bulge are approximate inverses).
+   Stateful filters (delay, feedback, tiling, strobe, interlace, motion-extraction,
+   rolling-shutter, fps-limiter) and ones with baked textures (fog, shaky-film, light-leaves,
+   nebula-gasses, rain-window, lens-flare, curves, camera-lens, polaroid) need per-program
+   textures and history in the runner, or the node-module interface, to chain.

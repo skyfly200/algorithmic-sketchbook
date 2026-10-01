@@ -10,10 +10,10 @@
  */
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const rt = createRuntime()
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
 
 const params = rt.params({
   split: { value: 0.06, min: 0, max: 0.25, step: 0.005, label: 'Double split' },
@@ -27,95 +27,80 @@ const params = rt.params({
 })
 rt.mapInput('audio.level', 'interference', 0.3)
 
-const src = createSource()
-const a = document.createElement('canvas'), actx = a.getContext('2d')  // source
-const e = document.createElement('canvas'), ectx = e.getContext('2d')  // extraordinary ray
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform vec2 u_shift;   // extraordinary-ray offset, px (y down)
+uniform vec2 u_axis;    // optic axis direction (y down)
+uniform float u_ordW;
+uniform float u_extW;
+uniform float u_inter;
+uniform float u_bands;
+uniform float u_phase;
+out vec4 outColor;
 
-let W = 0, H = 0, PR = 1
-function resize() {
-  PR = rt.pixelRatio
-  W = canvas.width = Math.floor(window.innerWidth * PR)
-  H = canvas.height = Math.floor(window.innerHeight * PR)
-  a.width = e.width = W; a.height = e.height = H
+float lum(vec3 c) { return dot(c, vec3(0.3, 0.59, 0.11)); }
+vec3 clipColor(vec3 c) {
+  float l = lum(c), n = min(min(c.r, c.g), c.b), x = max(max(c.r, c.g), c.b);
+  if (n < 0.0) c = l + (c - l) * l / (l - n);
+  if (x > 1.0) c = l + (c - l) * (1.0 - l) / (x - l);
+  return c;
+}
+vec3 setLum(vec3 c, float l) { return clipColor(c + (l - lum(c))); }
+vec3 hsl2rgb(float h, float s, float l) {
+  vec3 k = clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+  return l + s * (k - 0.5) * (1.0 - abs(2.0 * l - 1.0));
 }
 
+void main() {
+  vec2 p = vec2(v_uv.x, 1.0 - v_uv.y);           // y down, 0..1
+  vec3 ord = texture(u_tex, v_uv).rgb;
+  vec2 pe = p - u_shift / u_res;                   // where the sheared copy comes from
+  float inside = (pe.x >= 0.0 && pe.x <= 1.0 && pe.y >= 0.0 && pe.y <= 1.0) ? 1.0 : 0.0;
+  vec3 ext = texture(u_tex, vec2(pe.x, 1.0 - pe.y)).rgb;
+
+  // ordinary ray over black, then the extraordinary ray over that
+  vec3 col = ord * u_ordW;
+  col = mix(col, ext, u_extW * inside);
+
+  if (u_inter > 0.01) {
+    // spectral bands along the optic axis, 'color' blended (hue + saturation of the
+    // bands, luminosity of the picture), then a faint overlay ripple for retardation contrast
+    float R = length(u_res) * 0.5;
+    float u = clamp(dot((p - 0.5) * u_res, u_axis) / (2.0 * R) + 0.5, 0.0, 1.0);
+    float x = u * u_bands + u_phase;
+    vec3 band = hsl2rgb(fract(x), 0.9, 0.55);
+    col = mix(col, setLum(band, lum(col)), u_inter);
+    float b = 0.5 + 0.5 * sin(x * 6.28318530718);
+    vec3 ov = vec3(b);
+    vec3 ovl = mix(2.0 * col * ov, 1.0 - 2.0 * (1.0 - col) * (1.0 - ov), step(0.5, col));
+    col = mix(col, ovl, u_inter * 0.35);
+  }
+  outColor = vec4(col, 1.0);
+}`
+
+const src = createSource()
+const gf = createGLFilter({ rt, src, canvas, frag: FRAG })
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
 
 function frame(now) {
   rt.tick(now)
   const t = now * 0.001
-  src.update(t)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-  actx.clearRect(0, 0, W, H)
-  src.draw(actx, W, H, { mirror: params.mirror })
-
-  const ang = (params.angle + t * params.spin * 40) * Math.PI / 180
-  const shift = params.split * Math.min(W, H)
-  const dx = Math.cos(ang) * shift, dy = Math.sin(ang) * shift
-  const bal = params.balance
-  const ordW = clamp(1 - 0.55 * bal, 0.25, 1)     // ordinary (undeviated) ray
-  const extW = clamp(0.45 + 0.55 * bal, 0.25, 1)  // extraordinary (sheared) ray
-
-  // extraordinary ray buffer (a straight copy; sheared when composited)
-  ectx.setTransform(1, 0, 0, 1, 0, 0)
-  ectx.clearRect(0, 0, W, H)
-  ectx.globalAlpha = 1
-  ectx.globalCompositeOperation = 'source-over'
-  ectx.drawImage(a, 0, 0)
-
-  // compose: ordinary straight through, extraordinary sheared over it
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.globalAlpha = 1
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, W, H)
-  ctx.globalAlpha = ordW
-  ctx.drawImage(a, 0, 0)
-  ctx.globalAlpha = extW
-  ctx.drawImage(e, dx, dy)
-  ctx.globalAlpha = 1
-
-  // interference: recolour the whole field with drifting spectral bands, the way
-  // a birefringent crystal shows Newton's-scale colours between polarisers. Uses
-  // the 'color' blend so it tints without darkening; scaled by the param.
-  const inter = params.interference
-  if (inter > 0.01) {
-    const R = Math.hypot(W, H) * 0.5
-    const px = W / 2 - Math.cos(ang) * R, py = H / 2 - Math.sin(ang) * R
-    const qx = W / 2 + Math.cos(ang) * R, qy = H / 2 + Math.sin(ang) * R
-    const cycles = params.bands, steps = Math.max(12, Math.round(cycles * 8))
-    const phase = t * params.drift
-    const grad = ctx.createLinearGradient(px, py, qx, qy)
-    for (let i = 0; i <= steps; i++) {
-      const u = i / steps
-      const hue = ((u * cycles + phase) % 1 + 1) % 1 * 360
-      grad.addColorStop(u, `hsl(${hue}, 90%, 55%)`)
-    }
-    ctx.save()
-    ctx.globalCompositeOperation = 'color'
-    ctx.globalAlpha = inter
-    ctx.fillStyle = grad
-    ctx.fillRect(0, 0, W, H)
-    // a faint brightness ripple along the bands adds retardation contrast
-    ctx.globalCompositeOperation = 'overlay'
-    ctx.globalAlpha = inter * 0.35
-    const g2 = ctx.createLinearGradient(px, py, qx, qy)
-    for (let i = 0; i <= steps; i++) {
-      const u = i / steps
-      const b = 0.5 + 0.5 * Math.sin((u * cycles + phase) * Math.PI * 2)
-      const c = (b * 255) | 0
-      g2.addColorStop(u, `rgba(${c},${c},${c},1)`)
-    }
-    ctx.fillStyle = g2
-    ctx.fillRect(0, 0, W, H)
-    ctx.restore()
-  }
-
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.globalAlpha = 1
+  gf.render({ mirror: params.mirror, time: t }, (u) => {
+    const W = gf.width, H = gf.height
+    const ang = ((params.angle + t * params.spin * 40) * Math.PI) / 180
+    const shift = params.split * Math.min(W, H)
+    const bal = params.balance
+    u.v2('u_shift', Math.cos(ang) * shift, Math.sin(ang) * shift)
+    u.v2('u_axis', Math.cos(ang), Math.sin(ang))
+    u.f('u_ordW', clamp(1 - 0.55 * bal, 0.25, 1)) // ordinary (undeviated) ray
+    u.f('u_extW', clamp(0.45 + 0.55 * bal, 0.25, 1)) // extraordinary (sheared) ray
+    u.f('u_inter', params.interference)
+    u.f('u_bands', params.bands)
+    u.f('u_phase', t * params.drift)
+  })
   requestAnimationFrame(frame)
 }
-
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

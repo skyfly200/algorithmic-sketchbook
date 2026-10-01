@@ -72,3 +72,31 @@ export function makeChainCache() {
     return value
   }
 }
+
+/** Ids of every chain member, and of just the heads, for the cost model. */
+export function chainSets(index) {
+  const members = new Set(index.keys())
+  const heads = new Set()
+  for (const [id, c] of index) if (c.index === 0) heads.add(id)
+  return { members, heads }
+}
+
+/**
+ * Scheduler hooks that treat a chain as one unit. Only the tail's rate gates the
+ * chain (interior members just stream uniforms), so stepping an interior member
+ * down saves no GPU time and only makes its params stutter. The tail is charged
+ * the whole chain's cost so it is stepped down at the right priority.
+ */
+export function chainSchedule(index, { costOf = () => 1, throttleable = () => true } = {}) {
+  const isTail = (c) => c.index === c.chain.length - 1
+  return {
+    costOf: (id) => {
+      const c = index.get(id)
+      return c && isTail(c) ? c.chain.reduce((sum, m) => sum + costOf(m), 0) : costOf(id)
+    },
+    throttleable: (id) => {
+      const c = index.get(id)
+      return (!c || isTail(c)) && throttleable(id)
+    },
+  }
+}

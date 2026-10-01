@@ -9,7 +9,8 @@
     "audio-reactive"
   ],
   "tech": [
-    "canvas2d"
+    "webgl",
+    "shader"
   ],
   "created": "2026-07-18"
 }

@@ -3,7 +3,7 @@
 // model's *shape* (linear in pixels, additive per node, decks multiply) rather
 // than any one machine's speed.
 import { describe, it, expect } from 'vitest'
-import { deckCost, classifyTier, maxFrames, planDecks, TIERS, REF_PIXELS, IFRAME_BASE_MB } from '../src/lib/patch/budget.js'
+import { deckCost, classifyTier, maxFrames, planDecks, TIERS, REF_PIXELS, IFRAME_BASE_MB, IFRAME_BUFFERS, FILTER_UPLOAD, CHAIN_HEAD_UPLOAD, CHAIN_RUNNER_BUFFERS } from '../src/lib/patch/budget.js'
 import { classifyGpu, probeCapability } from '../src/lib/patch/capability.js'
 import { evalOrder, makeOrderCache } from '../src/lib/patch/graph.js'
 
@@ -119,5 +119,25 @@ describe('deckCost with throttled rates', () => {
     const full = deckCost(nodes).gpu
     expect(deckCost(nodes, { rateOf: () => 30 }).gpu).toBeCloseTo(full / 2, 1)
     expect(deckCost(nodes, { rateOf: () => 240 }).gpu).toBe(full)
+  })
+})
+
+describe('deckCost with filter chains', () => {
+  const g = [fx(1), fx(2, 'a', 'filter'), fx(3, 'a', 'filter'), fx(4, 'a', 'filter'), out(5)]
+  const chain = { members: new Set([2, 3, 4]), heads: new Set([2]) }
+  it('drops the upload for members after the head, and half of it for the head', () => {
+    const plain = deckCost(g, { info: info(4) })
+    const chained = deckCost(g, { info: info(4), chain })
+    expect(plain.gpu - chained.gpu).toBeCloseTo((FILTER_UPLOAD * 3 - CHAIN_HEAD_UPLOAD) * 1, 1)
+  })
+  it('frees the iframe frame buffers of members but pays once for the runner', () => {
+    const px = REF_PIXELS * 16
+    const plain = deckCost(g, { info: info(4), pixels: px })
+    const chained = deckCost(g, { info: info(4), pixels: px, chain })
+    const mbPer = (px * 4) / (1024 * 1024)
+    expect(plain.ram - chained.ram).toBeCloseTo(mbPer * (IFRAME_BUFFERS * 3 - CHAIN_RUNNER_BUFFERS), 0)
+  })
+  it('is unchanged when nothing is chained', () => {
+    expect(deckCost(g, { info: info(4), chain: { members: new Set(), heads: new Set() } })).toEqual(deckCost(g, { info: info(4) }))
   })
 })

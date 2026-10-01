@@ -20,10 +20,25 @@ export function isFilterSketch(sketch) {
 
 // Single-pass `createGLFilter` filters that can run inside Patch's shared filter
 // chain (one GL context instead of one iframe + bitmap transfer each). A sketch
-// belongs here only if `gf.render` is all it draws: no extra textures, no
-// pixel-ratio-scaled uniforms, no multipass state (glpipe).
+// belongs here only if `gf.render` is all it draws and the GL work is a pure
+// function of the input picture, the uniforms and time: no addTexture, no
+// glpipe / multipass, no frame history or other GL state. (In chain mode
+// rt.pixelRatio and gf.width/height report the chain's render size, so
+// pixel-valued uniforms need no special casing.) Sketches that keep history
+// (delay, feedback, tiling, strobe, interlace, motion-extraction, rolling-shutter,
+// fps-limiter) or bake noise/overlay textures (fog, shaky-film) stay iframes.
 export const CHAINABLE_SLUGS = [
-  'invert', 'solarize', 'vignette', 'duotone', 'kuwahara', 'pinch', 'spherize', 'ripple',
-  'gradient-map', 'polar-coordinates', 'brightness-contrast', 'color-filter', 'film-tone',
+  // colour and tone
+  'invert', 'solarize', 'duotone', 'gradient-map', 'brightness-contrast', 'color-filter', 'film-tone',
+  'channel-offset', 'polarization', 'uv-light', 'liquid-metal', 'birefringence',
+  // blur, glow and atmosphere
+  'blur', 'glow', 'mist', 'vignette', 'tilt-shift', 'crt',
+  // sharpen and edges
+  'sharpen', 'emboss', 'edge-detect', 'glowing-edges', 'kuwahara',
+  // stylise
+  'halftone', 'pointillism', 'crystallize', 'mosaic', 'pixelate', 'stained-glass',
+  // geometry
+  'pinch', 'spherize', 'ripple', 'polar-coordinates', 'twist', 'displace', 'warp',
+  'funhouse-mirror', 'kaleidoscope',
 ]
 export const CHAINABLE_SLUG_SET = new Set(CHAINABLE_SLUGS)

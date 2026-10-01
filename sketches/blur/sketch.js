@@ -1,10 +1,13 @@
 // Blur — a family of blurs for a live source: a plain Gaussian, a directional
 // motion blur, a radial zoom blur streaking out from a centre, and a spin blur
-// smearing around it. Motion/zoom/spin are accumulation blurs (many faint,
-// offset/scaled/rotated copies averaged together); the centre is mappable so
-// the zoom/spin origin can be driven live.
+// smearing around it. Motion/zoom/spin average many offset/scaled/rotated taps
+// of the picture; the centre is mappable so the zoom/spin origin can be driven
+// live. A fragment shader: the Gaussian and bokeh blurs read the source's mip
+// chain, so a large radius costs the same as a small one, and the whole filter
+// can run inside a Patch filter chain.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -24,146 +27,91 @@ const params = rt.params({
 })
 rt.mapInput('audio.volume', 'amount', 0.5)
 
-const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-const src = createSource()
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d')
+const MODES = ['Gaussian', 'Motion', 'Zoom', 'Spin']
+const ALGOS = ['Native (gaussian)', 'Fast (downsample)', 'Smooth (pyramid)', 'Bokeh (disc)']
 
-let W = 0, H = 0
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  buf.width = W
-  buf.height = H
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform int u_mode;     // 0 gaussian, 1 motion, 2 zoom, 3 spin
+uniform int u_algo;     // 0 native, 1 fast, 2 smooth, 3 bokeh
+uniform float u_amt;
+uniform float u_r;      // gaussian radius, px
+uniform float u_ang;    // motion angle, radians
+uniform float u_motion; // motion smear length, px
+uniform int u_n;        // accumulation taps
+uniform vec2 u_c;       // zoom / spin centre, uv (y up)
+out vec4 outColor;
+
+const float GOLDEN = 2.399963;
+
+// Gaussian / bokeh blur: taps spread over a disc, read from the mip level whose
+// texels are about as wide as the tap spacing.
+vec3 discBlur(float r, bool bokeh) {
+  vec2 px = 1.0 / u_res;
+  const int N = 32;
+  float lod = max(0.0, log2(r * 0.45));
+  vec3 acc = vec3(0.0);
+  float wsum = 0.0;
+  for (int i = 0; i < N; i++) {
+    float f = (float(i) + 0.5) / float(N);
+    float d = (bokeh ? 1.0 : 2.0) * r * sqrt(f);
+    float a = float(i) * GOLDEN;
+    float w = bokeh ? 1.0 : exp(-0.5 * (d * d) / (r * r));
+    acc += textureLod(u_tex, v_uv + vec2(cos(a), sin(a)) * d * px, lod).rgb * w;
+    wsum += w;
+  }
+  return acc / wsum;
 }
 
-// Pyramid of successively halved canvases, created on demand and resized to
-// follow the main buffer.
-const pyr = []
-function level(i) {
-  const w = Math.max(2, W >> i), h = Math.max(2, H >> i)
-  let c = pyr[i]
-  if (!c) c = pyr[i] = document.createElement('canvas')
-  if (c.width !== w || c.height !== h) { c.width = w; c.height = h }
-  return c
-}
-function smooth(c) {
-  const x = c.getContext('2d')
-  x.imageSmoothingEnabled = true
-  x.imageSmoothingQuality = 'high'
-  return x
-}
-
-// Cheap blur without ctx.filter (also works where it is unsupported): shrink the
-// image, then scale it back up with bilinear filtering. `smoothUp` walks the
-// pyramid one octave at a time in both directions (a dual-filter / Kawase-style
-// blur — round, artefact-free); otherwise it jumps straight to the small size
-// and back (fastest, a little blocky at high radii).
-function downsampleBlur(r, smoothUp) {
-  const levels = Math.min(6, Math.max(1, Math.round(Math.log2(1 + r / 1.5))))
-  ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
-  if (smoothUp) {
-    let prev = buf
-    for (let i = 1; i <= levels; i++) {
-      const c = level(i)
-      smooth(c).drawImage(prev, 0, 0, c.width, c.height)
-      prev = c
-    }
-    for (let i = levels - 1; i >= 1; i--) {
-      const c = level(i)
-      smooth(c).drawImage(prev, 0, 0, c.width, c.height)
-      prev = c
-    }
-    ctx.drawImage(prev, 0, 0, W, H)
+void main() {
+  vec3 col;
+  if (u_mode == 0 || u_amt < 0.002) {
+    col = u_r < 0.5 ? texture(u_tex, v_uv).rgb : discBlur(u_r, u_algo == 3);
   } else {
-    const c = level(levels)
-    smooth(c).drawImage(buf, 0, 0, c.width, c.height)
-    ctx.drawImage(c, 0, 0, W, H)
+    vec3 acc = vec3(0.0);
+    float aspect = u_res.x / u_res.y;
+    for (int i = 0; i < 40; i++) {
+      if (i >= u_n) break;
+      float f = float(i) / float(max(1, u_n - 1)); // 0..1 across the smear
+      vec2 uv = v_uv;
+      if (u_mode == 1) {
+        float d = (f - 0.5) * u_motion;
+        uv = v_uv - vec2(cos(u_ang), -sin(u_ang)) * d / u_res; // y up
+      } else if (u_mode == 2) {
+        float s = 1.0 + f * u_amt * 0.5;
+        uv = u_c + (v_uv - u_c) / s;
+      } else {
+        float ang = (f - 0.5) * u_amt * 0.9;
+        vec2 d = (v_uv - u_c) * vec2(aspect, 1.0); // rotate in square space
+        float cs = cos(ang), sn = sin(ang);
+        d = vec2(cs * d.x - sn * d.y, sn * d.x + cs * d.y);
+        uv = u_c + d / vec2(aspect, 1.0);
+      }
+      acc += texture(u_tex, uv).rgb;
+    }
+    col = acc / float(u_n);
   }
-}
+  outColor = vec4(col, 1.0);
+}`
 
-// Lens-style blur: average copies spread over a disc (golden-angle spiral), so
-// bright spots bloom into round bokeh discs instead of soft gaussian smudges.
-// Sampled from a half-res copy to keep the many draws cheap.
-function bokehBlur(r) {
-  const n = Math.max(6, Math.round(params.samples) * 2)
-  const half = level(1)
-  smooth(half).drawImage(buf, 0, 0, half.width, half.height)
-  const GOLDEN = 2.399963
-  for (let i = 0; i < n; i++) {
-    const d = r * Math.sqrt((i + 0.5) / n)
-    const a = i * GOLDEN
-    ctx.globalAlpha = 1 / (i + 1)
-    ctx.drawImage(half, Math.cos(a) * d, Math.sin(a) * d, W, H)
-  }
-  ctx.globalAlpha = 1
-}
+const canvas = document.getElementById('canvas')
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG, mipmaps: true })
 
-// A blur is a pure function of the source picture and its settings, so when
-// neither changed (a still image, static sliders) the canvas already shows the
-// right result and the frame is skipped.
-let lastSig = ''
-let lastVer = -1
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-  const sig = [params.mode, params.algorithm, params.amount, params.angle, params.samples, params.centerX, params.centerY, params.mirror, W, H].join('|')
-  if (src.version === lastVer && sig === lastSig) { requestAnimationFrame(frame); return }
-  lastVer = src.version
-  lastSig = sig
-  bctx.clearRect(0, 0, W, H)
-  src.draw(bctx, W, H, { mirror: params.mirror })
-
-  const mode = params.mode
-  const amt = params.amount
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.globalAlpha = 1
-  ctx.filter = 'none'
-  ctx.clearRect(0, 0, W, H)
-
-  if (mode === 'Gaussian' || amt < 0.002) {
-    const r = amt * 40 * rt.pixelRatio
-    const algo = params.algorithm
-    if (r < 0.5) ctx.drawImage(buf, 0, 0)
-    else if (algo === 'Fast (downsample)') downsampleBlur(r, false)
-    else if (algo === 'Smooth (pyramid)') downsampleBlur(r, true)
-    else if (algo === 'Bokeh (disc)') bokehBlur(r)
-    else {
-      ctx.filter = `blur(${r}px)`
-      ctx.drawImage(buf, 0, 0)
-      ctx.filter = 'none'
-    }
-  } else {
-    const n = Math.max(2, Math.round(params.samples))
-    const cx = params.centerX * W, cy = params.centerY * H
-    for (let i = 0; i < n; i++) {
-      const f = i / (n - 1) // 0..1 across the smear
-      ctx.globalAlpha = 1 / (i + 1) // running average → equal-weight blur
-      if (mode === 'Motion') {
-        const a = (params.angle * Math.PI) / 180
-        const d = (f - 0.5) * amt * 90 * rt.pixelRatio
-        ctx.setTransform(1, 0, 0, 1, Math.cos(a) * d, Math.sin(a) * d)
-        ctx.drawImage(buf, 0, 0)
-      } else if (mode === 'Zoom') {
-        const s = 1 + f * amt * 0.5
-        ctx.setTransform(s, 0, 0, s, cx - cx * s, cy - cy * s)
-        ctx.drawImage(buf, 0, 0)
-      } else { // Spin
-        const ang = (f - 0.5) * amt * 0.9
-        const cos = Math.cos(ang), sin = Math.sin(ang)
-        ctx.setTransform(cos, sin, -sin, cos, cx - cx * cos + cy * sin, cy - cx * sin - cy * cos)
-        ctx.drawImage(buf, 0, 0)
-      }
-    }
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.globalAlpha = 1
-  }
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    u.i('u_mode', Math.max(0, MODES.indexOf(params.mode)))
+    u.i('u_algo', Math.max(0, ALGOS.indexOf(params.algorithm)))
+    u.f('u_amt', params.amount)
+    u.f('u_r', params.amount * 40 * rt.pixelRatio)
+    u.f('u_ang', (params.angle * Math.PI) / 180)
+    u.f('u_motion', params.amount * 90 * rt.pixelRatio)
+    u.i('u_n', Math.max(2, Math.min(40, Math.round(params.samples))))
+    u.v2('u_c', params.centerX, 1 - params.centerY)
+  })
   requestAnimationFrame(frame)
 }
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

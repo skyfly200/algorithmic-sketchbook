@@ -1,11 +1,12 @@
 // Warp — a live displacement filter over any source (camera / dropped media /
-// demo / the Mixer-Patch layers below). The source is baked into a buffer and
-// redrawn through an animated warp field using a triangle mesh, so ripples,
-// swirls, waves, pinch/bulge and a fisheye lens bend the image in real time.
-// The distortion amount, frequency and speed are live params, mappable to the
-// music, so beats can pump the warp.
+// demo / the Mixer-Patch layers below). The picture is resampled through an
+// animated warp field in a fragment shader, so ripples, swirls, waves,
+// pinch/bulge and a fisheye lens bend the image in real time. The distortion
+// amount, frequency and speed are live params, mappable to the music, so beats
+// can pump the warp. Being a single shader pass it also runs in a Patch filter chain.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -17,9 +18,9 @@ const params = rt.params({
   amount: { value: 0.5, min: 0, max: 1.5, step: 0.02, label: 'Amount' },
   frequency: { value: 0.5, min: 0.1, max: 2, step: 0.02, label: 'Frequency' },
   speed: { value: 1, min: 0, max: 4, step: 0.05, label: 'Speed' },
-  // Crop-to-fill: overscan the warped mesh so distortions that pull the image
-  // inward (pinch, fisheye, big ripples) never reveal the background at the
-  // edges — the output always fills the frame.
+  // Crop-to-fill: overscan so distortions that pull the image inward (pinch,
+  // fisheye, big ripples) never reveal the background at the edges — the output
+  // always fills the frame.
   fill: { value: true, type: 'bool', label: 'Crop to fill' },
   fillZoom: { value: 1.2, min: 1, max: 2, step: 0.02, label: 'Fill overscan' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
@@ -28,9 +29,52 @@ const params = rt.params({
 rt.mapInput('audio.pulse', 'amount', 0.5)
 rt.mapInput('audio.level', 'frequency', 0.3)
 
-const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
+const PATTERNS = ['Ripple', 'Swirl', 'Waves', 'Pinch', 'Bulge', 'Fisheye']
 
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform float u_time;
+uniform int u_pattern;
+uniform float u_amt;
+uniform float u_fq;
+uniform float u_speed;
+uniform float u_zoom; // 1 = no crop-to-fill overscan
+
+out vec4 outColor;
+
+// Where in the source does screen point (u, v) (y down, 0..1) come from?
+vec2 warp(vec2 p, float ph) {
+  float u = p.x, v = p.y;
+  vec2 c = p - 0.5;
+  float r = length(c) + 1e-5;
+  if (u_pattern == 2) { // Waves
+    return vec2(u + u_amt * 0.06 * sin(v * u_fq * 12.0 + ph), v + u_amt * 0.06 * sin(u * u_fq * 12.0 + ph * 1.2));
+  } else if (u_pattern == 0) { // Ripple
+    float off = u_amt * 0.05 * sin(r * u_fq * 40.0 - ph * 3.0);
+    return p + (c / r) * off;
+  } else if (u_pattern == 1) { // Swirl
+    float rot = u_amt * 3.2 * max(0.0, 0.5 - r) + sin(ph) * u_amt * 0.4;
+    float cs = cos(-rot), sn = sin(-rot);
+    return 0.5 + vec2(c.x * cs - c.y * sn, c.x * sn + c.y * cs);
+  }
+  float k;
+  if (u_pattern == 3) k = 1.0 - u_amt * 0.6 * max(0.0, 0.5 - r) * 2.0 * (0.7 + 0.3 * sin(ph)); // Pinch
+  else if (u_pattern == 4) k = 1.0 + u_amt * 0.8 * max(0.0, 0.5 - r) * 2.0 * (0.7 + 0.3 * sin(ph)); // Bulge
+  else { float rn = min(1.0, r / 0.5); k = 1.0 - u_amt * 0.5 * (1.0 - rn * rn) * (0.8 + 0.2 * sin(ph)); } // Fisheye
+  return 0.5 + c / max(k, 0.1); // the old mesh pushed points out by k; sampling pulls them back by 1/k
+}
+
+void main() {
+  vec2 p = vec2(v_uv.x, 1.0 - v_uv.y);
+  p = 0.5 + (p - 0.5) / u_zoom;
+  vec2 s = warp(p, u_time * u_speed);
+  if (s.x < 0.0 || s.x > 1.0 || s.y < 0.0 || s.y > 1.0) { outColor = vec4(0.02, 0.024, 0.04, 1.0); return; }
+  outColor = vec4(texture(u_tex, vec2(s.x, 1.0 - s.y)).rgb, 1.0);
+}`
+
+const canvas = document.getElementById('canvas')
 // Demo source: a bold colour grid so the distortion is easy to read.
 const src = createSource({
   demo(c, t, w, h) {
@@ -51,138 +95,17 @@ const src = createSource({
     c.beginPath(); c.arc(w / 2, h / 2, Math.min(w, h) * 0.32, 0, Math.PI * 2); c.stroke()
   },
 })
-
-// A buffer holding the undistorted source; the mesh samples from it.
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d')
-
-let W = 0, H = 0
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  buf.width = W
-  buf.height = H
-}
-
-// Affine-map a source triangle onto a destination triangle and stamp the
-// buffer through it (canvas texture-mapping). Dest triangle is expanded a hair
-// from its centroid to hide seams between neighbouring cells.
-function drawTri(img, s0, s1, s2, d0, d1, d2) {
-  const gx = (d0[0] + d1[0] + d2[0]) / 3
-  const gy = (d0[1] + d1[1] + d2[1]) / 3
-  const k = 1.02
-  const ex0 = gx + (d0[0] - gx) * k, ey0 = gy + (d0[1] - gy) * k
-  const ex1 = gx + (d1[0] - gx) * k, ey1 = gy + (d1[1] - gy) * k
-  const ex2 = gx + (d2[0] - gx) * k, ey2 = gy + (d2[1] - gy) * k
-  ctx.save()
-  ctx.beginPath()
-  ctx.moveTo(ex0, ey0); ctx.lineTo(ex1, ey1); ctx.lineTo(ex2, ey2); ctx.closePath()
-  ctx.clip()
-  const [x0, y0] = s0, [x1, y1] = s1, [x2, y2] = s2
-  const [u0, v0] = d0, [u1, v1] = d1, [u2, v2] = d2
-  const den = x0 * (y1 - y2) + x1 * (y2 - y0) + x2 * (y0 - y1)
-  if (Math.abs(den) < 1e-6) { ctx.restore(); return }
-  const a = (u0 * (y1 - y2) + u1 * (y2 - y0) + u2 * (y0 - y1)) / den
-  const b = (v0 * (y1 - y2) + v1 * (y2 - y0) + v2 * (y0 - y1)) / den
-  const c = (u0 * (x2 - x1) + u1 * (x0 - x2) + u2 * (x1 - x0)) / den
-  const d = (v0 * (x2 - x1) + v1 * (x0 - x2) + v2 * (x1 - x0)) / den
-  const e = (u0 * (x1 * y2 - x2 * y1) + u1 * (x2 * y0 - x0 * y2) + u2 * (x0 * y1 - x1 * y0)) / den
-  const f = (v0 * (x1 * y2 - x2 * y1) + v1 * (x2 * y0 - x0 * y2) + v2 * (x0 * y1 - x1 * y0)) / den
-  ctx.setTransform(a, b, c, d, e, f)
-  ctx.drawImage(img, 0, 0)
-  ctx.restore()
-}
-
-// Map a normalized source point (u,v in 0..1) to its distorted screen
-// position. Returns pixel coords. `amt`/`fq`/`ph` fold the params in.
-function warpPoint(u, v, amt, fq, ph) {
-  const p = params.pattern
-  let nu = u, nv = v
-  if (p === 'Waves') {
-    nu = u + amt * 0.06 * Math.sin(v * fq * 12 + ph)
-    nv = v + amt * 0.06 * Math.sin(u * fq * 12 + ph * 1.2)
-  } else {
-    const cx = u - 0.5, cy = v - 0.5
-    const r = Math.hypot(cx, cy) + 1e-5
-    if (p === 'Ripple') {
-      const off = amt * 0.05 * Math.sin(r * fq * 40 - ph * 3)
-      nu = u + (cx / r) * off
-      nv = v + (cy / r) * off
-    } else if (p === 'Swirl') {
-      const rot = amt * 3.2 * Math.max(0, 0.5 - r) + Math.sin(ph) * amt * 0.4
-      const cs = Math.cos(rot), sn = Math.sin(rot)
-      nu = 0.5 + cx * cs - cy * sn
-      nv = 0.5 + cx * sn + cy * cs
-    } else if (p === 'Pinch') {
-      const k = 1 - amt * 0.6 * Math.max(0, 0.5 - r) * 2 * (0.7 + 0.3 * Math.sin(ph))
-      nu = 0.5 + cx * k
-      nv = 0.5 + cy * k
-    } else if (p === 'Bulge') {
-      const k = 1 + amt * 0.8 * Math.max(0, 0.5 - r) * 2 * (0.7 + 0.3 * Math.sin(ph))
-      nu = 0.5 + cx * k
-      nv = 0.5 + cy * k
-    } else if (p === 'Fisheye') {
-      const rn = Math.min(1, r / 0.5)
-      const k = 1 - amt * 0.5 * (1 - rn * rn) * (0.8 + 0.2 * Math.sin(ph))
-      nu = 0.5 + cx * k
-      nv = 0.5 + cy * k
-    }
-  }
-  // Crop-to-fill: overscan about the centre so inward warps still cover the frame.
-  if (params.fill) {
-    const z = params.fillZoom
-    nu = 0.5 + (nu - 0.5) * z
-    nv = 0.5 + (nv - 0.5) * z
-  }
-  return [nu * W, nv * H]
-}
+const gf = createGLFilter({ rt, src, canvas, frag: FRAG })
 
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-
-  // Bake the current source into the buffer.
-  src.draw(bctx, W, H, { mirror: params.mirror })
-
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.fillStyle = '#05060a'
-  ctx.fillRect(0, 0, W, H)
-
-  const amt = params.amount
-  const fq = params.frequency
-  const ph = t * params.speed
-  // Mesh resolution scales with quality; radial patterns need a finer grid.
-  const cols = Math.max(8, Math.round(30 * rt.detail))
-  const rows = Math.max(6, Math.round(cols * (H / W)))
-
-  // Precompute the distorted position of every grid node once.
-  const pts = []
-  for (let j = 0; j <= rows; j++) {
-    const row = []
-    for (let i = 0; i <= cols; i++) {
-      row.push(warpPoint(i / cols, j / rows, amt, fq, ph))
-    }
-    pts.push(row)
-  }
-
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const su0 = (i / cols) * W, sv0 = (j / rows) * H
-      const su1 = ((i + 1) / cols) * W, sv1 = (j / rows) * H
-      const su2 = (i / cols) * W, sv2 = ((j + 1) / rows) * H
-      const su3 = ((i + 1) / cols) * W, sv3 = ((j + 1) / rows) * H
-      const d0 = pts[j][i], d1 = pts[j][i + 1], d2 = pts[j + 1][i], d3 = pts[j + 1][i + 1]
-      drawTri(buf, [su0, sv0], [su1, sv1], [su2, sv2], d0, d1, d2)
-      drawTri(buf, [su1, sv1], [su3, sv3], [su2, sv2], d1, d3, d2)
-    }
-  }
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    u.i('u_pattern', Math.max(0, PATTERNS.indexOf(params.pattern)))
+    u.f('u_amt', params.amount)
+    u.f('u_fq', params.frequency)
+    u.f('u_speed', params.speed)
+    u.f('u_zoom', params.fill ? params.fillZoom : 1)
+  })
   requestAnimationFrame(frame)
 }
-
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

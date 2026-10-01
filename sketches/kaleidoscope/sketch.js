@@ -3,11 +3,13 @@
  * the Mixer-Patch layers below). Classic mirror-tube optics: one wedge of the
  * scene is sampled and reflected around the centre — segments alternate
  * mirrored and unmirrored so edges always match, exactly like a two-mirror
- * kaleidoscope. The wedge slowly orbits the source (steer it with the mouse),
+ * kaleidoscope. (A fragment shader: fold the plane into one mirrored wedge and
+ * sample the source there, so it also runs in a Patch filter chain.) The wedge slowly orbits the source (steer it with the mouse),
  * the whole mandala turns, and beats kick the rotation.
  */
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -24,7 +26,6 @@ rt.mapInput('mouse.y', 'srcY', 0.5)
 rt.mapInput('audio.pulse', 'spin', 0.3)
 
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
 
 // Demo source: a "bead dish" — dense drifting clusters of glass beads,
 // petals, rings and sequins. A kaleidoscope lives on fine colourful detail,
@@ -111,105 +112,69 @@ function beadDish(c, t, w, h) {
   }
 }
 
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform float u_n;      // segments (even)
+uniform float u_spin;   // mandala rotation, radians
+uniform float u_churn;  // slow rotation of the sampled patch, radians
+uniform vec2 u_b;       // sample point in the source square, 0..1 (y down)
+uniform float u_k;      // source-square units per screen px
+uniform float u_zoom;
+out vec4 outColor;
+
+const float TAU = 6.28318530718;
+
+void main() {
+  vec2 p = vec2(v_uv.x - 0.5, 0.5 - v_uv.y) * u_res; // px from centre, y down
+  float rho = length(p);
+  float wedge = TAU / u_n;
+  // fold the plane into one wedge: alternate slots are mirrored so every seam matches
+  float a = mod(atan(p.y, p.x) - u_spin, 2.0 * wedge);
+  if (a > wedge) a = 2.0 * wedge - a;
+  vec2 w = rho * vec2(cos(a), sin(a));          // the point in wedge space
+  float cs = cos(-u_churn), sn = sin(-u_churn);
+  vec2 q = u_b + vec2(w.x * cs - w.y * sn, w.x * sn + w.y * cs) * u_k; // square coords, 0..1
+  q = 0.5 + (q - 0.5) / u_zoom;
+  // the square is the source cover-fitted: crop the long side of the frame
+  float ar = u_res.x / u_res.y;
+  vec2 s = ar > 1.0 ? vec2(0.5 + (q.x - 0.5) / ar, q.y) : vec2(q.x, 0.5 + (q.y - 0.5) * ar);
+  outColor = vec4(texture(u_tex, vec2(s.x, 1.0 - s.y)).rgb, 1.0);
+}`
+
 const src = createSource({ demo: beadDish })
+const gf = createGLFilter({ rt, src, canvas, frag: FRAG })
 
-// The source is drawn once per frame into a square buffer (a fixed-resolution
-// stand-in for a world square big enough that a full wedge never out-runs it);
-// one wedge of it is baked per frame, then stamped n times alternately
-// mirrored — that alternation is what makes every seam line up.
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d')
-const wedgeC = document.createElement('canvas')
-const wctx = wedgeC.getContext('2d')
-
-let W = 0
-let H = 0
-let S = 0 // mandala radius (covers the screen corners)
-let worldK = 1 // world px per buffer px
-const WANDER = 0.22 // sample point wander, as a fraction of S
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  S = Math.hypot(W, H) / 2
-  const side = 1024
-  buf.width = side
-  buf.height = side
-  // The buffer's square must cover wedge length + wander in every direction.
-  worldK = (2 * (S * (1.05 + WANDER))) / side
-  wedgeC.width = Math.ceil(S) + 2
-  wedgeC.height = Math.ceil(S) + 2
-}
-
+const WANDER = 0.22 // sample point wander, as a fraction of the mandala radius
 let spinPhase = 0
 let orbitPhase = 0
 let lastNow = 0
 
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
   lastNow = now
   spinPhase += params.spin * dt * 2
   orbitPhase += params.orbit * dt
-  src.update(t)
-  if (!src.ready) {
-    requestAnimationFrame(frame)
-    return
-  }
 
-  // Refresh the square source buffer (cover-fit, optionally zoomed).
-  const side = buf.width
-  bctx.save()
-  bctx.translate(side / 2, side / 2)
-  bctx.scale(params.zoom, params.zoom)
-  bctx.translate(-side / 2, -side / 2)
-  src.draw(bctx, side, side)
-  bctx.restore()
-
-  const n = Math.max(4, 2 * Math.round(params.segments / 2)) // even count
-  const wedge = (Math.PI * 2) / n
-  const cx = W / 2
-  const cy = H / 2
-  // The steerable sample point (buffer px), orbiting gently so the mandala
-  // churns even untouched — clamped so a full wedge always fits the buffer.
-  const wanderPx = (S * WANDER) / worldK
-  const bx = side / 2 + (params.srcX - 0.5) * 2 * wanderPx + Math.cos(orbitPhase) * wanderPx * 0.35
-  const by = side / 2 + (0.5 - params.srcY) * 2 * wanderPx + Math.sin(orbitPhase * 1.3) * wanderPx * 0.35
-
-  // Bake the wedge: apex at (0,0), spanning angles 0..wedge.
-  wctx.save()
-  wctx.clearRect(0, 0, wedgeC.width, wedgeC.height)
-  wctx.beginPath()
-  wctx.moveTo(0, 0)
-  wctx.arc(0, 0, S + 2, -0.006, wedge + 0.006)
-  wctx.closePath()
-  wctx.clip()
-  wctx.rotate(orbitPhase * 0.5) // slow churn of the sampled patch
-  wctx.scale(worldK, worldK)
-  wctx.drawImage(buf, -bx, -by)
-  wctx.restore()
-
-  ctx.fillStyle = '#05060a'
-  ctx.fillRect(0, 0, W, H)
-
-  // Stamp the wedge n times: even copies straight, odd copies mirrored and
-  // advanced one slot — so every seam meets its own mirror image.
-  for (let i = 0; i < n; i++) {
-    ctx.save()
-    ctx.translate(cx, cy)
-    if (i % 2) {
-      ctx.rotate(spinPhase + (i + 1) * wedge)
-      ctx.scale(1, -1)
-    } else {
-      ctx.rotate(spinPhase + i * wedge)
-    }
-    ctx.drawImage(wedgeC, 0, 0)
-    ctx.restore()
-  }
-
+  gf.render({ time: now * 0.001 }, (u) => {
+    const W = gf.width, H = gf.height
+    const S = Math.hypot(W, H) / 2 // mandala radius (covers the screen corners)
+    // the square of source the wedge is cut from must cover wedge length + wander
+    const k = 1 / (2 * S * (1.05 + WANDER)) // source-square units per screen px
+    const wander = S * WANDER * k
+    // steerable sample point, orbiting gently so the mandala churns even untouched
+    const bx = 0.5 + (params.srcX - 0.5) * 2 * wander + Math.cos(orbitPhase) * wander * 0.35
+    const by = 0.5 + (0.5 - params.srcY) * 2 * wander + Math.sin(orbitPhase * 1.3) * wander * 0.35
+    u.f('u_n', Math.max(4, 2 * Math.round(params.segments / 2)))
+    u.f('u_spin', spinPhase)
+    u.f('u_churn', orbitPhase * 0.5)
+    u.v2('u_b', bx, by)
+    u.f('u_k', k)
+    u.f('u_zoom', params.zoom)
+  })
   requestAnimationFrame(frame)
 }
-
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

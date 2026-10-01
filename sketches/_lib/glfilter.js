@@ -23,7 +23,9 @@
  * render() as usual, but draws nothing: it sends its fragment shader once
  * (`filter:program`) and its uniform values whenever they change
  * (`filter:uniforms`); the parent runs the whole chain in one GL context.
- * u_res and u_time are the parent's. A sketch that adds extra textures declines.
+ * u_res and u_time are the parent's. In chain mode rt.pixelRatio and gf.width/height
+ * report the parent's render size, so size-dependent uniforms need no special casing.
+ * A sketch that adds extra textures declines.
  */
 export const VERT = `#version 300 es
 in vec2 position;
@@ -92,6 +94,10 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
     v3: (n, a, b, c) => { if (chain) return rec(n, 'v3', [a, b, c]); sig += a + ':' + b + ':' + c + ','; gl.uniform3f(loc(n), a, b, c) },
     v3arr: (n, flat) => { if (chain) return rec(n, 'v3arr', [...flat]); sig += flat.join(':') + ','; gl.uniform3fv(loc(n), flat) },
   }
+  // A chained filter never draws, so it parks its canvases at 1x1 instead of holding
+  // full-size frame buffers (the parent's cost model counts on this).
+  const park = () => { canvas.width = canvas.height = buf.width = buf.height = 1 }
+  const basePixelRatio = rt.pixelRatio
   let declined = false // extra textures can't be shared, so such a sketch stays an iframe
   const toParent = (msg) => { try { window.parent.postMessage(msg, '*') } catch { /* no parent */ } }
   window.addEventListener('message', (e) => {
@@ -99,11 +105,19 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
     if (!d || d.type !== 'filter:chain' || window.parent === window || e.source !== window.parent) return
     if (d.on) {
       chain = !declined
+      if (chain) {
+        // The parent renders at its own size: report that size (rt.pixelRatio, gf.width/height)
+        // so pixel-valued params (radii, cell sizes) mean the same thing as unchained.
+        if (d.width > 0 && window.innerWidth > 0) rt.pixelRatio = d.width / window.innerWidth
+        resize()
+        park()
+      }
       chainSent = null // (re)send the uniforms along with the program
       toParent({ type: 'filter:program', ok: chain, frag, mipmaps, animated })
     } else if (chain) {
       chain = false
-      lastVersion = -1 // redraw from our own source
+      rt.pixelRatio = basePixelRatio
+      resize() // back to full size; redraws from our own source
     }
   })
   gl.uniform1i(loc('u_tex'), 0)
@@ -145,10 +159,11 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
   let lastMirror = null
   let lastSig = null
   function resize() {
-    W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-    H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-    buf.width = W
-    buf.height = H
+    W = Math.floor(window.innerWidth * rt.pixelRatio)
+    H = Math.floor(window.innerHeight * rt.pixelRatio)
+    if (chain) return // chain mode parks the canvases at 1x1 (see park())
+    canvas.width = buf.width = W
+    canvas.height = buf.height = H
     gl.viewport(0, 0, W, H)
     lastVersion = -1 // force a fresh upload + draw
   }

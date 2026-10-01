@@ -5,6 +5,7 @@
 // by the direction of the edge).
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const METHODS = ['Sobel', 'Scharr', 'Prewitt', 'Laplacian']
 const STYLES = ['White on black', 'Ink on paper', 'Neon', 'Overlay', 'Direction hue']
@@ -24,21 +25,6 @@ const params = rt.params({
 rt.mapInput('audio.volume', 'strength', 0.5)
 
 const canvas = document.getElementById('canvas')
-const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
-const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: CAPTURE })
-const src = createSource()
-
-// the source is composited (cover-fit, mirrored) onto a 2D canvas, then uploaded
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d')
-
-const VERT = `#version 300 es
-in vec2 position;
-out vec2 v_uv;
-void main() {
-  v_uv = position * 0.5 + 0.5;
-  gl_Position = vec4(position, 0.0, 1.0);
-}`
 
 const FRAG = `#version 300 es
 precision highp float;
@@ -117,71 +103,21 @@ void main() {
   outColor = vec4(col, 1.0);
 }`
 
-function compile(type, source) {
-  const shader = gl.createShader(type)
-  gl.shaderSource(shader, source)
-  gl.compileShader(shader)
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader))
-  return shader
-}
-
-const program = gl.createProgram()
-gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT))
-gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG))
-gl.linkProgram(program)
-gl.useProgram(program)
-
-const vbo = gl.createBuffer()
-gl.bindBuffer(gl.ARRAY_BUFFER, vbo)
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
-const position = gl.getAttribLocation(program, 'position')
-gl.enableVertexAttribArray(position)
-gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
-
-const U = {}
-for (const n of ['u_tex', 'u_texel', 'u_method', 'u_style', 'u_strength', 'u_threshold', 'u_softness', 'u_hue', 'u_perChannel']) {
-  U[n] = gl.getUniformLocation(program, n)
-}
-
-const tex = gl.createTexture()
-gl.bindTexture(gl.TEXTURE_2D, tex)
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
-gl.uniform1i(U.u_tex, 0)
-
-let W = 0, H = 0
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  buf.width = W
-  buf.height = H
-  gl.viewport(0, 0, W, H)
-}
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG })
 
 function frame(now) {
   rt.tick(now)
-  src.update(now * 0.001)
-  if (!src.ready) { requestAnimationFrame(frame); return }
-
-  bctx.clearRect(0, 0, W, H)
-  src.draw(bctx, W, H, { mirror: params.mirror })
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, buf)
-
-  const th = params.thickness * rt.pixelRatio
-  gl.uniform2f(U.u_texel, th / W, th / H)
-  gl.uniform1i(U.u_method, Math.max(0, METHODS.indexOf(params.method)))
-  gl.uniform1i(U.u_style, Math.max(0, STYLES.indexOf(params.style)))
-  gl.uniform1f(U.u_strength, params.strength)
-  gl.uniform1f(U.u_threshold, params.threshold)
-  gl.uniform1f(U.u_softness, params.softness)
-  gl.uniform1f(U.u_hue, params.hue)
-  gl.uniform1i(U.u_perChannel, params.colorEdges ? 1 : 0)
-  gl.drawArrays(gl.TRIANGLES, 0, 3)
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    const th = params.thickness * rt.pixelRatio
+    u.v2('u_texel', th / gf.width, th / gf.height)
+    u.i('u_method', Math.max(0, METHODS.indexOf(params.method)))
+    u.i('u_style', Math.max(0, STYLES.indexOf(params.style)))
+    u.f('u_strength', params.strength)
+    u.f('u_threshold', params.threshold)
+    u.f('u_softness', params.softness)
+    u.f('u_hue', params.hue)
+    u.i('u_perChannel', params.colorEdges ? 1 : 0)
+  })
   requestAnimationFrame(frame)
 }
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)
