@@ -17,3 +17,13 @@ export const FILTER_SLUG_SET = new Set(FILTER_SLUGS)
 export function isFilterSketch(sketch) {
   return !!sketch && FILTER_SLUG_SET.has(sketch.slug)
 }
+
+// Single-pass `createGLFilter` filters that can run inside Patch's shared filter
+// chain (one GL context instead of one iframe + bitmap transfer each). A sketch
+// belongs here only if `gf.render` is all it draws: no extra textures, no
+// pixel-ratio-scaled uniforms, no multipass state (glpipe).
+export const CHAINABLE_SLUGS = [
+  'invert', 'solarize', 'vignette', 'duotone', 'kuwahara', 'pinch', 'spherize', 'ripple',
+  'gradient-map', 'polar-coordinates', 'brightness-contrast', 'color-filter', 'film-tone',
+]
+export const CHAINABLE_SLUG_SET = new Set(CHAINABLE_SLUGS)

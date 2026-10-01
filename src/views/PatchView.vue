@@ -54,7 +54,9 @@ import { pickFromGooglePhotos, setGooglePhotosClientId, googlePhotosConfigured }
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
 // feed, so in the graph they live behind a dedicated Filter node type that
 // pipes its video input straight into them.
-import { FILTER_SLUGS } from '../registry/filters'
+import { FILTER_SLUGS, CHAINABLE_SLUG_SET } from '../registry/filters'
+import { makeChainCache } from '../lib/patch/filterChain.js'
+import { createChainRunner } from '../lib/patch/chainRunner.js'
 
 const router = useRouter()
 const store = useSketchStore()
@@ -273,6 +275,10 @@ function redo() {
 
 // Non-reactive per-node runtime state (canvases, iframes, video, ring buffers).
 const rtState = new Map()
+// Shared filter-chain GL context (null if WebGL2 is unavailable or chaining is switched off).
+let chainPref = true
+try { chainPref = localStorage.getItem('patch.filterChain') !== 'off' } catch { /* storage blocked */ }
+const chainRunner = chainPref ? (() => { try { return createChainRunner() } catch { return null } })() : null
 function st(id) {
   let s = rtState.get(id)
   if (!s) {
@@ -287,6 +293,7 @@ function st(id) {
 // Release a node's geometry-space GPU resources (meshes) before its runtime
 // state is dropped, so deleting/undoing Camera nodes doesn't leak the GPU.
 function disposeRuntime(id) {
+  chainRunner?.drop(id)
   const s = rtState.get(id)
   if (s?.three) {
     for (const o of s.three.meshes.values()) disposeObject(o)
@@ -1933,6 +1940,7 @@ function toggleParams(id) {
 }
 function onEffectMessage(e) {
   const d = e.data
+  if (d?.type === 'filter:program' || d?.type === 'filter:uniforms') return onChainMessage(d, e.source)
   if (d?.type !== 'sketch:ready' && d?.type !== 'sketch:state' && d?.type !== 'sketch:loaded') return
   const fr = frameList.find((x) => x.el?.contentWindow === e.source)
   if (fr) {
@@ -1963,6 +1971,8 @@ function onEffectMessage(e) {
           mappings: (d.mappings ?? []).map((m) => ({ ...m })),
           state: d.state ?? null,
         })
+        // A (re)loaded filter iframe starts out of chain mode: make it hand over its program again.
+        { const rs = rtState.get(n.id); if (rs?.chainAsked) { rs.chainOn = false; chainRunner?.drop(n.id) } }
         // A cue being applied may be waiting to push this effect's saved params.
         if (pendingEffects) applyPendingEffects()
         // Natural-language adjective/colour mods waiting on this sketch's schema.
@@ -2353,6 +2363,79 @@ const NODE_RENDERERS = {
   ...createRenderers({ cover, inputCanvas, inputVer, pval, mediaEl, spriteImg, textSequence, inputValue, clamp }),
   geo: (n, octx) => evalGeo(n, octx), vcam: (n, octx) => evalCamera(n, octx), geodata: (n, octx) => drawGeodata(n, octx),
 }
+// --- shared filter chains ----------------------------------------------------
+// Runs of single-pass shader filters (see lib/patch/filterChain.js) execute in one
+// GL context here instead of one iframe + bitmap transfer each. The member iframes
+// stay as parameter hosts: they send their shader once and uniforms on change
+// (glfilter.js chain mode). Until every member's program has arrived, or if the
+// chain can't run, the members render the old way. Turn off for A/B testing with
+// localStorage['patch.filterChain'] = 'off'.
+const chainCaches = [makeChainCache(), makeChainCache()]
+const NO_CHAINS = { chains: [], index: new Map() }
+let curChains = NO_CHAINS
+const isChainNode = (n) => n.type === 'filter' && CHAINABLE_SLUG_SET.has(n.params.slug) && !rtState.get(n.id)?.chainDeclined
+const CHAIN_RETRY_MS = 500
+// Find this deck's chains and put each filter iframe in the right mode: members
+// are asked to join (retried until their program arrives), everyone else is
+// released. Call inside D.withDeck().
+function refreshChains(now) {
+  curChains = chainRunner && !chainRunner.lost ? chainCaches[D.scopeIdx()](nodes, edges, isChainNode) : NO_CHAINS
+  for (const n of nodes) {
+    if (n.type !== 'filter') continue
+    const s = rtState.get(n.id)
+    if (!s?.iframe) continue
+    if (curChains.index.has(n.id)) {
+      if (!s.chainOn && now - (s.chainAt ?? 0) > CHAIN_RETRY_MS) { s.chainAt = now; s.chainAsked = true; postToEffect(n.id, { type: 'filter:chain', on: true }) }
+    } else if (s.chainAsked) {
+      s.chainAsked = false
+      s.chainOn = false
+      postToEffect(n.id, { type: 'filter:chain', on: false })
+    }
+  }
+}
+// A chain runs only once every member has handed over its program and the head
+// has something to process (otherwise the members' own demo sources are shown).
+function chainActive(chain) {
+  for (const id of chain) if (!rtState.get(id)?.chainOn || !chainRunner.ready(id)) return false
+  const head = nodes.find((n) => n.id === chain[0])
+  return !!head && !!inputCanvas(head, 0)
+}
+// Draw one chain into the tail's canvas. Returns 'same' when nothing changed.
+const CHAIN_THUMB_MS = 400
+function runChain(chain, tail, s, now) {
+  const head = nodes.find((n) => n.id === chain[0])
+  const sig = chainRunner.signature(chain, inputVer(head, 0), W, H, now)
+  if (s.chainSig === sig) return 'same'
+  // Interior previews cost an extra draw per member, so they refresh slowly, except
+  // for a protected (selected / dragged) member, which shows its own result live.
+  let thumbs = null
+  const slow = now - (s.chainThumbAt ?? -Infinity) > CHAIN_THUMB_MS
+  if (slow) s.chainThumbAt = now
+  for (let i = 0; i < chain.length - 1; i++) {
+    if (!slow && !plan.protect.has(chain[i])) continue
+    const m = rtState.get(chain[i])
+    if (m) (thumbs ??= new Map()).set(chain[i], m.octx)
+  }
+  const ok = chainRunner.run(chain, inputCanvas(head, 0), W, H, now / 1000, s.octx, thumbs)
+  if (ok) s.chainSig = sig
+  return ok
+}
+// Messages from filter iframes in chain mode (see glfilter.js).
+function onChainMessage(d, source) {
+  let id = null
+  for (const [k, s] of rtState) if (s.iframe?.contentWindow === source) { id = k; break }
+  if (id == null || !chainRunner) return
+  const s = rtState.get(id)
+  if (d.type === 'filter:program') {
+    const ok = !!d.ok && chainRunner.setProgram(id, d)
+    s.chainOn = ok
+    if (!ok) s.chainDeclined = true // stays an iframe from now on
+    s.chainSig = null
+  } else if (s.chainOn) {
+    chainRunner.setUniforms(id, d.list)
+  }
+}
+
 function evalNode(node) {
   const s = st(node.id)
   const octx = s.octx
@@ -2616,12 +2699,20 @@ function loop(ts) {
       if (mode !== 'live' && !(mode === 'cued' && (passToggle & 1))) continue
       D.withDeck(decks[i], () => {
         refreshPlan(i, now)
+        refreshChains(now)
         bgCursor = 0
         for (const n of evalOrder()) {
           const s = st(n.id)
+          const ci = curChains.index.get(n.id)
+          const chained = !!ci && chainActive(ci.chain)
+          if (chained && ci.index < ci.chain.length - 1) continue // interior member: the tail draws the whole chain
           if (!shouldEval(n, s, now)) continue
           const te = performance.now()
-          evalNode(n)
+          if (chained) {
+            const r = runChain(ci.chain, n, s, now)
+            if (r === 'same') continue
+            if (!r) evalNode(n) // the chain failed to run: draw the tail the old way
+          } else evalNode(n)
           s.ver = (s.ver ?? 0) + 1
           s.lastEval = now
           s.cost = (s.cost ?? 0) * 0.9 + (performance.now() - te) * 0.1

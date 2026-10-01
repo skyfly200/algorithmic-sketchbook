@@ -134,8 +134,8 @@ questions (choice, 1-N score, yes/no probability) over text in one forward pass.
 
 1. **Measure on real hardware.** Run `npm run bench` and `npm run perf` on a
    machine with a real GPU; the current grades came from headless runs.
-2. **Shared filter chain in Patch** (§2, option 1) — the biggest remaining win for
-   patches that stack several filters.
+2. **Shared filter chain in Patch** (section 2, option 1): first pass shipped for 13 single-pass
+   filters. Next: widen the allowlist and lower the chain cost in the budget model.
 3. Bring the **scheduler to Mixer and Autopilot**, and let Patch's cost model use
    real throttled rates instead of assuming full rate.
 4. **Output mapping** (edge-blend / keystone) for projectors.

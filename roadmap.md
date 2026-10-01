@@ -82,5 +82,8 @@ with a software renderer, so frame rates there are only useful *relatively*.
    falloff, Motion-blur-aware sharpen.
 7. **Ridgeline** overdraw: fills are drawn front-to-back for early-z; if it is still heavy on
    integrated GPUs, reduce column density by `rt.detail`.
-8. Consider a shared "filter chain" path so several shader filters in Patch can run as one GL
-   pipeline instead of one iframe + bitmap transfer each.
+8. ~~Shared filter chain in Patch.~~ First pass done (see CLAUDE.md, "Shared filter chains"). Open:
+   widen `CHAINABLE_SLUGS` beyond the 13 simple filters, check chained vs unchained looks at
+   real compositor sizes (pixel-radius shaders like Kuwahara differ), test on a real GPU with
+   camera input and decks crossfading, and decide whether `budget.js` should cost a chain
+   below the sum of its members.

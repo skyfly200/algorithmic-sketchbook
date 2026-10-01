@@ -17,8 +17,15 @@
  * uniforms, the mirror flag and the size are all unchanged and the shader does
  * not use u_time. A still image with static params therefore costs ~nothing.
  * render() returns true when it drew, false when it skipped (or had no source).
+ *
+ * Chain mode: inside Patch, the parent can ask a filter to join a shared filter
+ * chain (`filter:chain`). The sketch then keeps running its params and calls
+ * render() as usual, but draws nothing: it sends its fragment shader once
+ * (`filter:program`) and its uniform values whenever they change
+ * (`filter:uniforms`); the parent runs the whole chain in one GL context.
+ * u_res and u_time are the parent's. A sketch that adds extra textures declines.
  */
-const VERT = `#version 300 es
+export const VERT = `#version 300 es
 in vec2 position;
 out vec2 v_uv;
 void main() {
@@ -68,13 +75,37 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
   // own, so it can never skip frames.
   const animated = /u_time/.test(frag.replace(/uniform\s+\w+\s+u_time\s*;/g, ''))
   let sig = ''
-  const u = {
-    f: (n, v) => { if (animated || n !== 'u_time') sig += v + ','; gl.uniform1f(loc(n), v) },
-    i: (n, v) => { sig += v + ','; gl.uniform1i(loc(n), v) },
-    v2: (n, a, b) => { sig += a + ':' + b + ','; gl.uniform2f(loc(n), a, b) },
-    v3: (n, a, b, c) => { sig += a + ':' + b + ':' + c + ','; gl.uniform3f(loc(n), a, b, c) },
-    v3arr: (n, flat) => { sig += flat.join(':') + ','; gl.uniform3fv(loc(n), flat) },
+  // In chain mode the uniform calls are recorded for the parent instead of
+  // reaching GL. u_res / u_time are the parent's to set.
+  let chain = false
+  let chainList = []
+  let chainSent = null
+  const rec = (n, kind, vals) => {
+    if (n === 'u_res' || n === 'u_time') return
+    chainList.push([kind, n, vals])
+    sig += vals.join(':') + ','
   }
+  const u = {
+    f: (n, v) => { if (chain) return rec(n, 'f', [v]); if (animated || n !== 'u_time') sig += v + ','; gl.uniform1f(loc(n), v) },
+    i: (n, v) => { if (chain) return rec(n, 'i', [v]); sig += v + ','; gl.uniform1i(loc(n), v) },
+    v2: (n, a, b) => { if (chain) return rec(n, 'v2', [a, b]); sig += a + ':' + b + ','; gl.uniform2f(loc(n), a, b) },
+    v3: (n, a, b, c) => { if (chain) return rec(n, 'v3', [a, b, c]); sig += a + ':' + b + ':' + c + ','; gl.uniform3f(loc(n), a, b, c) },
+    v3arr: (n, flat) => { if (chain) return rec(n, 'v3arr', [...flat]); sig += flat.join(':') + ','; gl.uniform3fv(loc(n), flat) },
+  }
+  let declined = false // extra textures can't be shared, so such a sketch stays an iframe
+  const toParent = (msg) => { try { window.parent.postMessage(msg, '*') } catch { /* no parent */ } }
+  window.addEventListener('message', (e) => {
+    const d = e.data
+    if (!d || d.type !== 'filter:chain' || window.parent === window || e.source !== window.parent) return
+    if (d.on) {
+      chain = !declined
+      chainSent = null // (re)send the uniforms along with the program
+      toParent({ type: 'filter:program', ok: chain, frag, mipmaps, animated })
+    } else if (chain) {
+      chain = false
+      lastVersion = -1 // redraw from our own source
+    }
+  })
   gl.uniform1i(loc('u_tex'), 0)
   let forceDraw = false
 
@@ -82,6 +113,7 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
   // a canvas/ImageData/typed array (+ width/height for raw arrays) and forces the
   // next render() to draw even if nothing else changed.
   function addTexture(name, unit, { filter = 'LINEAR', flipY = true } = {}) {
+    declined = true
     const t = gl.createTexture()
     gl.activeTexture(gl.TEXTURE0 + unit)
     gl.bindTexture(gl.TEXTURE_2D, t)
@@ -130,6 +162,13 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
     // Draws one frame. Returns true if it drew, false if it skipped (nothing
     // changed) or the source is not ready yet.
     render({ mirror = false, time = 0 } = {}, setUniforms) {
+      if (chain) {
+        sig = ''
+        chainList = []
+        setUniforms?.(u)
+        if (sig !== chainSent) { chainSent = sig; toParent({ type: 'filter:uniforms', list: chainList }) }
+        return false
+      }
       src.update(time)
       if (!src.ready) return false
       sig = ''

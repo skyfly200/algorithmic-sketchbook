@@ -111,6 +111,24 @@ Two layers, both in `PatchView`:
   (`sketch:throttle`, handled in `sketches/_lib/runtime.js`) — it never pauses an
   iframe, because pausing belongs to the deck policy and the two would fight.
 
+## Shared filter chains
+
+Runs of 2+ single-pass shader filters in a Patch deck (each feeding only the next)
+run in one GL context instead of one iframe + bitmap transfer each.
+
+- `src/lib/patch/filterChain.js` finds the runs (pure, tested). `chainRunner.js`
+  draws them (ping-pong RGBA8 targets at compositor size). Hook-up is
+  `refreshChains` / `runChain` in `PatchView.vue`.
+- A filter opts in by being listed in `CHAINABLE_SLUGS` (`src/registry/filters.js`):
+  `createGLFilter` is all it draws, no `addTexture`, no pixel-ratio-scaled uniforms,
+  no glpipe. The iframe stays the param host: in chain mode `glfilter.js` sends its
+  shader once (`filter:program`) and uniforms on change (`filter:uniforms`) and draws
+  nothing. `u_res` / `u_time` belong to the parent.
+- Members fall back to normal iframe rendering until every program has arrived or if
+  the chain cannot run. A/B test with `localStorage['patch.filterChain'] = 'off'`.
+- Chained passes render at compositor size, not iframe size. Interior node previews
+  refresh about every 0.4 s (live for a selected member).
+
 ## Patch decks (two-graph compositor)
 
 `src/views/PatchView.vue` runs two patch graphs ("decks" A/B) behind a master
