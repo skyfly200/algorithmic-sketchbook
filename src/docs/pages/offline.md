@@ -52,7 +52,7 @@ You control that working-state persistence:
 ## Performance data
 
 The gauges on each gallery card come from a performance audit
-(`npm run perf`) that scores each sketch against a 60fps target. That baseline is
+(`npm run perf`) that scores each sketch by static source complexity. That baseline is
 then **overridden by live measurements on your own machine** as you run pieces,
 so the numbers reflect *your* hardware rather than the machine that built the
 site.

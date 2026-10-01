@@ -194,6 +194,8 @@ function ensureTargets() {
   if (low && w === tw && h === th) return
   tw = w
   th = h
+  pipe.release(low)
+  pipe.release(tape)
   low = pipe.target({ width: w, height: h, filter: 'NEAREST' })
   tape = pipe.target({ width: w, height: h })
 }

@@ -132,6 +132,17 @@ export function createGLPipe({ rt, src, canvas, mipmaps = false }) {
       return t
     },
 
+    // Free a target made by target() and forget it, so re-creating fixed-size
+    // targets on resize does not grow the list or hold their textures.
+    release(t) {
+      if (!t) return
+      const i = targets.indexOf(t)
+      if (i >= 0) targets.splice(i, 1)
+      if (t.tex) gl.deleteTexture(t.tex)
+      if (t.fbo) gl.deleteFramebuffer(t.fbo)
+      t.tex = t.fbo = null
+    },
+
     // Start a frame: upload the source picture if it changed. Returns false until
     // the source is ready. api.changed says whether the picture is new this frame.
     begin({ mirror = false, time = 0 } = {}) {

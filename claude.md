@@ -1,42 +1,69 @@
-# Documentation Style & Code Generation Rules
+# CLAUDE.md
 
-## Core Directive
-Write clear, high-density, action-oriented technical documentation using Simplified Technical English (STE) principles. Eliminate fluff, hedging, and artificial "AI noise."
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 ---
 
-## Sentence & Paragraph Structure
-- **Paragraph Length:** Maximum 1–4 sentences per paragraph.
-- **Sentence Length:** Keep sentences short and direct (aim for under 20 words).
-- **Voice:** Active voice only ("Run the script", not "The script should be run").
-- **Framing:** Problem-first framing. State what breaks or why an action is needed *before* giving the solution or command.
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
----
+## Project-Specific Guidelines
 
-## Forbidden Vocabulary & Patterns (Anti-Slop Rules)
-- **No Fluff Buzzwords:** Never use words like *delve, tapestry, pivotal, landscape, game-changer, seamless, foster, testament, multifaceted, leverage*.
-- **No Conversational Fillers:** Avoid phrases like:
-  - "It is important to note that..."
-  - "In order to..." (use "To...")
-  - "At the end of the day..."
-  - "Generally speaking..."
-- **No Em-Dashes:** Do not use `—`. Use periods, commas, or separate short sentences instead.
-- **No Synthetic Enthusiasm:** Omit exclamation marks, marketing jargon, and performative framing ("Excitingly...", "Luckily...").
-- **No Ungrounded Claims:** Never invent metrics, statistics, or benchmark sources. State facts directly.
-
----
-
-## Technical Formatting Rules
-- **Commands First:** For procedures, provide the exact CLI command or code snippet before the detailed commentary.
-- **Explicit Terminology:** Use consistent nouns. Do not swap terms for variety (e.g., stick to "cluster" instead of switching between "cluster", "environment", "setup", and "system").
-- **Tables & Lists:** Use tables for quick reference and bullet points for unordered options. Reserve numbered sequences strictly for strict multi-step procedures where order matters.
-
----
-
-## Writing Examples
-
-### BAD (AI Slop Style)
-> "In the rapidly evolving landscape of modern cloud infrastructure, properly configuring your Kubernetes deployment file plays a pivotal role—ensuring seamless uptime and fostering overall system health."
-
-### GOOD (STE Style)
-> "Misconfigured deployment files crash Kubernetes pods during node rollouts. Set `spec.strategy.type: RollingUpdate` and define CPU limits to keep applications online during updates."
+- All API endpoints must have tests

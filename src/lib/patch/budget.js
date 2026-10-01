@@ -40,7 +40,9 @@ const mb = (pixels) => (pixels * 4) / (1024 * 1024)
 const DEFAULT_INFO = () => ({ weight: 4, three: false })
 
 // Cost of one deck's graph at `pixels` (W·H): { gpu, ram, fx, nodes }.
-export function deckCost(nodes, { pixels = REF_PIXELS, info = DEFAULT_INFO } = {}) {
+// rateOf(node) → fps (optional): a throttled effect draws rate/60 of its frames, so
+// its GPU term scales by that. Omit it for the conservative full-rate estimate.
+export function deckCost(nodes, { pixels = REF_PIXELS, info = DEFAULT_INFO, rateOf = null } = {}) {
   const scale = pixels / REF_PIXELS
   let gpu = 0, ram = 0, fx = 0
   for (const n of nodes) {
@@ -48,7 +50,8 @@ export function deckCost(nodes, { pixels = REF_PIXELS, info = DEFAULT_INFO } = {
     if (isFx(n)) {
       fx++
       const i = info(n.params.slug) ?? DEFAULT_INFO()
-      gpu += (i.weight + (n.type === 'filter' ? FILTER_UPLOAD : 0)) * scale
+      const share = rateOf ? Math.min(1, (rateOf(n) ?? 60) / 60) : 1
+      gpu += (i.weight + (n.type === 'filter' ? FILTER_UPLOAD : 0)) * scale * share
       ram += IFRAME_BASE_MB + mb(pixels) * IFRAME_BUFFERS + (i.three ? THREE_EXTRA_MB : 0)
     } else {
       gpu += NODE_COST * scale

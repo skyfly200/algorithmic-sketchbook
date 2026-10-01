@@ -111,3 +111,13 @@ describe('evalOrder is O(V+E) and memoised', () => {
     expect(order(nodes, edges)).toHaveLength(5)
   })
 })
+
+describe('deckCost with throttled rates', () => {
+  it('scales an effect by its rate share and ignores rateOf when omitted', async () => {
+    const { deckCost } = await import('../src/lib/patch/budget.js')
+    const nodes = [{ type: 'effect', params: { slug: 'x' } }]
+    const full = deckCost(nodes).gpu
+    expect(deckCost(nodes, { rateOf: () => 30 }).gpu).toBeCloseTo(full / 2, 1)
+    expect(deckCost(nodes, { rateOf: () => 240 }).gpu).toBe(full)
+  })
+})
