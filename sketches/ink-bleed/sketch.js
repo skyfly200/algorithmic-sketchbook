@@ -103,6 +103,7 @@ function ensureGrid() {
   if (S && w === gridW && h === gridH) return
   gridW = w
   gridH = h
+  S?.forEach((t) => pipe.release(t))
   S = [0, 1].map(() => pipe.target({ width: w, height: h, float: true, filter: 'LINEAR' }))
 }
 const hexRgb = (h) => {

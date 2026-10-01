@@ -1,70 +1,116 @@
 #!/usr/bin/env node
 /**
- * Performance audit: runs every embedded sketch headless for a few seconds,
- * measures its real requestAnimationFrame rate at high quality, and scores
- * it 1-100 against a 60fps target. Results land in src/registry/perf.json,
- * which the gallery reads to show the grade bubble on each card.
+ * Performance audit: rates every sketch by static complexity, not by timing.
+ * Timing many sketches on one machine is noisy and slow, and concurrent runs
+ * skew each other. The source is scored for the work it does per frame.
  *
- * Scores are relative to the machine that ran the audit — re-run
- * `npm run perf` (dev server up) to regenerate on your own hardware.
+ * Output: src/registry/perf.json, slug -> 1-100 (100 = light, 1 = heavy).
+ * The gallery shows it until the viewer's live fps monitor (localPerf.js)
+ * records a real on-device score for that sketch.
+ *
+ * Run: npm run perf            (rewrite perf.json)
+ *      npm run perf -- --table (print the ranked table, no write)
  */
 import { readdirSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 
-// playwright as a project devDependency if present, else a global install
-let chromium
-try {
-  ;({ chromium } = await import('playwright'))
-} catch {
-  const require = createRequire(import.meta.url)
-  const globalRoot = `${process.execPath.replace(/\/bin\/node$/, '')}/lib/node_modules`
-  ;({ chromium } = require(require.resolve('playwright', { paths: [globalRoot] })))
+const count = (src, re) => (src.match(re) || []).length
+const read = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
+
+// Strip comments so prose does not trigger a signal.
+const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+
+// Deepest nesting of `for`/`while` loops (brace depth heuristic).
+function loopDepth(src) {
+  let depth = 0, max = 0
+  const stack = []
+  const re = /\b(for|while)\b\s*\(|[{}]/g
+  let m, pendingLoop = false
+  while ((m = re.exec(src))) {
+    if (m[0] === '{') { stack.push(pendingLoop); if (pendingLoop) { depth++; max = Math.max(max, depth) } pendingLoop = false }
+    else if (m[0] === '}') { if (stack.pop()) depth-- }
+    else {
+      // brace-less loop bodies still count as one level for this statement
+      pendingLoop = true
+      max = Math.max(max, depth + 1)
+    }
+  }
+  return max
 }
 
-const BASE = process.env.PERF_BASE ?? 'http://localhost:5173'
-const WARMUP_MS = 5000
-const MEASURE_MS = 4000
+// Complexity points. Each term is a unit of per-frame work; the total maps to a score.
+function complexity(slug) {
+  const dir = `sketches/${slug}`
+  const meta = JSON.parse(read(`${dir}/sketch.json`) || '{}')
+  const js = strip(read(`${dir}/sketch.js`))
+  const html = strip(read(`${dir}/index.html`))
+  const src = js + '\n' + html
+  const tech = meta.tech ?? []
+  const parts = {}
+
+  // Rendering backend sets the base cost.
+  parts.base = tech.includes('three') || /\bTHREE\./.test(src) ? 14 : tech.includes('webgl') || /getContext\(['"]webgl/.test(src) ? 8 : 4
+
+  // Source size is a weak proxy for the number of passes and features.
+  parts.size = Math.min(10, js.length / 2500)
+
+  // CPU pixel work: reading and writing every pixel each frame.
+  parts.pixels = (/getImageData/.test(src) ? 10 : 0) + (/putImageData/.test(src) ? 6 : 0)
+
+  // Loop nesting: 2D loops over a grid are O(W*H); deeper is worse.
+  const depth = loopDepth(js)
+  parts.loops = depth >= 3 ? 14 : depth === 2 ? 7 : depth === 1 ? 2 : 0
+
+  // Iterative solvers and multi-pass simulation.
+  const iters = [...src.matchAll(/\b(?:iter(?:ation)?s?|steps?|passes|octaves|samples|taps|layers)\w*\s*[=:]\s*(\d+)/gi)].map((m) => +m[1])
+  parts.iter = Math.min(14, iters.reduce((a, n) => a + Math.log2(1 + Math.min(n, 256)), 0))
+
+  // Shader cost: loops in GLSL, noise/fbm calls, texture fetches, extra framebuffers.
+  const glsl = [...src.matchAll(/`([^`]*(?:gl_FragColor|fragColor|precision\s+\w+\s+float)[^`]*)`/g)].map((m) => m[1]).join('\n')
+  parts.shader = Math.min(20,
+    count(glsl, /\bfor\s*\(/g) * 3 +
+    count(glsl, /\b(?:fbm|noise|snoise|pnoise|simplex|perlin)\w*\s*\(/gi) * 1.5 +
+    count(glsl, /\btexture(?:2D)?\s*\(/g) * 0.75 +
+    count(glsl, /\b(?:sin|cos|pow|exp|log|atan)\s*\(/g) * 0.15)
+  parts.fbo = Math.min(12, count(src, /createFramebuffer|createRenderTarget|WebGLRenderTarget|createTexture/g) * 1.5)
+
+  // Per-frame canvas filters, shadows and blur are expensive raster ops.
+  parts.raster = Math.min(14, count(src, /\bfilter\s*=|shadowBlur|createRadialGradient|globalCompositeOperation|drawImage/g) * 0.8 + (/blur\(/.test(src) ? 4 : 0))
+
+  // Particle / agent counts.
+  const counts = [...src.matchAll(/\b(?:N|COUNT|NUM|PARTICLES?|AGENTS?|BUBBLES?|DROPS?|CELLS?|POINTS?|SEEDS?|BLADES?|STARS?)\w*\s*=\s*(\d{3,6})/g)].map((m) => +m[1])
+  parts.count = Math.min(14, counts.reduce((a, n) => Math.max(a, Math.log10(n) * 3.5), 0))
+
+  // Texture/grid sizes like 256, 512 used as simulation resolution.
+  const grid = [...src.matchAll(/\b(?:SIZE|RES|GRID|W|H|N)\w*\s*=\s*(\d{3,4})\b/g)].map((m) => +m[1])
+  parts.grid = grid.length ? Math.min(8, Math.log2(Math.max(...grid) / 64)) : 0
+
+  // Sketches that read a live camera feed or analyse a stream pay per frame too.
+  parts.input = /getUserMedia|VideoFrame|requestVideoFrameCallback/.test(src) ? 4 : 0
+
+  const total = Object.values(parts).reduce((a, b) => a + b, 0)
+  return { total, parts }
+}
+
+// Map complexity points to 1-100. 4 points (trivial) scores 100; 65 points (heaviest seen) scores ~5.
+const toScore = (pts) => Math.max(1, Math.min(100, Math.round(100 - 95 * Math.pow(Math.max(0, pts - 4) / 61, 0.8))))
 
 const slugs = readdirSync('sketches', { withFileTypes: true })
   .filter((d) => d.isDirectory() && !d.name.startsWith('_') && existsSync(`sketches/${d.name}/sketch.json`))
   .map((d) => d.name)
   .sort()
 
-const browser = await chromium.launch({
-  executablePath: process.env.PW_CHROMIUM ?? '/opt/pw-browsers/chromium',
+const rows = slugs.map((slug) => {
+  const { total, parts } = complexity(slug)
+  return { slug, total, score: toScore(total), parts }
 })
-const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
 
-// Start from the existing scores and only overwrite what we successfully
-// measure this run, so a sketch that fails to load headless (mic/camera/heavy)
-// keeps its prior grade instead of being dropped.
-let scores = {}
-try { scores = JSON.parse(readFileSync('src/registry/perf.json', 'utf8')) } catch { scores = {} }
-for (const slug of slugs) {
-  try {
-    await page.goto(`${BASE}/sketches/${slug}/?quality=high`, { timeout: 15000 })
-    await page.waitForTimeout(WARMUP_MS)
-    const fps = await page.evaluate(
-      (ms) =>
-        new Promise((resolve) => {
-          let frames = 0
-          const t0 = performance.now()
-          function tick() {
-            frames++
-            if (performance.now() - t0 < ms) requestAnimationFrame(tick)
-            else resolve((frames * 1000) / (performance.now() - t0))
-          }
-          requestAnimationFrame(tick)
-        }),
-      MEASURE_MS,
-    )
-    scores[slug] = Math.max(1, Math.min(100, Math.round((fps / 60) * 100)))
-    console.log(`${slug.padEnd(24)} ${fps.toFixed(1).padStart(6)} fps  → ${scores[slug]}`)
-  } catch (e) {
-    console.log(`${slug.padEnd(24)} FAILED: ${e.message.split('\n')[0]}`)
+if (process.argv.includes('--table')) {
+  for (const r of [...rows].sort((a, b) => a.score - b.score)) {
+    const top = Object.entries(r.parts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k}:${v.toFixed(0)}`).join(' ')
+    console.log(`${r.slug.padEnd(26)} ${String(r.score).padStart(3)}  ${r.total.toFixed(0).padStart(3)} pts  ${top}`)
   }
+} else {
+  const scores = Object.fromEntries(rows.map((r) => [r.slug, r.score]))
+  writeFileSync('src/registry/perf.json', JSON.stringify(scores, null, 2) + '\n')
+  console.log(`wrote src/registry/perf.json (${rows.length} sketches)`)
 }
-await browser.close()
-
-writeFileSync('src/registry/perf.json', JSON.stringify(scores, null, 2) + '\n')
-console.log(`\nwrote src/registry/perf.json (${Object.keys(scores).length} sketches)`)

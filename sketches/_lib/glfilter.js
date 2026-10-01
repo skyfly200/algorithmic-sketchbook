@@ -64,9 +64,9 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
 
   const locs = {}
   const loc = (n) => (n in locs ? locs[n] : (locs[n] = gl.getUniformLocation(program, n)))
-  // A shader that reads u_time more than once (beyond its declaration) animates
-  // on its own, so it can never skip frames.
-  const animated = (frag.match(/u_time/g) || []).length > 1
+  // A shader that reads u_time anywhere beyond its declaration animates on its
+  // own, so it can never skip frames.
+  const animated = /u_time/.test(frag.replace(/uniform\s+\w+\s+u_time\s*;/g, ''))
   let sig = ''
   const u = {
     f: (n, v) => { if (animated || n !== 'u_time') sig += v + ','; gl.uniform1f(loc(n), v) },

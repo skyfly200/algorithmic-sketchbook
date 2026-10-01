@@ -62,8 +62,7 @@ with a software renderer, so frame rates there are only useful *relatively*.
 
 1. **Benchmark on a real GPU** and compare with the software numbers:
    `npm run build && npm run bench -- --filters --headed` (also `--all`, `--demo night-city`).
-   Then `npm run perf` to regenerate `src/registry/perf.json` (its current grades came from
-   headless runs, so they understate anything GPU-accelerated).
+   Then run `npm run perf` to regenerate `src/registry/perf.json` (static complexity, no browser).
 2. **Eyeball every ported filter** against its old look with the three demo scenes and a real
    camera. Only some were viewed; differences are expected where the algorithm was
    approximated (see bugs.md).

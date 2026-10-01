@@ -2438,9 +2438,10 @@ const plans = [newPlan(), newPlan()]
 const planAts = [0, 0]
 let plan = plans[0]
 // Display refresh estimate: the shortest rAF interval seen over the last ~4-8 s
-// (two rotating buckets). Never taken below 60 Hz — under sustained load frames
-// stretch, which must not be mistaken for a slow display — but a 120/144 Hz
-// panel is recognised so its throttling threshold scales up with it.
+// (two rotating buckets). Under sustained load frames stretch, which must not be
+// mistaken for a slow display, so it stays at 60 Hz or faster — but a 120/144 Hz
+// panel is recognised so its throttling threshold scales up with it. A 30/50 Hz
+// reading is accepted only when at most 3 nodes are live.
 let refreshMs = 16.7
 let minA = Infinity
 let minB = Infinity
@@ -2470,6 +2471,11 @@ function refreshPlan(i, now) {
     throttleable: (id) => { const n = byId.get(id); return !!n && isSketchNode(n) },
   })
   plan = plans[i] = { live, dist, rates, protect, all: !hasOut }
+  // Display-only: the on-air deck's load at the rates the scheduler actually runs
+  // (culled nodes idle at ~3 fps). Plan decisions keep the full-rate cost.
+  if (i === D.onAirIdx()) {
+    throttledGpu.value = deckCost(nodes, { pixels: W * H, info: slugInfo, rateOf: (n) => (rates.has(n.id) ? rates.get(n.id) : 3) }).gpu
+  }
   // Tell each sketch iframe how fast to run (re-sent every couple of seconds in
   // case it wasn't listening yet). Throttle only: pausing/resuming frames is the
   // deck policy's job (applyDeckPause), and two owners of the flag would fight.
@@ -2582,7 +2588,10 @@ function loop(ts) {
     const dt = now - lastTs
     if (dt > 6.5 && dt < 100) { minA = Math.min(minA, dt); minB = Math.min(minB, dt) }
     if (!bucketAt) bucketAt = now
-    if (now - bucketAt > 4000) { bucketAt = now; refreshMs = Math.min(16.7, Math.min(minA, minB)); minA = minB; minB = Infinity }
+    // A slower-than-60 Hz display is only believed while the deck is light: under
+    // load, stretched frames look identical to a slow panel.
+    const lightLoad = plan.live.size <= 3
+    if (now - bucketAt > 4000) { bucketAt = now; refreshMs = Math.min(lightLoad ? 33.4 : 16.7, Math.min(minA, minB)); minA = minB; minB = Infinity }
   }
   lastTs = now
   if (renderPaused.value) { raf = requestAnimationFrame(loop); return } // held — keep the editor snappy
@@ -3000,9 +3009,13 @@ const deckCosts = computed(() => {
   resLabel.value // resolution changes W/H (plain lets), so depend on the ref that accompanies them
   return decks.map((d) => deckCost(d.nodes, { pixels: W * H, info: slugInfo }))
 })
+const throttledGpu = ref(null) // set by refreshPlan; display only
 const deckPlan = computed(() => {
   const on = D.onAirIdx()
-  return planDecks(tier.value, { on: deckCosts.value[on], off: deckCosts.value[1 - on] }, { cap: capProbe, pixels: W * H })
+  const plan = planDecks(tier.value, { on: deckCosts.value[on], off: deckCosts.value[1 - on] }, { cap: capProbe, pixels: W * H })
+  // shownLoad: on-air load after throttling, for the badge. plan.load stays full-rate.
+  const t = TIERS[tier.value] ?? TIERS.baseline
+  return { ...plan, shownLoad: throttledGpu.value == null ? plan.load : throttledGpu.value / t.capacity }
 })
 const deckBackup = reactive([null, null]) // one-level "restore previous" per deck
 

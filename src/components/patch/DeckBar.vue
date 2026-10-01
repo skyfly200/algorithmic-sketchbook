@@ -32,7 +32,7 @@ const setPvw = (el) => { pvw.value = el; emit('pvw', el) }
 
 const onAir = computed(() => (props.mix.pos >= 0.5 ? 1 : 0))
 const other = computed(() => 1 - onAir.value)
-const loadPct = computed(() => Math.round(props.plan.load * 100))
+const loadPct = computed(() => Math.round((props.plan.shownLoad ?? props.plan.load) * 100))
 const loadCls = computed(() => (props.plan.load > 1 ? 'bad' : props.plan.load > 0.75 ? 'warn' : ''))
 
 const q = ref('')

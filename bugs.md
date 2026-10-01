@@ -4,6 +4,12 @@ Notes from the filter / performance work. "Unverified" means it was written and 
 but has not been looked at on real hardware or in the real UI.
 
 ## Fixed in this branch
+- **glpipe target leak.** New `pipe.release(target)` deletes the texture and framebuffer and
+  drops the target from the list. ink-bleed and vhs-defects call it before re-creating targets.
+- **glfilter animated check.** A shader is animated if `u_time` appears anywhere outside its
+  declaration, so a single read no longer counts as static.
+- **Refresh estimate.** Patch now accepts a 30/50 Hz reading, but only while at most 3 nodes are
+  live, so load-stretched frames are not mistaken for a slow display. *Unverified on a slow display.*
 - **Mixer filter layers got no input.** `MixerView.vue` only fed the layers-below composite to
   `motion-extraction`; every other filter saw its demo scene. Now all filters are fed.
   *Unverified in the Mixer UI — only built and unit-tested.*
@@ -28,38 +34,37 @@ but has not been looked at on real hardware or in the real UI.
 - **Native pixel ratio** now capped at 2 (was 3) for every sketch.
 
 ### Performance — all unmeasured on real hardware
-- **kuwahara** samples up to 289 texels per pixel at max radius; **painterly** ~2 layers × 25
-  stroke cells per pixel; **camera-lens** 20-tap variable blur + bloom. Expect these to be the
-  heaviest new shaders, especially at high resolutions / integrated GPUs.
-- **ridgeline** (WebGL) measured ~510 ms/frame under a *software* renderer (down from ~600 before
-  the front-to-back fix). Real-GPU cost unknown; overdraw is ~1x now but MSAA is on.
-- `src/registry/perf.json` grades are stale/inaccurate (generated headless). Regenerate with
-  `npm run perf` on a real machine.
+- Heavy shaders benchmarked one at a time (headed Chrome, real GPU, 1280x720, quality high,
+  landscape demo, 3 s each):
+
+  | sketch | fps | frame ms | JS ms | note |
+  |---|---|---|---|---|
+  | painterly | 112 | 8.94 | 8.06 | CPU (JS) bound |
+  | kuwahara | 220 | 4.55 | 1.15 | GPU |
+  | camera-lens | 513 | 1.95 | 1.06 | GPU |
+  | ridgeline | 969 | 1.03 | 0.20 | GPU |
+
+  All run above 60 fps on this machine. painterly spends 8 ms per frame in JS. Look there first.
+  Integrated GPUs are still untested.
+- `src/registry/perf.json` grades are static complexity estimates, not timings. Regenerate with
+  `npm run perf` (no browser or dev server needed).
 
 ### Patch scheduler (`PatchView.vue`, `src/lib/patch/scheduler.js`)
 - Only exercised with a seeded 6-node graph in headless Chromium (culled nodes dropped to
   ~2-3 fps as intended, no console errors) — re-checked after merging main's two-deck compositor.
   Not tested: two decks live at once / crossfading, output-only mode (culled nodes go to 1 fps),
   selection protection, occluded-blend culling in the live UI, cycles, Input/XY/Tracker control links.
-- The display-refresh estimate never goes below 60 Hz, so on a 30/50 Hz display the controller
-  will think it is always behind and over-throttle.
 - Culled nodes show their last frame (or blank if never rendered) in thumbnails.
 - `show.drawXfade` (cue crossfade) and the pop-out window redraw every pass; only the node
   evaluation is skipped when unchanged.
 - Mixer and Autopilot do not use the scheduler yet.
-- The cost model in `src/lib/patch/budget.js` still assumes every live effect draws at full rate; it
-  does not yet know about per-node throttling, so it is conservative for throttled graphs.
+- `deckCost()` in `src/lib/patch/budget.js` accepts an optional `rateOf(node)` for throttled
+  rates, but Patch does not pass it. The planner stays at full rate on purpose: feeding throttled
+  rates back into the tier decision would let throttling admit more load, then throttle more.
 
 ### Shader infrastructure
-- `glpipe.js` keeps every `target()` it ever created in an internal list (fixed-size targets
-  from ink-bleed / vhs-defects are re-created on resize but old ones are not removed from the
-  list). Minor leak on repeated resizes; textures are deleted only when re-made.
 - Float render targets need `EXT_color_buffer_float` / `EXT_color_buffer_half_float`; there is
   an RGBA8 fallback but ink-bleed's slow decays will stall at 8 bits.
-- `glfilter` decides a shader is "animated" by counting `u_time` occurrences in the source — a
-  shader that uses time *only* through a uniform set in JS animates via the changing uniform
-  signature instead, which is fine, but a shader that reads `u_time` exactly once would be
-  treated as static.
 - WebGL canvases are captured by Patch via `drawImage` of the iframe's first `<canvas>`; this
   relies on `?capture=1` (preserveDrawingBuffer). Sketches that skip draws on unchanged frames
   keep the last frame on screen, which is fine with that flag but was not tested with capture
