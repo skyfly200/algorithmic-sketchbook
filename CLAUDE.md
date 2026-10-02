@@ -191,6 +191,53 @@ run in one GL context instead of one iframe + bitmap transfer each.
   the upload for members and the frame buffers of parked iframes; the head-upload
   figure (`CHAIN_HEAD_UPLOAD`) is provisional until benchmarked.
 
+## Idle optimisations: freeze and bake
+
+Two ways to stop paying for effect nodes (iframes) whose work is wasted. Both are on by default
+(toolbar toggles, `patch.freezeStatic` / `patch.autoBake` in localStorage) and both stay out of the way of anything that
+could react to the outside: they apply only to effect nodes with **no control links, no mappings, and the mic off**.
+
+- **Freeze static nodes** (`lib/patch/idle.js`, `StaticTracker`): a 128x72 hash of the node's output is sampled every
+  250 ms; identical for ~1 s freezes it. `shouldEval` returns false (no copy, no `s.ver` bump, so downstream blends and
+  filters skip too) and the iframe is paused through **`applyDeckPause`** (`want = deckWant || frozen || baked`): never post
+  `sketch:pause` for these yourself, the deck policy resets `f.paused` every pass. A frozen node is re-probed every ~2 s.
+  Anything that can change a picture calls `idle.wake` / `wakeAll`: `postToEffect` of a param / mapping / scene / state /
+  action message, `persist()`, a beat, the mic starting, a resize, a reloaded frame.
+- **Bake slow time-only nodes to a loop** (`lib/patch/bake.js` pure + tested, `baker.js` DOM): the trigger is the sketch's own
+  `sketch:fps` report (once a second) staying under 75% of the rate the scheduler asked for, three reports in a row, on a node
+  unchanged for 3 s (`BakeAdvisor`). `bakeNode` loads the sketch in a **hidden iframe outside `frameList`** with `?clock=manual`,
+  which the runtime turns into a manual clock (`sketch:step { now, id }` runs queued animation frames with that time; `performance.now`
+  and `Date.now` follow it), steps 1.5 s of warm-up + 6 s of loop + a 0.75 s seam at 30 fps as fast as it renders, and keeps each frame
+  as a WebP blob; the seam cross-fades the continuation over the loop's start. `createLoopPlayer` decodes a few frames ahead. A baked
+  node's `evalNode` plays the recording and its iframe is paused. `bakeKey` (slug, seed, params, state, mapping and link counts, W x H)
+  is checked on every edit and ~3x a second; any change drops the recording and the node goes live. Recordings live in memory only, capped at 400 MB (LRU).
+  Caveats: the seam is a visible dissolve on fast motion; a recording never reacts to audio or inputs (hence the gates above); filters are not baked (their input is live).
+- Dev-only test hook `window.__patchPerf`; checks in `scripts/scratch/idle-check.mjs`, `bake-check.mjs`, `autobake-check.mjs`.
+
+## Patch error checking
+
+`src/lib/patch/diagnostics.js` (pure, tested in `tests/patchDiagnostics.test.js`) turns a deck's graph into issues: `{ key, code, severity,
+nodeId, deck, title, message, fix, action }`. Every issue says what the user sees and **how to fix it in the real UI** (the Output is the
+monitor button, "Add Output"), and may carry a one-click `action` (addOutput, connect, removeNode, removeLink, toggleMic, toggleCamera,
+import, focus). Severity: **error** = blank or wrong picture, **warning** = probably unintended, **info** = a note (an unconnected node is
+only info, so building is not nagged at). The toolbar badge counts errors + warnings only.
+
+- `diagnoseDeck(deck, ctx)` checks: unknown node type, no / empty / multiple Output, filter / portal / mask / blend / camera inputs, geometry
+  not in a camera, effect or filter with a missing, empty or wrong-kind sketch, media with no clip or a clip gone from the library, camera /
+  screen source off, sprite with no image, audio Input with the mic off, control wires to a parameter that no longer exists. A branch that
+  does not reach the Output (`NOT_CONNECTED`) is told apart from one hidden behind an opaque Normal blend (`HIDDEN_BEHIND`) using `liveNodes`.
+  Deliberately not flagged: feedback cycles (a feature), and wires to missing nodes / ports (`pruneOrphans(true)` removes those on load and raises one
+  `PRUNED_WIRES` notice with the count; deleting a node does not).
+- Two checks wait for data that arrives late, so they never fire at load: `mediaState.hydrated` (the library fills from IndexedDB) and a sketch's
+  param schema (`effectControls`, announced with `sketch:ready`).
+- `runtimeIssue(code, detail)` is the same shape for what only the running app sees: `SKETCH_ERROR` (the runtime posts `sketch:error` on an uncaught
+  error / rejection, at most 3 per load), `SKETCH_LOAD_FAILED` (not ready after 25 s, only for running decks), `CAMERA_DENIED`, `MIC_DENIED`,
+  `VIDEO_PLAYBACK` (media element `onerror`), `BAKE_FAILED`. They live in `runtimeIssues` and are cleared when the cause is retried or the frame reloads.
+- `lint()` in `PatchView.vue` runs about once a second from the loop's publish block and soon after any edit; `issues` is replaced only when its
+  signature changed. Quick fixes run inside `D.withDeck(issue's deck)` and through `persist()` so undo works; the panel
+  (`components/patch/ProblemsPanel.vue`, presentational) disables a fix for the other deck and says to switch to it. Dismissals last the session.
+- Test hook `window.__patchProblems` (dev only); `scripts/scratch/problems-check.mjs` drives a deliberately broken patch end to end.
+
 ## Patch decks (two-graph compositor)
 
 `src/views/PatchView.vue` runs two patch graphs ("decks" A/B) behind a master

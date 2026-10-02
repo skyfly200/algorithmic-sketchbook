@@ -1,0 +1,1294 @@
+{
+  "date": "2026-10-02",
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce MX250 (0x00001D13) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "cores": 8,
+  "command": "npm run bench -- --all --chrome --ms 2000 (headless)",
+  "viewport": "1280x720",
+  "pixelRatio": 1,
+  "quality": "high",
+  "demo": "landscape",
+  "vsync": false,
+  "note": "frameMs is wall time per rAF with the frame-rate limit off; 16.7 = 60 fps. Entries with rerun: true were measured in a second run after the preview server stalled.",
+  "results": [
+    {
+      "slug": "frost-grow",
+      "fps": 2.4,
+      "frameMs": 414.39,
+      "jsMs": 443.64,
+      "taskMs": 449.99
+    },
+    {
+      "slug": "glowing-coals",
+      "fps": 5.1,
+      "frameMs": 197.04,
+      "jsMs": 58.29,
+      "taskMs": 208.95
+    },
+    {
+      "slug": "concentric-rings",
+      "fps": 5.2,
+      "frameMs": 193.74,
+      "jsMs": 0.42,
+      "taskMs": 194.19
+    },
+    {
+      "slug": "mud-cracks",
+      "fps": 6.3,
+      "frameMs": 158.52,
+      "jsMs": 186.63,
+      "taskMs": 187.41
+    },
+    {
+      "slug": "ferrofluid",
+      "fps": 8.3,
+      "frameMs": 120.2,
+      "jsMs": 130.5,
+      "taskMs": 131.74
+    },
+    {
+      "slug": "mandelbulb",
+      "fps": 12.4,
+      "frameMs": 80.79,
+      "jsMs": 86.61,
+      "taskMs": 88.28
+    },
+    {
+      "slug": "neon-fluid",
+      "fps": 12.8,
+      "frameMs": 78.05,
+      "jsMs": 83.34,
+      "taskMs": 85.73
+    },
+    {
+      "slug": "sand-dunes",
+      "fps": 12.8,
+      "frameMs": 77.9,
+      "jsMs": 83.08,
+      "taskMs": 83.88
+    },
+    {
+      "slug": "slime-mold",
+      "fps": 14.7,
+      "frameMs": 68.21,
+      "jsMs": 71.33,
+      "taskMs": 72.33
+    },
+    {
+      "slug": "washboard-road",
+      "fps": 15.4,
+      "frameMs": 64.75,
+      "jsMs": 66.72,
+      "taskMs": 67.6
+    },
+    {
+      "slug": "foam-cells",
+      "fps": 16.1,
+      "frameMs": 61.94,
+      "jsMs": 5.43,
+      "taskMs": 62.28
+    },
+    {
+      "slug": "cable-knit",
+      "fps": 19.3,
+      "frameMs": 51.86,
+      "jsMs": 8.87,
+      "taskMs": 54.32
+    },
+    {
+      "slug": "condensation",
+      "fps": 19.3,
+      "frameMs": 51.86,
+      "jsMs": 41.45,
+      "taskMs": 54.36
+    },
+    {
+      "slug": "rain-window",
+      "fps": 19.6,
+      "frameMs": 51.08,
+      "jsMs": 9.31,
+      "taskMs": 51.77
+    },
+    {
+      "slug": "clouds",
+      "fps": 24.4,
+      "frameMs": 41.04,
+      "jsMs": 41.2,
+      "taskMs": 42.49
+    },
+    {
+      "slug": "dither",
+      "fps": 29.8,
+      "frameMs": 33.56,
+      "jsMs": 34.03,
+      "taskMs": 34.73
+    },
+    {
+      "slug": "microbes",
+      "fps": 31.4,
+      "frameMs": 31.8,
+      "jsMs": 22.43,
+      "taskMs": 34.33
+    },
+    {
+      "slug": "cymatics",
+      "fps": 35.4,
+      "frameMs": 28.24,
+      "jsMs": 15.64,
+      "taskMs": 30.03
+    },
+    {
+      "slug": "zen-garden",
+      "fps": 36.4,
+      "frameMs": 27.5,
+      "jsMs": 29.25,
+      "taskMs": 30.93
+    },
+    {
+      "slug": "tessellation-drift",
+      "fps": 36.6,
+      "frameMs": 27.33,
+      "jsMs": 26.54,
+      "taskMs": 27.84
+    },
+    {
+      "slug": "embers",
+      "fps": 37.3,
+      "frameMs": 26.8,
+      "jsMs": 15.1,
+      "taskMs": 26.95
+    },
+    {
+      "slug": "lava-lamp",
+      "fps": 39,
+      "frameMs": 25.61,
+      "jsMs": 25.66,
+      "taskMs": 26.33
+    },
+    {
+      "slug": "fluid",
+      "fps": 45.2,
+      "frameMs": 22.14,
+      "jsMs": 49.7,
+      "taskMs": 49.97
+    },
+    {
+      "slug": "fibonacci-spiral",
+      "fps": 49.9,
+      "frameMs": 20.04,
+      "jsMs": 6.75,
+      "taskMs": 22.96
+    },
+    {
+      "slug": "polaroid",
+      "fps": 54.2,
+      "frameMs": 18.44,
+      "jsMs": 0.04,
+      "taskMs": 0.3
+    },
+    {
+      "slug": "painterly",
+      "fps": 56.1,
+      "frameMs": 17.83,
+      "jsMs": 17.19,
+      "taskMs": 17.85,
+      "rerun": true
+    },
+    {
+      "slug": "orbit-knots",
+      "fps": 58.2,
+      "frameMs": 17.19,
+      "jsMs": 0.05,
+      "taskMs": 0.31
+    },
+    {
+      "slug": "star-field",
+      "fps": 58.5,
+      "frameMs": 17.09,
+      "jsMs": 16.71,
+      "taskMs": 18.72
+    },
+    {
+      "slug": "parallax-layers",
+      "fps": 68.7,
+      "frameMs": 14.55,
+      "jsMs": 3.03,
+      "taskMs": 13.8,
+      "rerun": true
+    },
+    {
+      "slug": "floating-ferrofluid",
+      "fps": 68.9,
+      "frameMs": 14.51,
+      "jsMs": 14.32,
+      "taskMs": 14.86
+    },
+    {
+      "slug": "bubbles-3d",
+      "fps": 72.9,
+      "frameMs": 13.71,
+      "jsMs": 11.85,
+      "taskMs": 12.24
+    },
+    {
+      "slug": "sand-art",
+      "fps": 87.1,
+      "frameMs": 11.48,
+      "jsMs": 10.99,
+      "taskMs": 11.63
+    },
+    {
+      "slug": "hex-cascade",
+      "fps": 92.2,
+      "frameMs": 10.85,
+      "jsMs": 1.58,
+      "taskMs": 2.58
+    },
+    {
+      "slug": "cellular-automata",
+      "fps": 95.6,
+      "frameMs": 10.46,
+      "jsMs": 10.03,
+      "taskMs": 10.55
+    },
+    {
+      "slug": "zoetrope",
+      "fps": 96.2,
+      "frameMs": 10.39,
+      "jsMs": 1.01,
+      "taskMs": 10.02
+    },
+    {
+      "slug": "liquid-light-show",
+      "fps": 105.1,
+      "frameMs": 9.51,
+      "jsMs": 1.5,
+      "taskMs": 9.51
+    },
+    {
+      "slug": "worm-bin",
+      "fps": 110.4,
+      "frameMs": 9.06,
+      "jsMs": 3.22,
+      "taskMs": 9.07
+    },
+    {
+      "slug": "fire",
+      "fps": 112.7,
+      "frameMs": 8.87,
+      "jsMs": 8.37,
+      "taskMs": 8.92
+    },
+    {
+      "slug": "matrix-rain",
+      "fps": 117.5,
+      "frameMs": 8.51,
+      "jsMs": 1.47,
+      "taskMs": 8.47
+    },
+    {
+      "slug": "glitter-rain",
+      "fps": 121.3,
+      "frameMs": 8.24,
+      "jsMs": 7.05,
+      "taskMs": 8.26
+    },
+    {
+      "slug": "flow-field",
+      "fps": 134.7,
+      "frameMs": 7.42,
+      "jsMs": 7,
+      "taskMs": 7.47
+    },
+    {
+      "slug": "oscilloscope",
+      "fps": 137,
+      "frameMs": 7.3,
+      "jsMs": 0.36,
+      "taskMs": 7.28,
+      "rerun": true
+    },
+    {
+      "slug": "glow",
+      "fps": 140.5,
+      "frameMs": 7.12,
+      "jsMs": 4.61,
+      "taskMs": 8.85
+    },
+    {
+      "slug": "bloom-flowers",
+      "fps": 143.3,
+      "frameMs": 6.98,
+      "jsMs": 5.95,
+      "taskMs": 6.87
+    },
+    {
+      "slug": "motion-extraction",
+      "fps": 145.6,
+      "frameMs": 6.87,
+      "jsMs": 3.21,
+      "taskMs": 6.84
+    },
+    {
+      "slug": "pulsar",
+      "fps": 159.9,
+      "frameMs": 6.26,
+      "jsMs": 1.05,
+      "taskMs": 9.94
+    },
+    {
+      "slug": "polar-coordinates",
+      "fps": 162.5,
+      "frameMs": 6.15,
+      "jsMs": 3.42,
+      "taskMs": 5.9,
+      "rerun": true
+    },
+    {
+      "slug": "marbling",
+      "fps": 163,
+      "frameMs": 6.13,
+      "jsMs": 1.15,
+      "taskMs": 6.75
+    },
+    {
+      "slug": "topo-map",
+      "fps": 163.6,
+      "frameMs": 6.11,
+      "jsMs": 5.19,
+      "taskMs": 5.66
+    },
+    {
+      "slug": "nebula-gasses",
+      "fps": 168,
+      "frameMs": 5.95,
+      "jsMs": 3.76,
+      "taskMs": 6.4,
+      "rerun": true
+    },
+    {
+      "slug": "solar-corona",
+      "fps": 170.6,
+      "frameMs": 5.86,
+      "jsMs": 5.08,
+      "taskMs": 5.85
+    },
+    {
+      "slug": "mushroom-fruiting",
+      "fps": 181.9,
+      "frameMs": 5.5,
+      "jsMs": 2.08,
+      "taskMs": 5.41
+    },
+    {
+      "slug": "rubens-tube",
+      "fps": 184.3,
+      "frameMs": 5.43,
+      "jsMs": 2.68,
+      "taskMs": 5.39
+    },
+    {
+      "slug": "polarization",
+      "fps": 191.2,
+      "frameMs": 5.23,
+      "jsMs": 2.55,
+      "taskMs": 5.09,
+      "rerun": true
+    },
+    {
+      "slug": "stencil-spray",
+      "fps": 203.8,
+      "frameMs": 4.91,
+      "jsMs": 4.15,
+      "taskMs": 4.93
+    },
+    {
+      "slug": "fish-scales",
+      "fps": 209.7,
+      "frameMs": 4.77,
+      "jsMs": 4.22,
+      "taskMs": 5.22
+    },
+    {
+      "slug": "lens-flare",
+      "fps": 228.2,
+      "frameMs": 4.38,
+      "jsMs": 4,
+      "taskMs": 4.39
+    },
+    {
+      "slug": "fft-tracer",
+      "fps": 232.6,
+      "frameMs": 4.3,
+      "jsMs": 0.99,
+      "taskMs": 4.35
+    },
+    {
+      "slug": "phi-spheres",
+      "fps": 238.9,
+      "frameMs": 4.19,
+      "jsMs": 3.49,
+      "taskMs": 4.14,
+      "rerun": true
+    },
+    {
+      "slug": "reishi-spores",
+      "fps": 239.4,
+      "frameMs": 4.18,
+      "jsMs": 3.09,
+      "taskMs": 4.18
+    },
+    {
+      "slug": "pointillism",
+      "fps": 240,
+      "frameMs": 4.17,
+      "jsMs": 1.37,
+      "taskMs": 2.85,
+      "rerun": true
+    },
+    {
+      "slug": "kaleidoscope",
+      "fps": 251.7,
+      "frameMs": 3.97,
+      "jsMs": 2.99,
+      "taskMs": 3.96
+    },
+    {
+      "slug": "fireflies",
+      "fps": 253.9,
+      "frameMs": 3.94,
+      "jsMs": 1.79,
+      "taskMs": 3.98
+    },
+    {
+      "slug": "pixelate",
+      "fps": 254.9,
+      "frameMs": 3.92,
+      "jsMs": 1.81,
+      "taskMs": 3.55,
+      "rerun": true
+    },
+    {
+      "slug": "droplet-bounce",
+      "fps": 258.9,
+      "frameMs": 3.86,
+      "jsMs": 3.04,
+      "taskMs": 3.82
+    },
+    {
+      "slug": "light-show",
+      "fps": 271.4,
+      "frameMs": 3.68,
+      "jsMs": 3.12,
+      "taskMs": 3.64
+    },
+    {
+      "slug": "opalescence",
+      "fps": 275.1,
+      "frameMs": 3.64,
+      "jsMs": 1.6,
+      "taskMs": 3.51
+    },
+    {
+      "slug": "luminol",
+      "fps": 280.2,
+      "frameMs": 3.57,
+      "jsMs": 2.87,
+      "taskMs": 3.64
+    },
+    {
+      "slug": "pinch",
+      "fps": 285.1,
+      "frameMs": 3.51,
+      "jsMs": 2.05,
+      "taskMs": 3.85,
+      "rerun": true
+    },
+    {
+      "slug": "fog",
+      "fps": 292.8,
+      "frameMs": 3.42,
+      "jsMs": 2.68,
+      "taskMs": 3.37
+    },
+    {
+      "slug": "blur",
+      "fps": 295.5,
+      "frameMs": 3.38,
+      "jsMs": 1.77,
+      "taskMs": 3.03
+    },
+    {
+      "slug": "fractal-explorer",
+      "fps": 296.4,
+      "frameMs": 3.37,
+      "jsMs": 2.28,
+      "taskMs": 2.97
+    },
+    {
+      "slug": "disco-ball",
+      "fps": 299.7,
+      "frameMs": 3.34,
+      "jsMs": 2.84,
+      "taskMs": 3.33
+    },
+    {
+      "slug": "sharpen",
+      "fps": 307.9,
+      "frameMs": 3.25,
+      "jsMs": 1.78,
+      "taskMs": 4.4
+    },
+    {
+      "slug": "grass-field",
+      "fps": 318.9,
+      "frameMs": 3.14,
+      "jsMs": 0.83,
+      "taskMs": 3
+    },
+    {
+      "slug": "hyperspace",
+      "fps": 318.7,
+      "frameMs": 3.14,
+      "jsMs": 2.81,
+      "taskMs": 3.18
+    },
+    {
+      "slug": "kuwahara",
+      "fps": 318.9,
+      "frameMs": 3.14,
+      "jsMs": 2.76,
+      "taskMs": 3.07
+    },
+    {
+      "slug": "hydrophobic",
+      "fps": 321.8,
+      "frameMs": 3.11,
+      "jsMs": 1.36,
+      "taskMs": 3.07
+    },
+    {
+      "slug": "voronoi-fractal",
+      "fps": 328.5,
+      "frameMs": 3.04,
+      "jsMs": 0.05,
+      "taskMs": 3.03
+    },
+    {
+      "slug": "kusama-dots",
+      "fps": 334,
+      "frameMs": 2.99,
+      "jsMs": 1.25,
+      "taskMs": 2.73
+    },
+    {
+      "slug": "spider-web",
+      "fps": 334.8,
+      "frameMs": 2.99,
+      "jsMs": 1.95,
+      "taskMs": 2.87
+    },
+    {
+      "slug": "curves",
+      "fps": 338.4,
+      "frameMs": 2.96,
+      "jsMs": 2.35,
+      "taskMs": 2.89
+    },
+    {
+      "slug": "rolling-shutter",
+      "fps": 380.2,
+      "frameMs": 2.63,
+      "jsMs": 1.49,
+      "taskMs": 2.75
+    },
+    {
+      "slug": "birefringence",
+      "fps": 390.4,
+      "frameMs": 2.56,
+      "jsMs": 1.22,
+      "taskMs": 2.26
+    },
+    {
+      "slug": "emboss",
+      "fps": 397.5,
+      "frameMs": 2.52,
+      "jsMs": 0.8,
+      "taskMs": 2.08
+    },
+    {
+      "slug": "blowing-bubbles",
+      "fps": 407.6,
+      "frameMs": 2.45,
+      "jsMs": 1.57,
+      "taskMs": 2.34
+    },
+    {
+      "slug": "light-leaves",
+      "fps": 413.3,
+      "frameMs": 2.42,
+      "jsMs": 1.75,
+      "taskMs": 2.34
+    },
+    {
+      "slug": "turing-patterns",
+      "fps": 420.6,
+      "frameMs": 2.38,
+      "jsMs": 0.68,
+      "taskMs": 2.77
+    },
+    {
+      "slug": "difference-of-gaussians",
+      "fps": 421.3,
+      "frameMs": 2.37,
+      "jsMs": 1.93,
+      "taskMs": 2.28
+    },
+    {
+      "slug": "tiling",
+      "fps": 429.7,
+      "frameMs": 2.33,
+      "jsMs": 1.24,
+      "taskMs": 2.14
+    },
+    {
+      "slug": "directional-sharpen",
+      "fps": 436.6,
+      "frameMs": 2.29,
+      "jsMs": 0.28,
+      "taskMs": 2.16
+    },
+    {
+      "slug": "honeycomb-bees",
+      "fps": 440.9,
+      "frameMs": 2.27,
+      "jsMs": 0.59,
+      "taskMs": 2.11
+    },
+    {
+      "slug": "neon-sign",
+      "fps": 471.1,
+      "frameMs": 2.12,
+      "jsMs": 1.56,
+      "taskMs": 2.13
+    },
+    {
+      "slug": "sky-timelapse",
+      "fps": 472.6,
+      "frameMs": 2.12,
+      "jsMs": 1.6,
+      "taskMs": 2.05
+    },
+    {
+      "slug": "led-pixels",
+      "fps": 507.6,
+      "frameMs": 1.97,
+      "jsMs": 1.13,
+      "taskMs": 1.49
+    },
+    {
+      "slug": "waterfall",
+      "fps": 515.3,
+      "frameMs": 1.94,
+      "jsMs": 1.26,
+      "taskMs": 1.96
+    },
+    {
+      "slug": "oil-paint",
+      "fps": 518.2,
+      "frameMs": 1.93,
+      "jsMs": 0.99,
+      "taskMs": 1.71
+    },
+    {
+      "slug": "ridgeline",
+      "fps": 537.1,
+      "frameMs": 1.86,
+      "jsMs": 0.83,
+      "taskMs": 1.87
+    },
+    {
+      "slug": "vignette",
+      "fps": 550.5,
+      "frameMs": 1.82,
+      "jsMs": 1.01,
+      "taskMs": 1.62
+    },
+    {
+      "slug": "displace",
+      "fps": 559.4,
+      "frameMs": 1.79,
+      "jsMs": 0.92,
+      "taskMs": 1.74
+    },
+    {
+      "slug": "wind",
+      "fps": 564,
+      "frameMs": 1.77,
+      "jsMs": 1.14,
+      "taskMs": 1.67
+    },
+    {
+      "slug": "edge-detect",
+      "fps": 583.9,
+      "frameMs": 1.71,
+      "jsMs": 0.56,
+      "taskMs": 1.6
+    },
+    {
+      "slug": "funhouse-mirror",
+      "fps": 588.5,
+      "frameMs": 1.7,
+      "jsMs": 0.56,
+      "taskMs": 1.66
+    },
+    {
+      "slug": "plasma-shader",
+      "fps": 593.5,
+      "frameMs": 1.69,
+      "jsMs": 0.28,
+      "taskMs": 1.18,
+      "rerun": true
+    },
+    {
+      "slug": "vine-growth",
+      "fps": 593,
+      "frameMs": 1.69,
+      "jsMs": 0.23,
+      "taskMs": 1.02
+    },
+    {
+      "slug": "noise",
+      "fps": 604.6,
+      "frameMs": 1.65,
+      "jsMs": 0.53,
+      "taskMs": 1.35
+    },
+    {
+      "slug": "shaky-film",
+      "fps": 605.4,
+      "frameMs": 1.65,
+      "jsMs": 0.63,
+      "taskMs": 1.5
+    },
+    {
+      "slug": "film-tone",
+      "fps": 618.7,
+      "frameMs": 1.62,
+      "jsMs": 0.52,
+      "taskMs": 1.47
+    },
+    {
+      "slug": "glowing-edges",
+      "fps": 626.2,
+      "frameMs": 1.6,
+      "jsMs": 1.13,
+      "taskMs": 1.5
+    },
+    {
+      "slug": "uv-light",
+      "fps": 634,
+      "frameMs": 1.58,
+      "jsMs": 1.08,
+      "taskMs": 1.41
+    },
+    {
+      "slug": "halftone",
+      "fps": 635.4,
+      "frameMs": 1.57,
+      "jsMs": 0.96,
+      "taskMs": 1.47
+    },
+    {
+      "slug": "infinity-mirror",
+      "fps": 636.9,
+      "frameMs": 1.57,
+      "jsMs": 1.03,
+      "taskMs": 1.55
+    },
+    {
+      "slug": "color-filter",
+      "fps": 650.8,
+      "frameMs": 1.54,
+      "jsMs": 0.71,
+      "taskMs": 1.21
+    },
+    {
+      "slug": "liquid-metal",
+      "fps": 648.2,
+      "frameMs": 1.54,
+      "jsMs": 1.1,
+      "taskMs": 1.54
+    },
+    {
+      "slug": "spherize",
+      "fps": 647.7,
+      "frameMs": 1.54,
+      "jsMs": 0.82,
+      "taskMs": 1.41
+    },
+    {
+      "slug": "duotone",
+      "fps": 652.7,
+      "frameMs": 1.53,
+      "jsMs": 1.08,
+      "taskMs": 1.44
+    },
+    {
+      "slug": "murmuration",
+      "fps": 654,
+      "frameMs": 1.53,
+      "jsMs": 1.32,
+      "taskMs": 1.97
+    },
+    {
+      "slug": "vhs-defects",
+      "fps": 673,
+      "frameMs": 1.49,
+      "jsMs": 1.01,
+      "taskMs": 1.39
+    },
+    {
+      "slug": "warp",
+      "fps": 671.4,
+      "frameMs": 1.49,
+      "jsMs": 1.02,
+      "taskMs": 1.53
+    },
+    {
+      "slug": "crt",
+      "fps": 678.8,
+      "frameMs": 1.47,
+      "jsMs": 0.81,
+      "taskMs": 1.54
+    },
+    {
+      "slug": "light-tubes",
+      "fps": 689.2,
+      "frameMs": 1.45,
+      "jsMs": 0.57,
+      "taskMs": 0.97
+    },
+    {
+      "slug": "ink-bleed",
+      "fps": 692.7,
+      "frameMs": 1.44,
+      "jsMs": 1.03,
+      "taskMs": 1.34
+    },
+    {
+      "slug": "invert",
+      "fps": 695.9,
+      "frameMs": 1.44,
+      "jsMs": 1.03,
+      "taskMs": 1.4
+    },
+    {
+      "slug": "moths-to-light",
+      "fps": 695.4,
+      "frameMs": 1.44,
+      "jsMs": 0.47,
+      "taskMs": 0.96
+    },
+    {
+      "slug": "twist",
+      "fps": 705.4,
+      "frameMs": 1.42,
+      "jsMs": 0.51,
+      "taskMs": 1.22
+    },
+    {
+      "slug": "median",
+      "fps": 709.3,
+      "frameMs": 1.41,
+      "jsMs": 0.75,
+      "taskMs": 1.5
+    },
+    {
+      "slug": "tilt-shift",
+      "fps": 724.5,
+      "frameMs": 1.38,
+      "jsMs": 0.72,
+      "taskMs": 1.26
+    },
+    {
+      "slug": "gradient-map",
+      "fps": 727.5,
+      "frameMs": 1.37,
+      "jsMs": 0.83,
+      "taskMs": 1.19
+    },
+    {
+      "slug": "pattern-tessellator",
+      "fps": 734.4,
+      "frameMs": 1.36,
+      "jsMs": 0.1,
+      "taskMs": 0.49,
+      "rerun": true
+    },
+    {
+      "slug": "smoke",
+      "fps": 734.8,
+      "frameMs": 1.36,
+      "jsMs": 0.59,
+      "taskMs": 1.33
+    },
+    {
+      "slug": "self-similar-fractals",
+      "fps": 761.8,
+      "frameMs": 1.31,
+      "jsMs": 0.29,
+      "taskMs": 1.25
+    },
+    {
+      "slug": "orbiting-metal",
+      "fps": 767.6,
+      "frameMs": 1.3,
+      "jsMs": 0.88,
+      "taskMs": 1.75,
+      "rerun": true
+    },
+    {
+      "slug": "channel-offset",
+      "fps": 775.4,
+      "frameMs": 1.29,
+      "jsMs": 0.6,
+      "taskMs": 1.13
+    },
+    {
+      "slug": "gems",
+      "fps": 772.9,
+      "frameMs": 1.29,
+      "jsMs": 0.57,
+      "taskMs": 1.15
+    },
+    {
+      "slug": "mist",
+      "fps": 775.8,
+      "frameMs": 1.29,
+      "jsMs": 0.67,
+      "taskMs": 1.15
+    },
+    {
+      "slug": "crystallize",
+      "fps": 794.5,
+      "frameMs": 1.26,
+      "jsMs": 0.69,
+      "taskMs": 1.08
+    },
+    {
+      "slug": "mosaic",
+      "fps": 797.7,
+      "frameMs": 1.25,
+      "jsMs": 0.59,
+      "taskMs": 1.31
+    },
+    {
+      "slug": "spirograph",
+      "fps": 822.9,
+      "frameMs": 1.22,
+      "jsMs": 0.35,
+      "taskMs": 0.86
+    },
+    {
+      "slug": "delay",
+      "fps": 846.7,
+      "frameMs": 1.18,
+      "jsMs": 0.62,
+      "taskMs": 1
+    },
+    {
+      "slug": "ripple",
+      "fps": 866.7,
+      "frameMs": 1.15,
+      "jsMs": 0.41,
+      "taskMs": 1.03
+    },
+    {
+      "slug": "detail-upscale",
+      "fps": 878,
+      "frameMs": 1.14,
+      "jsMs": 0.74,
+      "taskMs": 1.08
+    },
+    {
+      "slug": "stained-glass",
+      "fps": 886,
+      "frameMs": 1.13,
+      "jsMs": 0.69,
+      "taskMs": 1.18
+    },
+    {
+      "slug": "feedback",
+      "fps": 897.8,
+      "frameMs": 1.11,
+      "jsMs": 0.66,
+      "taskMs": 0.95
+    },
+    {
+      "slug": "animal-coats",
+      "fps": 917.6,
+      "frameMs": 1.09,
+      "jsMs": 0.55,
+      "taskMs": 1.01
+    },
+    {
+      "slug": "holographic-display",
+      "fps": 946.9,
+      "frameMs": 1.06,
+      "jsMs": 0.54,
+      "taskMs": 1
+    },
+    {
+      "slug": "solarize",
+      "fps": 954.1,
+      "frameMs": 1.05,
+      "jsMs": 0.67,
+      "taskMs": 0.99
+    },
+    {
+      "slug": "strobe",
+      "fps": 952.4,
+      "frameMs": 1.05,
+      "jsMs": 0.3,
+      "taskMs": 0.74
+    },
+    {
+      "slug": "camera-lens",
+      "fps": 975.4,
+      "frameMs": 1.03,
+      "jsMs": 0.55,
+      "taskMs": 1.12
+    },
+    {
+      "slug": "rolling-boil",
+      "fps": 970,
+      "frameMs": 1.03,
+      "jsMs": 0.48,
+      "taskMs": 0.87
+    },
+    {
+      "slug": "synthwave",
+      "fps": 994,
+      "frameMs": 1.01,
+      "jsMs": 0.15,
+      "taskMs": 0.75
+    },
+    {
+      "slug": "interlace",
+      "fps": 1020.5,
+      "frameMs": 0.98,
+      "jsMs": 0.57,
+      "taskMs": 0.82
+    },
+    {
+      "slug": "laser-traces",
+      "fps": 1035.8,
+      "frameMs": 0.97,
+      "jsMs": 0.47,
+      "taskMs": 0.9
+    },
+    {
+      "slug": "ocean-surface",
+      "fps": 1032.4,
+      "frameMs": 0.97,
+      "jsMs": 0.46,
+      "taskMs": 0.78
+    },
+    {
+      "slug": "mycelium-pulse",
+      "fps": 1056.7,
+      "frameMs": 0.95,
+      "jsMs": 0.34,
+      "taskMs": 0.64
+    },
+    {
+      "slug": "caustic-water",
+      "fps": 1112.4,
+      "frameMs": 0.9,
+      "jsMs": 0.1,
+      "taskMs": 0.57
+    },
+    {
+      "slug": "silexars-creation",
+      "fps": 1107.1,
+      "frameMs": 0.9,
+      "jsMs": 0.12,
+      "taskMs": 0.65
+    },
+    {
+      "slug": "light-mandala",
+      "fps": 1140.2,
+      "frameMs": 0.88,
+      "jsMs": 0.27,
+      "taskMs": 0.58
+    },
+    {
+      "slug": "moire-lab",
+      "fps": 1142.3,
+      "frameMs": 0.88,
+      "jsMs": 0.35,
+      "taskMs": 0.59
+    },
+    {
+      "slug": "brightness-contrast",
+      "fps": 1168.9,
+      "frameMs": 0.86,
+      "jsMs": 0.47,
+      "taskMs": 0.79
+    },
+    {
+      "slug": "soap-film",
+      "fps": 1180.4,
+      "frameMs": 0.85,
+      "jsMs": 0.28,
+      "taskMs": 0.73
+    },
+    {
+      "slug": "diffraction-grating-3d",
+      "fps": 1193.9,
+      "frameMs": 0.84,
+      "jsMs": 0.41,
+      "taskMs": 0.74
+    },
+    {
+      "slug": "fps-limiter",
+      "fps": 1184.1,
+      "frameMs": 0.84,
+      "jsMs": 0.3,
+      "taskMs": 0.7
+    },
+    {
+      "slug": "infinite-zoom",
+      "fps": 1250.6,
+      "frameMs": 0.8,
+      "jsMs": 0.21,
+      "taskMs": 0.56
+    },
+    {
+      "slug": "mobius-ladybug",
+      "fps": 1277.7,
+      "frameMs": 0.78,
+      "jsMs": 0.43,
+      "taskMs": 0.72
+    },
+    {
+      "slug": "lightning",
+      "fps": 1295.2,
+      "frameMs": 0.77,
+      "jsMs": 0.12,
+      "taskMs": 0.6
+    },
+    {
+      "slug": "escher-tiles",
+      "fps": 1351.6,
+      "frameMs": 0.74,
+      "jsMs": 0.15,
+      "taskMs": 0.67
+    },
+    {
+      "slug": "escher-creatures",
+      "fps": 1367.6,
+      "frameMs": 0.73,
+      "jsMs": 0.05,
+      "taskMs": 0.6
+    },
+    {
+      "slug": "standing-waves",
+      "fps": 1412.4,
+      "frameMs": 0.71,
+      "jsMs": 0.16,
+      "taskMs": 0.46
+    },
+    {
+      "slug": "crystallization",
+      "fps": 1419.8,
+      "frameMs": 0.7,
+      "jsMs": 0.11,
+      "taskMs": 0.5
+    },
+    {
+      "slug": "beat-rings",
+      "fps": 1531.4,
+      "frameMs": 0.65,
+      "jsMs": 0.08,
+      "taskMs": 0.44
+    },
+    {
+      "slug": "hyperbolic-space",
+      "fps": 1533.8,
+      "frameMs": 0.65,
+      "jsMs": 0.09,
+      "taskMs": 0.41
+    },
+    {
+      "slug": "fractal-kaleidoscope",
+      "fps": 1616.6,
+      "frameMs": 0.62,
+      "jsMs": 0.13,
+      "taskMs": 0.47
+    },
+    {
+      "slug": "interference-rings",
+      "fps": 1613.2,
+      "frameMs": 0.62,
+      "jsMs": 0.13,
+      "taskMs": 0.43
+    },
+    {
+      "slug": "egg-speckle",
+      "fps": 1657,
+      "frameMs": 0.6,
+      "jsMs": 0.14,
+      "taskMs": 0.44
+    },
+    {
+      "slug": "azulejos",
+      "fps": 1758.6,
+      "frameMs": 0.57,
+      "jsMs": 0.07,
+      "taskMs": 0.35
+    },
+    {
+      "slug": "wormhole",
+      "fps": 1826.8,
+      "frameMs": 0.55,
+      "jsMs": 0.25,
+      "taskMs": 0.54
+    },
+    {
+      "slug": "moss",
+      "fps": 1909.7,
+      "frameMs": 0.52,
+      "jsMs": 0.2,
+      "taskMs": 0.47
+    },
+    {
+      "slug": "gaudi-column-field",
+      "fps": 2143.8,
+      "frameMs": 0.47,
+      "jsMs": 0.05,
+      "taskMs": 0.28
+    },
+    {
+      "slug": "gaudi-fold-field",
+      "fps": 2269.3,
+      "frameMs": 0.44,
+      "jsMs": 0.05,
+      "taskMs": 0.3
+    },
+    {
+      "slug": "rock-layers",
+      "fps": 2358.4,
+      "frameMs": 0.42,
+      "jsMs": 0.11,
+      "taskMs": 0.34
+    },
+    {
+      "slug": "bright-waves-logo",
+      "fps": 2970.4,
+      "frameMs": 0.34,
+      "jsMs": 0.07,
+      "taskMs": 0.34
+    }
+  ]
+}

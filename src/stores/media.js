@@ -16,6 +16,9 @@ import { putMediaBlob, deleteMediaBlob, allMediaBlobs, clearMediaBlobs } from '.
 
 let idSeq = 1
 export const mediaLibrary = reactive([]) // { id, name, kind:'image'|'video', url, thumb, recorded }
+// The library fills in after startup (blobs come back from IndexedDB), so "this clip is missing" can only be
+// said once hydrated is true.
+export const mediaState = reactive({ hydrated: false })
 
 export function addMediaFile(file) {
   const kind = file.type.startsWith('video') ? 'video' : 'image'
@@ -62,7 +65,8 @@ let hydrated = false
 export async function hydrateMediaLibrary() {
   if (hydrated) return
   hydrated = true
-  const records = await allMediaBlobs()
+  let records = []
+  try { records = await allMediaBlobs() } catch { /* no IndexedDB: an empty library is the real state */ }
   records.sort((a, b) => a.id - b.id)
   for (const rec of records) {
     if (!rec || !rec.blob) continue
@@ -73,6 +77,7 @@ export async function hydrateMediaLibrary() {
     mediaLibrary.push(item)
     makeThumb(item)
   }
+  mediaState.hydrated = true
 }
 
 export function mediaById(id) {

@@ -24,6 +24,10 @@ that things work and look right. Screenshots go to `scripts/scratch/out/`
 | `upscale-shader.mjs [scale]` | Runs the detail-upscale shader on a picture enlarged by `scale`; writes before / after to `out/upscale-shader.png`. |
 
 | `taau-compare.mjs [scale] [spin] [frames] [w] [h] [query]` | Temporal upscaling prototype: renders a sketch (SLUG=mandelbulb by default) native, low-res, and temporal on a synthetic clock and prints PSNR against a 2x supersampled reference plus median frame cost (software renderer: ratios only). |
+| `idle-check.mjs` | Real Patch on the dev server: a static fractal freezes after ~1 s (iframe paused through the deck path, badge shown) and wakes on a param change. |
+| `bake-check.mjs [slug]` | Real Patch: bakes an effect to a loop, checks playback moves, the live iframe is paused, and a param change drops the bake. About a minute. |
+| `autobake-check.mjs [slug]` | Real Patch: a heavy sketch (mandelbulb) is detected as not real time and baked with no clicks. Several minutes on a software renderer. |
+| `problems-check.mjs` | Real Patch on the dev server with a deliberately broken patch (no Output, unwired filter, unknown sketch, wire to a missing node): checks the Problems panel lists them with a fix, the node badges appear, "Add an Output node" clears its issue, a sketch that throws and a blocked camera are reported. |
 | `taau-montage.mjs` | Joins the last compare run's ref / native / low-res / temporal frames into `out/taau-montage.png`. |
 
 `chain-diff.mjs` and `chain-draws.mjs` start `vite preview` on port 4399.

@@ -299,7 +299,36 @@ export function createRuntime() {
   // waking on the same vsync.
   let minInterval = 0 // ms between frames; 0 = every frame
   const lastRun = new WeakMap()
+  // Manual clock (?clock=manual, used by Patch to bake a node to a looping clip): animation frames
+  // run only when the host sends `sketch:step { now, id }`, with that timestamp, and `sketch:stepped`
+  // goes back afterwards. performance.now() / Date.now() follow the same clock so a sketch that
+  // measures its own dt sees steady frames however fast the host steps.
+  // Tell the host (Patch shows it as a problem on the node) when the sketch throws, at most a few times.
+  let errorsSent = 0
+  const reportError = (m) => {
+    if (errorsSent++ >= 3) return
+    try { window.parent?.postMessage({ type: 'sketch:error', message: String(m ?? 'error').slice(0, 240) }, '*') } catch { /* no parent */ }
+  }
+  window.addEventListener('error', (e) => reportError(e.message))
+  window.addEventListener('unhandledrejection', (e) => reportError(e.reason?.message ?? e.reason))
+  const manualClock = urlParams.get('clock') === 'manual'
+  let manualQueue = []
+  if (manualClock) {
+    let mnow = 0
+    performance.now = () => mnow
+    Date.now = () => 1.7e12 + mnow
+    window.addEventListener('message', (e) => {
+      const m = e.data
+      if (!m || m.type !== 'sketch:step') return
+      mnow = Number(m.now) || 0
+      const q = manualQueue
+      manualQueue = []
+      for (const cb of q) { try { cb(mnow) } catch (err) { console.error(err) } }
+      window.parent?.postMessage({ type: 'sketch:stepped', id: m.id }, '*')
+    })
+  }
   window.requestAnimationFrame = (cb) => {
+    if (manualClock) { manualQueue.push(cb); return manualQueue.length }
     if (paused) {
       heldRaf.push(cb)
       return heldRaf.length

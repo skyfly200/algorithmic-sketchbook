@@ -50,14 +50,19 @@ import perfScores from '../registry/perf.json'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
-import { mediaLibrary, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, sharedCameraStream, flipSharedCamera, startSharedScreen, stopSharedScreen, sharedScreenOn, sharedScreenStream } from '../stores/media.js'
+import { mediaLibrary, mediaState, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, sharedCameraStream, flipSharedCamera, startSharedScreen, stopSharedScreen, sharedScreenOn, sharedScreenStream } from '../stores/media.js'
 import { pickFromGooglePhotos, setGooglePhotosClientId, googlePhotosConfigured } from '../lib/googlePhotos.js'
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
 // feed, so in the graph they live behind a dedicated Filter node type that
 // pipes its video input straight into them.
-import { FILTER_SLUGS, CHAINABLE_SLUG_SET } from '../registry/filters'
+import { FILTER_SLUGS, FILTER_SLUG_SET, CHAINABLE_SLUG_SET } from '../registry/filters'
 import { makeChainCache, chainSets, chainSchedule } from '../lib/patch/filterChain.js'
 import { createChainRunner } from '../lib/patch/chainRunner.js'
+import { StaticTracker, hashPixels } from '../lib/patch/idle.js'
+import { BakeAdvisor, BakeBudget, bakeKey, bakeEligibility } from '../lib/patch/bake.js'
+import { bakeNode, createLoopPlayer } from '../lib/patch/baker.js'
+import { diagnoseDeck, sortIssues, problemCount, worstByNode, issueSignature, runtimeIssue } from '../lib/patch/diagnostics.js'
+import ProblemsPanel from '../components/patch/ProblemsPanel.vue'
 
 const router = useRouter()
 const store = useSketchStore()
@@ -131,6 +136,8 @@ function applyResolution(label) {
   H = dim.h
   resLabel.value = label
   localStorage.setItem(RES_KEY, label)
+  idle.wakeAll(performance.now()) // a new size is a new picture
+  dropAllBakes()
   // Resize every existing node canvas to the new resolution.
   for (const s of rtState.values()) {
     s.out.width = W
@@ -200,6 +207,257 @@ for (const d of decks) D.withDeck(d, () => migrateGraph(nodes, edges)) // reconn
 function syncNextId() { nextId = Math.max(nextId, D.maxId() + 1) }
 syncNextId()
 
+// --- idle optimisations: freeze nodes whose picture stopped changing ----------
+// An effect node whose output is identical for ~1 s is not evaluated, and the deck policy pauses
+// its iframe (applyDeckPause), until anything that could change it wakes it (lib/patch/idle.js).
+// Only nodes with no control links, no mappings and while the mic is off qualify, because those
+// are the only ways a sketch's picture can change without the host knowing.
+const FREEZE_KEY = 'patch.freezeStatic'
+const freezeStatic = ref(localStorage.getItem(FREEZE_KEY) !== '0')
+const idle = new StaticTracker()
+const frozenUi = reactive({}) // node id -> true while frozen (for the badge)
+function toggleFreezeStatic() {
+  freezeStatic.value = !freezeStatic.value
+  localStorage.setItem(FREEZE_KEY, freezeStatic.value ? '1' : '0')
+  idle.wakeAll(performance.now())
+}
+const IDLE_WAKE_MSGS = new Set(['sketch:set-param', 'sketch:set-mappings', 'sketch:apply-scene', 'sketch:set-state', 'sketch:auto-map', 'sketch:set-audio', 'sketch:action', 'sketch:beat'])
+// --- tier 2: bake slow nodes that depend only on time into a looping clip -----------------------
+// A node that keeps running well below its assigned rate, and that nothing external can change
+// (no links, no mappings, mic off), is recorded once in a hidden iframe on a manual clock and
+// played back instead; its live iframe is paused through the deck policy. Any change to the node
+// drops the recording. See lib/patch/bake.js and baker.js.
+const AUTOBAKE_KEY = 'patch.autoBake'
+const autoBake = ref(localStorage.getItem(AUTOBAKE_KEY) !== '0')
+const bakes = new Map() // node id -> { state: 'baking' | 'ready', key, ctl, player, bytes }
+const bakeUi = reactive({}) // node id -> { phase, progress, mb } for the badges
+const slowUi = reactive({}) // node id -> true while it keeps missing its frame rate (offers a manual bake)
+const advisor = new BakeAdvisor()
+const bakeBudget = new BakeBudget(400 * 1024 * 1024)
+let bakeBusy = false
+function toggleAutoBake() {
+  autoBake.value = !autoBake.value
+  localStorage.setItem(AUTOBAKE_KEY, autoBake.value ? '1' : '0')
+}
+const bakeReady = (id) => bakes.get(id)?.state === 'ready'
+function dropBake(id) {
+  const b = bakes.get(id)
+  if (!b) return
+  b.ctl?.abort()
+  b.player?.dispose()
+  bakes.delete(id)
+  bakeBudget.remove(id)
+  delete bakeUi[id]
+}
+function dropAllBakes() { for (const id of [...bakes.keys()]) dropBake(id) }
+// the user sent a node back to live: leave it alone until it changes
+function unbake(n) { dropBake(n.id); advisor.block(n.id) }
+const deckOfNode = (id) => decks.find((d) => d.nodes.some((x) => x.id === id))
+function bakeKeyOf(n) {
+  const ec = effectControls.get(n.id)
+  const deck = deckOfNode(n.id)
+  return bakeKey({
+    slug: n.params.slug, seed: n.params.seed, values: ec?.values ?? {}, state: ec?.state ?? null,
+    mappingCount: ec?.mappings?.length ?? 0, linkCount: deck ? deck.links.filter((l) => l.node === n.id).length : 0,
+    width: W, height: H,
+  })
+}
+function bakeCheck(n) {
+  const ec = effectControls.get(n.id)
+  const deck = deckOfNode(n.id)
+  const f = frameList.find((x) => x.nodeId === n.id)
+  return bakeEligibility({
+    isEffect: n.type === 'effect', hasSlug: !!n.params.slug,
+    modulated: !!(deck && deck.links.some((l) => l.node === n.id)) || !!ec?.mappings?.length,
+    micOn: micOn.value, ready: !!(f?.ready && ec?.schema),
+  })
+}
+// Drop any recording whose node changed, went away, or can no longer be baked.
+function bakeRevalidate() {
+  if (!bakes.size) return
+  const byId = new Map(D.allNodes().map((n) => [n.id, n]))
+  for (const [id, b] of [...bakes]) {
+    const n = byId.get(id)
+    if (!n || !bakeCheck(n).ok || bakeKeyOf(n) !== b.key) dropBake(id)
+  }
+}
+async function startBake(n, auto = false) {
+  if (bakeBusy || bakes.has(n.id) || !bakeCheck(n).ok) return false
+  const ec = effectControls.get(n.id)
+  const key = bakeKeyOf(n)
+  clearIssue('BAKE_FAILED', n.id)
+  const b = { state: 'baking', key, ctl: new AbortController() }
+  bakes.set(n.id, b)
+  bakeBusy = true
+  bakeUi[n.id] = { phase: 'baking', progress: 0 }
+  try {
+    const res = await bakeNode({
+      src: effectSrc(n), values: plain(ec.values), state: plain(ec.state ?? null), width: W, height: H,
+      signal: b.ctl.signal, yieldMs: auto ? 6 : 0,
+      onProgress: (p) => { if (bakeUi[n.id]) bakeUi[n.id].progress = p.done / p.total },
+    })
+    if (bakes.get(n.id) !== b) return false // cancelled or dropped while recording
+    const node = D.allNodes().find((x) => x.id === n.id)
+    if (!node || bakeKeyOf(node) !== key) { dropBake(n.id); return false } // it changed while recording
+    b.player = createLoopPlayer({ frames: res.frames, fps: res.fps })
+    b.state = 'ready'
+    b.bytes = res.bytes
+    bakeUi[n.id] = { phase: 'ready', mb: +(res.bytes / 1048576).toFixed(1) }
+    for (const id of bakeBudget.add(n.id, res.bytes, performance.now())) dropBake(id)
+    return true
+  } catch (e) {
+    if (bakes.get(n.id) === b) { bakes.delete(n.id); delete bakeUi[n.id] }
+    if (e?.name !== 'AbortError') { advisor.block(n.id); raiseIssue('BAKE_FAILED', { nodeId: n.id, label: issueLabel(n), detail: e?.message, deck: deckIdxOf(n.id) }) }
+    return false
+  } finally {
+    bakeBusy = false
+  }
+}
+// sketch:fps (once a second from each running sketch) is the "is it real time?" signal. It is
+// measured in the sketch's own loop, unlike the compositor's copy cost, and is compared with the
+// rate the scheduler asked of that node.
+function onFpsMessage(d, source) {
+  for (const [id, s] of rtState) {
+    if (s.iframe?.contentWindow !== source) continue
+    const f = frameList.find((x) => x.nodeId === id)
+    if (!f || performance.now() - f.born < 4000) return // still compiling / warming up
+    const want = Math.min(plans[0].rates.get(id) ?? plans[1].rates.get(id) ?? 60, 1000 / refreshMs)
+    advisor.report(id, d.fps, want)
+    return
+  }
+}
+// Runs a few times a second from the loop: keep recordings valid, and start one when the advisor says so.
+function bakeTick(now) {
+  bakeRevalidate()
+  const nodesAll = D.allNodes()
+  for (const n of nodesAll) { if (n.type === 'effect') { const slow = advisor.slow(n.id); if (!!slowUi[n.id] !== slow) slowUi[n.id] = slow } }
+  if (!autoBake.value || bakeBusy || micOn.value) return
+  const cands = []
+  for (const n of nodesAll) {
+    if (n.type !== 'effect' || !n.params.slug || bakes.has(n.id)) continue
+    advisor.observeKey(n.id, bakeKeyOf(n), now)
+    if (bakeCheck(n).ok && !plans.some((p) => p.protect.has(n.id))) cands.push(n.id)
+  }
+  const id = advisor.pick(now, cands)
+  if (id != null) startBake(nodesAll.find((n) => n.id === id), true)
+}
+// --- problems: error checking with messages and fixes (lib/patch/diagnostics.js) --------------
+// diagnoseDeck() checks each deck's wiring; things only the running app can see (a sketch that threw or
+// never loaded, a blocked camera, a clip that will not play) are raised as runtime issues. The list is
+// recomputed about once a second (and soon after any edit) and replaced only when it really changed.
+const problemsOpen = ref(false)
+const issues = ref([]) // visible issues, worst first
+const runtimeIssues = reactive(new Map()) // key -> issue
+const dismissedKeys = reactive(new Set()) // dismissed this session
+const SKETCH_LOAD_TIMEOUT_MS = 25000 // a heavy shader can legitimately compile for a long time on a slow machine
+let issueSig = ''
+let lintAt = 0
+let prunedTotal = 0
+const problemTotal = computed(() => problemCount(issues.value))
+const nodeIssueSev = computed(() => worstByNode(issues.value))
+const editIdxNow = computed(() => D.editIdx.value)
+function nodeIssueTip(id) {
+  const mine = issues.value.filter((i) => i.nodeId === id && i.severity !== 'info')
+  if (!mine.length) return ''
+  const i = mine[0]
+  return i.title + ': ' + i.message + ' How to fix: ' + i.fix + (mine.length > 1 ? ' (+' + (mine.length - 1) + ' more in the Problems list)' : '')
+}
+function raiseIssue(code, d = {}) { const i = runtimeIssue(code, d); runtimeIssues.set(i.key, i); lintAt = 0 }
+function clearIssue(code, nodeId = null) { if (runtimeIssues.delete(code + ':' + (nodeId ?? '') + ':')) lintAt = 0 }
+const issueLabel = (n) => n.name || nodeTitle(n) + ' #' + n.id // "Effect #2", so two nodes of one type can be told apart
+const deckIdxOf = (id) => Math.max(0, decks.findIndex((d) => d.nodes.some((x) => x.id === id)))
+function lint(now) {
+  const ctx = {
+    sketchOf: (slug) => { const s = store.bySlug(slug); return s ? { title: s.title, isFilter: FILTER_SLUG_SET.has(slug) } : null },
+    mediaReady: mediaState.hydrated,
+    mediaExists: (id) => !!mediaById(id),
+    cameraOn: cameraOn.value,
+    screenOn: screenOn.value,
+    micOn: micOn.value,
+    schemaOf: (id) => { const sc = effectControls.get(id)?.schema; return sc ? new Set(Object.keys(sc)) : null },
+    hasImage: (n) => !!n.params.src || (n.params.mediaId != null && !!mediaById(n.params.mediaId)),
+  }
+  const list = []
+  for (let i = 0; i < 2; i++) {
+    if (i === 1 && !mix.enabled) continue
+    const d = decks[i]
+    list.push(...diagnoseDeck({ nodes: d.nodes, edges: d.edges, links: d.links, deckIdx: i, deckName: mix.enabled ? d.name : '' }, ctx))
+  }
+  // a sketch that has not announced itself after a long time (only for decks that are actually running)
+  const modes = [deckMode(0), deckMode(1)]
+  for (const f of frameList) {
+    if (f.nodeId == null || f.ready || !f.src || now - f.born < SKETCH_LOAD_TIMEOUT_MS) continue // (no src: the sketch is missing, already reported)
+    const di = deckIdxOf(f.nodeId)
+    if (modes[di] === 'paused' || modes[di] === 'off') continue
+    const n = decks[di].nodes.find((x) => x.id === f.nodeId)
+    if (n) list.push(runtimeIssue('SKETCH_LOAD_FAILED', { nodeId: n.id, label: issueLabel(n), seconds: SKETCH_LOAD_TIMEOUT_MS / 1000, deck: di }))
+  }
+  for (const i of runtimeIssues.values()) list.push(i)
+  const visible = sortIssues(list.filter((i) => !dismissedKeys.has(i.key)))
+  const sig = issueSignature(visible)
+  if (sig !== issueSig) { issueSig = sig; issues.value = visible }
+}
+function onSketchError(d, source) {
+  for (const [id, s] of rtState) {
+    if (s.iframe?.contentWindow !== source) continue
+    const di = deckIdxOf(id)
+    const n = decks[di].nodes.find((x) => x.id === id)
+    if (n) raiseIssue('SKETCH_ERROR', { nodeId: id, label: issueLabel(n), detail: d.message, deck: di })
+    return
+  }
+}
+function focusNode(id) {
+  const di = decks.findIndex((d) => d.nodes.some((x) => x.id === id))
+  const n = di >= 0 ? decks[di].nodes.find((x) => x.id === id) : null
+  if (!n) return
+  if (di !== D.editIdx.value) { showToast('That node is on deck ' + decks[di].name + '. Switch to that deck to see it.'); return }
+  selected.value = id
+  selectedSet.clear()
+  selectedSet.add(id)
+  const br = board.value?.getBoundingClientRect()
+  if (br) { view.panX = br.width / 2 - (n.x + nodeW(n) / 2) * view.zoom; view.panY = br.height / 2 - (n.y + 100) * view.zoom }
+}
+// One-click fixes. They run inside the issue's own deck and go through persist(), so undo works.
+function fixIssue(i) {
+  const a = i.action
+  if (!a) return
+  const inDeck = (fn) => D.withDeck(decks[i.deck ?? D.editIdx.value], fn)
+  switch (a.type) {
+    case 'addOutput':
+      inDeck(() => {
+        addNode('output')
+        const o = nodes[nodes.length - 1]
+        if (a.connectFrom != null) edges.push({ from: a.connectFrom, to: o.id, port: 0 })
+        persist()
+      })
+      break
+    case 'connect':
+      inDeck(() => {
+        if (!edges.some((e) => e.to === a.to && e.port === a.port)) edges.push({ from: a.from, to: a.to, port: a.port })
+        persist()
+      })
+      break
+    case 'removeNode': inDeck(() => removeNode(a.nodeId)); break
+    case 'removeLink':
+      inDeck(() => {
+        const k = links.findIndex((l) => l.from === a.link.from && l.node === a.link.node && l.param === a.link.param && (l.srcPort ?? 0) === (a.link.srcPort ?? 0))
+        if (k >= 0) { links.splice(k, 1); persist() }
+      })
+      break
+    case 'toggleMic': clearIssue('MIC_DENIED'); toggleMic(); break
+    case 'toggleCamera': clearIssue('CAMERA_DENIED'); toggleCamera(); break
+    case 'import': wizOpen.value = true; break
+    case 'focus': focusNode(a.nodeId); break
+  }
+  lintAt = 0
+  nextTick(() => lint(performance.now()))
+}
+function dismissIssue(i) { dismissedKeys.add(i.key); lintAt = 0; lint(performance.now()) }
+// wires saved pointing at nodes that no longer exist are dropped on load, and the user is told
+for (const d of decks) D.withDeck(d, () => pruneOrphans(true))
+if (import.meta.env?.DEV) window.__patchProblems = { lint: () => lint(performance.now()), get issues() { return issues.value }, runtimeIssues, dismissedKeys }
+if (import.meta.env?.DEV) window.__patchPerf = { idle, frozenUi, postToEffect: (...a) => postToEffect(...a), persist: () => persist(), framePaused: (id) => frameList.find((f) => f.nodeId === id)?.paused, bakes, bakeUi, advisor, get effectControls() { return effectControls }, setEffectParam: (...a) => setEffectParam(...a), bakeNow: (id) => startBake(D.allNodes().find((n) => n.id === id)), dropBake } // test hook
+
 // --- undo / redo: every persisted change pushes the previous graph state ----
 const undoStack = reactive([])
 const redoStack = reactive([])
@@ -218,6 +476,8 @@ function persist() {
   // Autosave carries the effect sketches' own param values + mappings too, so a
   // browser reload restores the whole patch — not just the node graph.
   storeGraph()
+  idle.wakeAll(performance.now()) // an edit may change any node's picture
+  bakeRevalidate()
   if (restoring || D.scopeIdx() !== D.editIdx.value) return // undo history belongs to the edited deck only
   const s = snapshot()
   if (s !== lastSnap) {
@@ -295,6 +555,9 @@ function st(id) {
 // state is dropped, so deleting/undoing Camera nodes doesn't leak the GPU.
 function disposeRuntime(id) {
   chainRunner?.drop(id)
+  dropBake(id)
+  idle.forget(id)
+  advisor.forget(id)
   const s = rtState.get(id)
   if (s?.three) {
     for (const o of s.three.meshes.values()) disposeObject(o)
@@ -362,15 +625,17 @@ function removeNode(id) {
 // loaded after a node was deleted, or a control link whose source port
 // disappeared when the node's type changed, would otherwise leave a wire
 // pointing at nothing. Returns true if anything was removed.
-function pruneOrphans() {
+function pruneOrphans(report = false) {
   const byId = new Map(nodes.map((n) => [n.id, n]))
   let changed = false
+  let removed = 0
   for (let k = edges.length - 1; k >= 0; k--) {
     const e = edges[k]
     const to = byId.get(e.to)
     if (!byId.has(e.from) || !to || e.port >= (TYPES[to.type]?.ins ?? 0)) {
       edges.splice(k, 1)
       changed = true
+      removed++
     }
   }
   for (let k = links.length - 1; k >= 0; k--) {
@@ -380,8 +645,11 @@ function pruneOrphans() {
     if (!from || !tgt || (l.srcPort ?? 0) >= outCount(from)) {
       links.splice(k, 1)
       changed = true
+      removed++
     }
   }
+  // a patch that loads with wires pointing nowhere is worth saying so (not when a node was just deleted)
+  if (report && removed) { prunedTotal += removed; raiseIssue('PRUNED_WIRES', { detail: prunedTotal }) }
   return changed
 }
 
@@ -1478,10 +1746,10 @@ function syncFrames() {
   for (const n of D.allNodes()) if (isFrameNode(n)) want.set(n.id, effectSrc(n))
   for (let i = frameList.length - 1; i >= 0; i--) {
     const f = frameList[i]
-    if (f.nodeId != null && want.get(f.nodeId) !== f.src) frameList.splice(i, 1)
+    if (f.nodeId != null && want.get(f.nodeId) !== f.src) { frameList.splice(i, 1); idle.forget(f.nodeId) }
   }
   for (const [id, src] of want) {
-    if (!frameList.some((f) => f.nodeId === id)) frameList.push(newFrame(src, id))
+    if (!frameList.some((f) => f.nodeId === id)) { frameList.push(newFrame(src, id)); idle.forget(id); clearIssue('SKETCH_ERROR', id) }
   }
 }
 // Where a cue loads: the edited deck normally; with decks on, the off-air deck,
@@ -1597,8 +1865,10 @@ async function toggleCamera() {
     try {
       await startSharedCamera()
       cameraOn.value = true
+      clearIssue('CAMERA_DENIED')
     } catch {
       cameraOn.value = false
+      raiseIssue('CAMERA_DENIED')
     }
   }
 }
@@ -1623,6 +1893,7 @@ function mediaEl(node) {
   const want = p.mode === 'camera' ? 'camera' : p.mode === 'screen' ? 'screen' : `media:${p.mediaId}`
   if (s.mediaWant !== want) {
     s.mediaWant = want
+    clearIssue('VIDEO_PLAYBACK', node.id)
     if (s.mediaEl) { try { s.mediaEl.pause?.() } catch {}; s.mediaEl.srcObject = null; s.mediaEl.removeAttribute('src'); s.mediaEl = null }
     if (p.mode === 'camera') {
       const v = document.createElement('video')
@@ -1641,10 +1912,12 @@ function mediaEl(node) {
           const v = document.createElement('video')
           v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = true
           v.src = item.url; v.play().catch(() => {})
+          v.onerror = () => raiseIssue('VIDEO_PLAYBACK', { nodeId: node.id, label: issueLabel(node), detail: item.name, deck: deckIdxOf(node.id) })
           s.mediaEl = v
         } else {
           const img = new Image()
           img.src = item.url
+          img.onerror = () => raiseIssue('VIDEO_PLAYBACK', { nodeId: node.id, label: issueLabel(node), detail: item.name, deck: deckIdxOf(node.id) })
           s.mediaEl = img
         }
       }
@@ -1952,6 +2225,8 @@ function toggleParams(id) {
 function onEffectMessage(e) {
   const d = e.data
   if (d?.type === 'filter:program' || d?.type === 'filter:uniforms' || d?.type === 'filter:texture') return onChainMessage(d, e.source)
+  if (d?.type === 'sketch:fps') return onFpsMessage(d, e.source)
+  if (d?.type === 'sketch:error') return onSketchError(d, e.source)
   if (d?.type !== 'sketch:ready' && d?.type !== 'sketch:state' && d?.type !== 'sketch:loaded') return
   const fr = frameList.find((x) => x.el?.contentWindow === e.source)
   if (fr) {
@@ -2002,6 +2277,7 @@ const plain = (x) => JSON.parse(JSON.stringify(x))
 function postToEffect(id, msg) {
   const win = rtState.get(id)?.iframe?.contentWindow
   if (!win) return
+  if (IDLE_WAKE_MSGS.has(msg?.type)) { idle.wake(id, performance.now()); if (bakes.has(id)) bakeRevalidate() }
   // Fast path for primitive-carrying messages (set-param streams every frame);
   // only pay the clone cost when a reactive proxy actually blocks the post.
   try { win.postMessage(msg, '*') } catch { win.postMessage(plain(msg), '*') }
@@ -2059,8 +2335,11 @@ async function toggleMic() {
   try {
     await beat.start()
     micOn.value = true
+    clearIssue('MIC_DENIED')
+    idle.wakeAll(performance.now()) // live audio reaches every sketch, so nothing may stay frozen
+    dropAllBakes() // ...and a recording cannot react to it
   } catch {
-    /* no mic */
+    raiseIssue('MIC_DENIED') // the browser refused (or there is no microphone)
   }
 }
 function broadcastBeat(ts) {
@@ -2075,6 +2354,7 @@ function broadcastBeat(ts) {
     beat: pendingBeat,
     energy: 1,
   }
+  if (pendingBeat) idle.wakeAll(ts) // a beat can flash a sketch that looked static
   pendingBeat = false
   for (const s of rtState.values()) s.iframe?.contentWindow?.postMessage(msg, '*')
 }
@@ -2458,6 +2738,11 @@ function onChainMessage(d, source) {
 function evalNode(node) {
   const s = st(node.id)
   const octx = s.octx
+  const baked = node.type === 'effect' ? bakes.get(node.id) : null
+  if (baked?.state === 'ready') { // play the recording (frames are already the node's size); keep the last frame until one decodes
+    if (baked.player.draw(octx, performance.now(), W, H) >= 0) bakeBudget.touch(node.id, performance.now())
+    return
+  }
   octx.globalCompositeOperation = 'source-over'
   octx.globalAlpha = 1
   octx.filter = 'none'
@@ -2599,7 +2884,34 @@ function refreshPlan(i, now) {
 }
 let bgCursor = 0
 // Should this node be re-rendered on this compositor pass?
+// Idle sampling for a freshly evaluated effect node (see the idle section near the top).
+const idleCv = document.createElement('canvas')
+idleCv.width = 128
+idleCv.height = 72
+const idleCtx = idleCv.getContext('2d', { willReadFrequently: true })
+idleCtx.imageSmoothingQuality = 'high'
+const IDLE_GRACE_MS = 2500 // a frame that has only just loaded may not have drawn yet
+function idleEligible(n) {
+  return freezeStatic.value && !micOn.value && n.type === 'effect' && !!n.params.slug && !nodeModulated(n)
+}
+function idleSample(n, s, now) {
+  if (!idleEligible(n)) {
+    if (idle.phase(n.id) !== 'live') idle.wake(n.id, now)
+    return
+  }
+  if (!idle.wantSample(n.id, now)) return
+  const f = frameList.find((x) => x.nodeId === n.id)
+  if (!f?.ready || now - f.born < IDLE_GRACE_MS) return
+  idleCtx.drawImage(s.out, 0, 0, idleCv.width, idleCv.height)
+  idle.observe(n.id, hashPixels(idleCtx.getImageData(0, 0, idleCv.width, idleCv.height).data), now)
+}
 function shouldEval(n, s, now) {
+  if (n.type === 'effect') {
+    const b = bakes.get(n.id)
+    if (b?.state === 'ready') return b.player.due(performance.now()) // baked: a new frame only when the loop moves on
+    idle.tick(n.id, now)
+    if (idle.isFrozen(n.id)) return false // static: keep the last frame, no copy, no version bump
+  }
   if (!plan.live.has(n.id)) {
     if (plan.protect.has(n.id)) return true
     return backgroundSlot(bgCursor++, passCount, 6) // idle previews take turns
@@ -2655,9 +2967,11 @@ function deckMode(i) {
 // Pause/resume a deck's iframes to match its mode (a frame is only paused once
 // it has loaded, so a freshly cued deck still warms up and draws a first frame).
 function applyDeckPause(i, mode, byNode) {
-  const want = mode === 'paused' || mode === 'off'
+  const deckWant = mode === 'paused' || mode === 'off'
   for (const n of decks[i].nodes) {
     const f = byNode.get(n.id)
+    // a frozen (static) node is held by the same policy, so the two never fight over f.paused
+    const want = deckWant || idle.isFrozen(n.id) || bakeReady(n.id)
     if (!f || !f.el || (want && !f.loaded) || !!f.paused === want) continue
     f.paused = want
     try { f.el.contentWindow?.postMessage({ type: 'sketch:pause', paused: want }, '*') } catch { /* frame gone */ }
@@ -2738,6 +3052,7 @@ function loop(ts) {
           s.ver = (s.ver ?? 0) + 1
           s.lastEval = now
           s.cost = (s.cost ?? 0) * 0.9 + (performance.now() - te) * 0.1
+          if (n.type === 'effect' && !bakeReady(n.id)) idleSample(n, s, now)
         }
       })
     }
@@ -2780,6 +3095,9 @@ function loop(ts) {
     if (now - costWindow >= 300) {
       costWindow = now
       for (const n of nodes) { const c = rtState.get(n.id)?.cost; if (c != null) nodeCost[n.id] = +c.toFixed(2) }
+      for (const n of nodes) { const z = idle.isFrozen(n.id); if (!!frozenUi[n.id] !== z) frozenUi[n.id] = z } // snowflake badge
+      bakeTick(now)
+      if (now - lintAt > 1000) { lintAt = now; lint(now) }
     }
   }
   raf = requestAnimationFrame(loop)
@@ -3427,7 +3745,9 @@ function loadRouting(r) {
   normalizeNodes(data.nodes)
   installGraph(data)
   migrateGraph(nodes, edges) // reconnect legacy Polygon-Mask routings
-  pruneOrphans()
+  prunedTotal = 0
+  runtimeIssues.delete('PRUNED_WIRES::')
+  pruneOrphans(true)
   syncNextId()
   // Keep runtime state (canvases, bound iframes/video) for node ids that
   // survive the swap — Vue won't re-mount same-keyed iframes, so clearing
@@ -3514,7 +3834,7 @@ function remoteTargets() {
       min: sp.min ?? 0, max: sp.max ?? 1, step: sp.step ?? 0.01, options: sp.options ?? null,
       value: c.values?.[name] ?? sp.value ?? 0,
     }))
-    if (params.length) out.push({ id: String(n.id), label: nodeTitle(n), params })
+    if (params.length) out.push({ id: String(n.id), label: issueLabel(n), params })
   }
   return out
 }
@@ -3989,6 +4309,33 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
         title="FPS counter (compositor rate)"
         @click="toggleFps"
       />
+      <v-btn
+        icon="mdi-snowflake"
+        variant="text"
+        size="small"
+        :color="freezeStatic ? 'primary' : undefined"
+        :title="freezeStatic ? 'Static nodes are paused to save GPU time (click to turn off)' : 'Pause nodes whose picture has stopped changing (click to turn on)'"
+        @click="toggleFreezeStatic"
+      />
+      <v-btn
+        icon="mdi-movie-roll"
+        variant="text"
+        size="small"
+        :color="autoBake ? 'primary' : undefined"
+        :title="autoBake ? 'Slow nodes that only depend on time are baked to a looping clip automatically (click to turn off)' : 'Bake slow, time-only nodes to a looping clip automatically (click to turn on)'"
+        @click="toggleAutoBake"
+      />
+      <v-badge :content="problemTotal" :model-value="problemTotal > 0" color="error" floating>
+        <v-btn
+          icon="mdi-alert-circle-outline"
+          variant="text"
+          size="small"
+          :color="problemTotal ? 'error' : undefined"
+          :title="problemTotal ? problemTotal + ' problem' + (problemTotal === 1 ? '' : 's') + ' in this patch (click for how to fix them)' : 'Check this patch for problems'"
+          data-tour="patch-problems"
+          @click="problemsOpen = !problemsOpen"
+        />
+      </v-badge>
       <v-menu>
         <template #activator="{ props }">
           <v-btn v-bind="props" size="small" variant="tonal" prepend-icon="mdi-monitor-screenshot">{{ resLabel }}</v-btn>
@@ -4187,7 +4534,7 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
         :key="n.id"
         :data-node-id="n.id"
         class="node"
-        :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked, 'node--slow': nodeSlow(n) }"
+        :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked, 'node--slow': nodeSlow(n), 'node--error': nodeIssueSev.get(n.id) === 'error', 'node--warn': nodeIssueSev.get(n.id) === 'warning' }"
         :style="{ left: n.x + 'px', top: n.y + 'px', width: nodeW(n) + 'px', zIndex: selected === n.id || n.id === frontNodeId ? 20 : (selectedSet.has(n.id) ? 14 : undefined) }"
         @pointerdown.capture="frontNodeId = n.id"
       >
@@ -4211,6 +4558,11 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
           <span v-else class="node-name" title="Double-click to rename">{{ nodeTitle(n) }}</span>
           <span v-if="nodeCostMs(n) > 2.5" class="node-ms" :class="nodeCostLevel(n)" :title="`${nodeCostMs(n).toFixed(1)} ms to render this node each frame`">{{ nodeCostMs(n).toFixed(1) }}ms</span>
           <v-icon v-if="nodeSlow(n)" icon="mdi-alert" size="16" class="node-warn" :title="nodeSlowReason(n)" @pointerdown.stop />
+          <v-icon v-if="nodeIssueSev.get(n.id) === 'error' || nodeIssueSev.get(n.id) === 'warning'" :icon="nodeIssueSev.get(n.id) === 'error' ? 'mdi-alert-circle' : 'mdi-alert'" size="15" :class="'node-issue node-issue--' + nodeIssueSev.get(n.id)" :title="nodeIssueTip(n.id)" @pointerdown.stop @click="problemsOpen = true" />
+          <v-icon v-if="frozenUi[n.id]" icon="mdi-snowflake" size="14" class="node-frozen" title="Static: paused to save GPU time. Any change wakes it." @pointerdown.stop />
+          <span v-if="bakeUi[n.id]?.phase === 'baking'" class="node-bake" title="Recording a looping clip of this node... click to cancel" @pointerdown.stop @click="unbake(n)">&#9210; {{ Math.round(bakeUi[n.id].progress * 100) }}%</span>
+          <v-icon v-else-if="bakeUi[n.id]?.phase === 'ready'" icon="mdi-movie-open-play" size="14" class="node-baked" :title="'Baked: playing a recorded loop (' + bakeUi[n.id].mb + ' MB) instead of rendering live, to save GPU time. Any change to the node, or a click here, goes back to live.'" @pointerdown.stop @click="unbake(n)" />
+          <v-icon v-else-if="n.type === 'effect' && (slowUi[n.id] || nodeSlow(n)) && bakeCheck(n).ok" icon="mdi-record-circle-outline" size="14" class="node-bake-offer" title="This node is slow. Click to record a short looping clip and play that instead. A recording will not react to audio or inputs." @pointerdown.stop @click="startBake(n)" />
           <v-icon :icon="bodyEyeIcon(n)" size="13" class="node-lock" :class="{ 'node-keep-on': n.pinBody }" :title="bodyEyeTitle(n)" @pointerdown.stop @click="cycleBody(n)" />
           <v-icon v-if="TYPES[n.type].ins > 0" icon="mdi-backup-restore" size="13" class="node-lock" title="Replace the whole branch feeding this node" @pointerdown.stop @click="rerollUpstream(n)" />
           <v-icon v-if="autoCanTouch(n)" :icon="n.keep ? 'mdi-pin' : 'mdi-pin-outline'" size="13" class="node-lock" :class="{ 'node-keep-on': n.keep }" :title="n.keep ? 'Kept — Autopilot won’t reshuffle this (click to allow)' : 'Keep — protect from Autopilot reshuffle'" @pointerdown.stop @click="n.keep = !n.keep; persist()" />
@@ -4730,6 +5082,11 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
 
     <UpscaleDialog v-model="upscaleOpen" :library="mediaLibrary" @result="onUpscaleResult" />
 
+    <ProblemsPanel
+      v-model="problemsOpen" :issues="issues" :edit-idx="editIdxNow" :deck-names="decks.map((d) => d.name)" :show-decks="mix.enabled"
+      @fix="fixIssue" @focus="(i) => focusNode(i.nodeId)" @dismiss="dismissIssue"
+    />
+
     <ShapeTracer v-model="shapeTracerOpen" :mode="shapeTracerMode" :src="shapeTracerSrc" @apply="onTraceShapes" />
 
     <transition name="toast-fade">
@@ -4810,6 +5167,15 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
   border: 0; border-radius: 3px; padding: 1px 4px; font: 600 12px system-ui; color: #06070a;
 }
 .node-close { cursor: pointer; color: rgba(0,0,0,0.6); }
+.node-issue { margin-right: 2px; cursor: pointer; }
+.node-issue--error { color: #ff5c5c; filter: drop-shadow(0 0 4px rgba(255,60,60,0.8)); }
+.node-issue--warning { color: #ffd23f; }
+.node--error { outline: 1px solid rgba(255,92,92,0.75); }
+.node--warn { outline: 1px solid rgba(255,210,63,0.45); }
+.node-frozen { color: #8fd3ff; margin-right: 2px; cursor: help; }
+.node-baked { color: #9be37a; margin-right: 2px; cursor: pointer; }
+.node-bake-offer { color: #ffd23f; margin-right: 2px; cursor: pointer; opacity: 0.85; }
+.node-bake { color: #ff7b72; font-size: 0.66rem; margin-right: 3px; cursor: pointer; }
 .node-warn { color: #ffd23f; margin-right: 2px; filter: drop-shadow(0 0 4px rgba(255,60,60,0.95)); cursor: help; }
 /* live per-node render cost (ms/frame) — green under budget, amber/red over it */
 .node-ms { margin-right: 3px; padding: 0 3px; border-radius: 3px; font: 9px ui-monospace, monospace; line-height: 14px; color: #bfe6c4; background: rgba(0,0,0,0.28); cursor: help; }
