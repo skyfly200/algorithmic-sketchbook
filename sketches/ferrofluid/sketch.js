@@ -142,13 +142,18 @@ function frame(now) {
       // bands on the flanks, and mostly-black valleys for that oily contrast.
       const ry = 2 * nz * ny
       const band = Math.exp(-((ry + 0.55) * (ry + 0.55)) / 0.045) + 0.55 * Math.exp(-((ry - 0.5) * (ry - 0.5)) / 0.06)
-      const env = 0.5 * band
-      const fres = Math.pow(1 - nz, 3)
+      // quiet the reflections toward the pool's rim so no bright halo rings it
+      const rimQ = Math.min(1, Math.max(0, (Math.hypot(x - cxg, y - cyg) / Rg - 0.7) / 0.25))
+      const calm = 1 - 0.95 * rimQ
+      const env = 0.5 * band * calm
+      const fres = Math.pow(1 - nz, 3) * 0.6 * calm
       const base = 0.02
       const r = base + diff * 0.06 * tr + env * tr * 0.85 + fres * tr * 0.3 + spec * 1.7
       const g = base + diff * 0.06 * tg + env * tg * 0.9 + fres * tg * 0.3 + spec * 1.7
       const b = base + diff * 0.07 * tb + env * tb * 1.05 + fres * tb * 0.4 + spec * 1.8
-      const p = h > 0.01 ? 1 : 0 // outside the pool → background
+      // fade the shading out over the last sliver of the mound: the steep rim
+      // slope would otherwise light up as a white halo
+      const p = Math.min(1, Math.max(0, (h - 0.004) / 0.05))
       d[i * 4] = Math.min(255, (r * p + 0.012) * 255)
       d[i * 4 + 1] = Math.min(255, (g * p + 0.014) * 255)
       d[i * 4 + 2] = Math.min(255, (b * p + 0.02) * 255)

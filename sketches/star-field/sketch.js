@@ -37,8 +37,8 @@ const MAXZ = 1
 let stars = []
 let poolSize = 0
 function makeStar(s) {
-  s.x = (Math.random() * 2 - 1)
-  s.y = (Math.random() * 2 - 1)
+  s.x = (Math.random() * 2 - 1) * 2
+  s.y = (Math.random() * 2 - 1) * 2
   s.z = Math.random() * MAXZ
   s.pr = null // previous projected radius factor (reset trail)
 }
@@ -48,7 +48,7 @@ function buildPool() {
   const area = (window.innerWidth * window.innerHeight) / (1280 * 720)
   poolSize = Math.floor((300 + params.count * 2200) * Math.max(0.5, area) * rt.detail)
   stars = new Array(poolSize)
-  for (let i = 0; i < poolSize; i++) { stars[i] = {}; makeStar(stars[i]); stars[i].z = Math.random() }
+  for (let i = 0; i < poolSize; i++) { stars[i] = {}; makeStar(stars[i]); stars[i].z = 0.05 + Math.random() * 0.95 }
 }
 
 function resize() {
@@ -87,44 +87,40 @@ function frame(now) {
   const steerY = (params.steerY - 0.5) * 2
   const vpx = cx + steerX * W * 0.25
   const vpy = cy - steerY * H * 0.25
-  const fov = Math.min(W, H) * 0.9 / params.spread
-  const vel = (params.speed + warp * 2.2) * dt
+  const fov = Math.min(W, H) * 0.5 / params.spread
+  // depth speed (units of z per second): a slow drift, plus warp
+  const vz = (params.speed + warp * 3) * 0.2
   const rot = now * 0.001 * params.twist
   const cosR = Math.cos(rot), sinR = Math.sin(rot)
 
   ctx.globalCompositeOperation = 'lighter'
-  const streakK = warp * 0.9 // how far back the streak reaches (in z)
+  // streak reach in z: a pinpoint at rest, a long hyperspace line at full warp
+  const reach = vz * (0.012 + warp * warp * 0.9)
 
   for (let i = 0; i < poolSize; i++) {
     const s = stars[i]
-    s.z -= vel * (0.15 + s.z * 0.85) // nearer stars move faster
-    if (s.z <= 0.002) { makeStar(s); s.z = MAXZ; continue }
+    s.z -= vz * dt
+    if (s.z <= 0.03) { makeStar(s); s.z = MAXZ; continue }
 
     // rotate the plane coords for the barrel-roll twist
     const rx = s.x * cosR - s.y * sinR
     const ry = s.x * sinR + s.y * cosR
-    const k = fov / (s.z * 1000 + 1) // perspective factor (near stars fling wide)
+    const k = fov / s.z // pinhole projection: stars fan outward as they near
     const px = vpx + rx * k
     const py = vpy + ry * k
-    if (px < -50 || px > W + 50 || py < -50 || py > H + 50) continue
+    if (px < -50 || px > W + 50 || py < -50 || py > H + 50) { if (s.z < 0.5) { makeStar(s); s.z = MAXZ } continue }
 
     const depth = 1 - s.z
-    const size = Math.max(0.5, (0.6 + depth * 2.4) * rt.pixelRatio)
+    const size = Math.max(0.5, (0.5 + depth * 1.8) * rt.pixelRatio)
     ctx.fillStyle = ctx.strokeStyle = starColor(s.z, i)
-    ctx.globalAlpha = Math.min(1, 0.25 + depth * 0.9)
+    // fade in from the far distance so respawns don't pop
+    ctx.globalAlpha = Math.min(1, 0.15 + depth * 1.1) * Math.min(1, (MAXZ - s.z) * 12 + 0.05)
 
-    if (streakK > 0.02) {
-      // project a slightly deeper position and draw a line for the streak
-      const z2 = Math.min(MAXZ, s.z + streakK * (0.05 + depth * 0.12))
-      const k2 = fov / (z2 * 1000 + 1)
-      const px2 = vpx + rx * k2
-      const py2 = vpy + ry * k2
-      ctx.lineWidth = size
-      ctx.lineCap = 'round'
-      ctx.beginPath(); ctx.moveTo(px2, py2); ctx.lineTo(px, py); ctx.stroke()
-    } else {
-      ctx.beginPath(); ctx.arc(px, py, size, 0, Math.PI * 2); ctx.fill()
-    }
+    // the same star one instant ago (a bit deeper) — the line between them is the streak
+    const k2 = fov / (s.z + reach)
+    ctx.lineWidth = size
+    ctx.lineCap = 'round'
+    ctx.beginPath(); ctx.moveTo(vpx + rx * k2, vpy + ry * k2); ctx.lineTo(px, py); ctx.stroke()
 
     // cheap glow for the nearest stars
     if (params.glow > 0.02 && depth > 0.7) {

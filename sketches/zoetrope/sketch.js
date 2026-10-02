@@ -173,12 +173,6 @@ function frame(now) {
   ctx.beginPath(); ctx.ellipse(cx, baseY, Rd * 0.9, rimRy * 0.95, 0, 0, 6.28); ctx.fill()
   ctx.fillStyle = `hsl(${hue}, 42%, 30%)`
   ctx.beginPath(); ctx.ellipse(cx, baseY - rimRy * 0.55, Rd * 0.7, rimRy * 0.7, 0, 0, 6.28); ctx.fill()
-  // spindle from base up into the drum
-  const spg = ctx.createLinearGradient(cx - Rd * 0.05, 0, cx + Rd * 0.05, 0)
-  spg.addColorStop(0, `hsl(${hue}, 40%, 18%)`); spg.addColorStop(0.5, `hsl(${hue}, 45%, 40%)`); spg.addColorStop(1, `hsl(${hue}, 40%, 18%)`)
-  ctx.fillStyle = spg
-  ctx.fillRect(cx - Rd * 0.045, botY, Rd * 0.09, baseY - botY - rimRy * 0.3)
-
   // faint reflection of the drum on the base
   ctx.save()
   ctx.globalAlpha = 0.14
@@ -269,10 +263,6 @@ function frame(now) {
     ctx.lineWidth = 5 * PR
     ctx.beginPath(); ctx.ellipse(cx, y, Rd, ry, 0, 0, 6.28); ctx.stroke()
   }
-  // finial on top of the spindle
-  ctx.fillStyle = `hsl(${(hue + 8) % 360}, 65%, 58%)`
-  ctx.beginPath(); ctx.arc(cx, topY - rimRy * 0.2, Rd * 0.05, 0, 6.28); ctx.fill()
-
   requestAnimationFrame(frame)
 }
 window.addEventListener('resize', resize)

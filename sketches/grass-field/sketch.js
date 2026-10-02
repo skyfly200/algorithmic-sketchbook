@@ -32,7 +32,7 @@ precision highp float;
 uniform vec2 u_res, u_mouse; uniform float u_time,u_seed;
 uniform float u_density,u_wind,u_gust,u_height,u_hue,u_dry,u_flowers,u_sun;
 out vec4 o;
-#define SHELLS 24
+#define SHELLS 44
 const float HZ=0.14;                 // horizon height in uv
 vec3 hsl(float h,float s,float l){ vec3 r=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.); float c=(1.-abs(2.*l-1.))*s; return l+c*(r-.5); }
 float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
@@ -86,7 +86,7 @@ void main(){
     float bh=0.26+0.74*hash(cell)*mix(0.7,1.15,pat);   // wider height variance
     if(y>bh) continue;                // above the tip of this tuft
     vec2 c=0.18+0.64*hash2(cell);     // blade footprint centre in the cell
-    float rad=mix(0.30+0.22*hash(cell+2.3),0.02,y/bh);   // varied blade thickness
+    float rad=mix(0.27+0.15*hash(cell+2.3),0.015,pow(y/bh,0.8));   // varied blade thickness
     if(length(f-c)<rad){
       float tip=y/bh;                 // 0 base .. 1 tip along the blade
       float hj=hash(cell+7.7);
@@ -96,6 +96,7 @@ void main(){
       // vertical gradient (dark shaded base -> bright tip), per-tuft + patch shade
       float lig=mix(0.09,0.44,tip*tip)*(0.82+0.36*pat+0.14*(hj-0.5));
       lig*=clamp(1.15-d*0.05,0.45,1.15);
+      lig*=1.0-0.35*smoothstep(0.35,1.0,length(f-c)/max(rad,0.02)); // round the blade: darker toward its edge
       col=hsl(hue,sat,lig);
       tipShade=tip;
       // occasional wildflower crowning a tuft
