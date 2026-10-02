@@ -1,0 +1,14 @@
+{
+  "title": "Detail Upscale",
+  "description": "Crisps up a picture that was enlarged from a smaller source, live on the GPU. An edge push pulls blurry ramps back toward steps and a contrast-adaptive sharpen (after AMD CAS / FSR RCAS) adds crispness without halos. Set Source scale to how many times the picture was stretched. Classic reconstruction, not a neural network: it sharpens what is there but cannot invent new detail (use the AI upscale step of the Import wizard for stills). Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "upscale",
+    "sharpen",
+    "detail"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-10-01"
+}

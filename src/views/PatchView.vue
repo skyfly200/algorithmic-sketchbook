@@ -23,6 +23,7 @@ import { parsePointFile, parseLas, finalizePoints } from '../lib/points.js'
 import { NL_TEXT_DEFAULTS, specNodeParams, resolveEffectMods } from '../lib/nlDesigner.js'
 import NlDesigner from '../components/patch/NlDesigner.vue'
 import MediaWizard from '../components/patch/MediaWizard.vue'
+import UpscaleDialog from '../components/patch/UpscaleDialog.vue'
 import AutopilotBar from '../components/patch/AutopilotBar.vue'
 import ShowPanel from '../components/patch/ShowPanel.vue'
 import ShapeTracer from '../components/patch/ShapeTracer.vue'
@@ -76,7 +77,7 @@ const filterOptions = computed(() =>
 // Effects group by their tags/tech (the gallery's CATEGORIES); filters group by
 // a small slug-based taxonomy since their tags don't map to those themes.
 const FILTER_GROUPS = [
-  { label: 'Stylize', keys: ['pointillism', 'halftone', 'painterly', 'crt', 'vhs-defects', 'interlace', 'rolling-shutter', 'shaky-film'] },
+  { label: 'Stylize', keys: ['pointillism', 'halftone', 'painterly', 'crt', 'vhs-defects', 'interlace', 'rolling-shutter', 'shaky-film', 'oil-paint', 'median', 'difference-of-gaussians', 'detail-upscale'] },
   { label: 'Optical', keys: ['camera-lens', 'lens-flare', 'kaleidoscope', 'warp', 'channel-offset', 'polarization', 'light-leaves', 'blur'] },
   { label: 'Atmosphere', keys: ['fog', 'mist', 'glow', 'nebula-gasses', 'uv-light'] },
   { label: 'Colour & tone', keys: ['color-filter', 'strobe', 'film-tone', 'brightness-contrast'] },
@@ -1779,7 +1780,7 @@ function pickMedia(node, id) {
 // --- media ingest wizard ---------------------------------------------------
 // One guided place to bring content in and drop the right node onto the graph:
 // images/video (Media/Sprite), a URL, screen capture, Google Photos, a point
-// cloud / LiDAR scan (Geometry), live map/satellite (Geodata) or 3D terrain.
+// cloud / LiDAR scan (Geometry), live map/satellite (Geodata), 3D terrain, or an AI-upscaled image.
 const wizOpen = ref(false)
 const wizHasGoogle = computed(() => googlePhotosConfigured())
 function wizNode(type) { addNode(type); return nodes[nodes.length - 1] }
@@ -1829,6 +1830,16 @@ async function wizScreenGrab() {
 function wizGoogle() { const n = wizNode('media'); n.params.mode = 'library'; importGooglePhotos(n); wizOpen.value = false }
 function wizPointCloud() { const n = wizNode('geo'); n.params.source = 'Point cloud'; n.params.cloud = 'Imported'; persist(); importGeoPointFile(n); wizOpen.value = false }
 function wizGeodata() { wizNode('geodata'); wizOpen.value = false }
+// AI upscale: the dialog (UpscaleDialog) runs the neural model and hands back one PNG per image; each
+// goes into the shared library, and the first also gets a Media node.
+const upscaleOpen = ref(false)
+let upscaleFirst = true
+function wizUpscale() { wizOpen.value = false; upscaleFirst = true; upscaleOpen.value = true }
+function onUpscaleResult(file) {
+  const it = addMediaFile(file)
+  if (upscaleFirst) { upscaleFirst = false; const n = wizNode('media'); n.params.mode = 'library'; n.params.mediaId = it.id; persist() }
+  showToast(`Upscaled ${file.name}`)
+}
 function wizTerrain() { const n = wizNode('geo'); n.params.source = 'Terrain'; persist(); wizOpen.value = false }
 
 async function importGooglePhotos(node) {
@@ -1940,7 +1951,7 @@ function toggleParams(id) {
 }
 function onEffectMessage(e) {
   const d = e.data
-  if (d?.type === 'filter:program' || d?.type === 'filter:uniforms') return onChainMessage(d, e.source)
+  if (d?.type === 'filter:program' || d?.type === 'filter:uniforms' || d?.type === 'filter:texture') return onChainMessage(d, e.source)
   if (d?.type !== 'sketch:ready' && d?.type !== 'sketch:state' && d?.type !== 'sketch:loaded') return
   const fr = frameList.find((x) => x.el?.contentWindow === e.source)
   if (fr) {
@@ -2435,6 +2446,9 @@ function onChainMessage(d, source) {
     const ok = !!d.ok && chainRunner.setProgram(id, d)
     s.chainOn = ok
     if (!ok) s.chainDeclined = true // stays an iframe from now on
+    s.chainSig = null
+  } else if (d.type === 'filter:texture') {
+    chainRunner.setTexture(id, d)
     s.chainSig = null
   } else if (s.chainOn) {
     chainRunner.setUniforms(id, d.list)
@@ -3707,7 +3721,7 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
             <v-list-item prepend-icon="mdi-format-text" title="Text" subtitle="mappable font" @click="addNode('text')" />
             <v-list-item prepend-icon="mdi-image-move" title="Sprite" subtitle="image placed & animated in space" @click="addNode('sprite')" />
             <v-divider class="my-1" />
-            <v-list-item prepend-icon="mdi-tray-arrow-down" title="Import wizard…" subtitle="media · URL · screen · Photos · point cloud · maps · terrain" @click="wizOpen = true" />
+            <v-list-item prepend-icon="mdi-tray-arrow-down" title="Import wizard…" subtitle="media · URL · screen · Photos · AI upscale · point cloud · maps · terrain" @click="wizOpen = true" />
           </v-list>
         </v-menu>
         <v-menu>
@@ -4710,9 +4724,11 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
     <MediaWizard
       v-model="wizOpen" :has-google="wizHasGoogle"
       @upload="wizUploadFiles" @url="wizFromUrl" @screen-live="wizScreenLive" @screen-grab="wizScreenGrab"
-      @google="wizGoogle" @point-cloud="wizPointCloud" @geodata="wizGeodata" @terrain="wizTerrain"
+      @google="wizGoogle" @point-cloud="wizPointCloud" @geodata="wizGeodata" @terrain="wizTerrain" @upscale="wizUpscale"
       @open-settings="router.push({ name: 'settings' })"
     />
+
+    <UpscaleDialog v-model="upscaleOpen" :library="mediaLibrary" @result="onUpscaleResult" />
 
     <ShapeTracer v-model="shapeTracerOpen" :mode="shapeTracerMode" :src="shapeTracerSrc" @apply="onTraceShapes" />
 

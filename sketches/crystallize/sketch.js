@@ -12,6 +12,7 @@ const params = rt.params({
   edges: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Edge darkness' },
   edgeWidth: { value: 2, min: 0.5, max: 8, step: 0.1, label: 'Edge width' },
   shade: { value: 0.25, min: 0, max: 1, step: 0.01, label: 'Facet shading' },
+  bevel: { value: 0, min: 0, max: 1, step: 0.01, label: 'Facet bevel' },
   drift: { value: 0.4, min: 0, max: 3, step: 0.05, label: 'Drift speed' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })
@@ -53,6 +54,7 @@ uniform float u_edge;
 uniform float u_ew;
 uniform float u_shade;
 uniform float u_drift;
+uniform float u_bevel;
 
 void main() {
   vec2 px = v_uv * u_res;
@@ -73,6 +75,15 @@ void main() {
   }
   vec3 col = tex(clamp(site / u_res, 0.0, 1.0));
   col *= 1.0 + u_shade * (hash21(bestId) - 0.5);
+  // facet bevel: each shard is lit as a tilted plane, brighter toward its lit rim
+  if (u_bevel > 0.0) {
+    vec2 h = hash22(bestId + 3.7);
+    vec2 tilt = (h - 0.5) * 2.0;
+    vec2 rel = (px - site) / u_cell;
+    float lit = dot(tilt, vec2(0.6, 0.8)) * 0.5 + dot(rel, tilt) * 0.9;
+    float rim = 1.0 - smoothstep(0.0, u_cell * 0.35, d2 - d1);
+    col *= 1.0 + u_bevel * (lit * 0.8 + rim * 0.25 * sign(lit));
+  }
   float e = smoothstep(0.0, u_ew, d2 - d1);
   col = mix(col * (1.0 - u_edge), col, e);
   outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
@@ -90,6 +101,7 @@ function frame(now) {
     u.f('u_ew', params.edgeWidth * rt.pixelRatio)
     u.f('u_shade', params.shade)
     u.f('u_drift', params.drift)
+    u.f('u_bevel', params.bevel)
   })
   requestAnimationFrame(frame)
 }

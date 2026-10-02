@@ -23,6 +23,7 @@ const params = rt.params({
   samples: { value: 16, min: 4, max: 40, step: 1, label: 'Quality (samples)' },
   centerX: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Centre X' },
   centerY: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Centre Y' },
+  highlights: { value: 0, min: 0, max: 1, step: 0.01, label: 'Bokeh highlight boost' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })
 rt.mapInput('audio.volume', 'amount', 0.5)
@@ -43,6 +44,7 @@ uniform float u_ang;    // motion angle, radians
 uniform float u_motion; // motion smear length, px
 uniform int u_n;        // accumulation taps
 uniform vec2 u_c;       // zoom / spin centre, uv (y up)
+uniform float u_hi;     // bokeh highlight boost, 0..1
 out vec4 outColor;
 
 const float GOLDEN = 2.399963;
@@ -60,7 +62,10 @@ vec3 discBlur(float r, bool bokeh) {
     float d = (bokeh ? 1.0 : 2.0) * r * sqrt(f);
     float a = float(i) * GOLDEN;
     float w = bokeh ? 1.0 : exp(-0.5 * (d * d) / (r * r));
-    acc += textureLod(u_tex, v_uv + vec2(cos(a), sin(a)) * d * px, lod).rgb * w;
+    vec3 s = textureLod(u_tex, v_uv + vec2(cos(a), sin(a)) * d * px, lod).rgb;
+    // lens blur: bright taps count for more, so highlights bloom into discs
+    if (bokeh && u_hi > 0.0) { float l = dot(s, vec3(0.299, 0.587, 0.114)); w *= 1.0 + u_hi * 24.0 * l * l * l * l; }
+    acc += s * w;
     wsum += w;
   }
   return acc / wsum;
@@ -111,6 +116,7 @@ function frame(now) {
     u.f('u_motion', params.amount * 90 * rt.pixelRatio)
     u.i('u_n', Math.max(2, Math.min(40, Math.round(params.samples))))
     u.v2('u_c', params.centerX, 1 - params.centerY)
+    u.f('u_hi', params.highlights)
   })
   requestAnimationFrame(frame)
 }

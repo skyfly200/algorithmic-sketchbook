@@ -1,0 +1,14 @@
+{
+  "title": "Oil Paint",
+  "description": "Intensity-bin oil paint filter on the GPU: each pixel takes the average colour of the most common brightness band in its brush radius, giving flat, smeared strokes that follow the picture. Brush radius, number of paint levels and a lit canvas relief. Brush radius is audio-mappable. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "oil-paint",
+    "painterly",
+    "stylize"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-10-01"
+}
