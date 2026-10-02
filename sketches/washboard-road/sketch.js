@@ -113,7 +113,7 @@ function resize() {
   W = canvas.width = Math.floor(window.innerWidth * PR)
   H = canvas.height = Math.floor(window.innerHeight * PR)
   // shade the corrugation into a capped-resolution buffer, then upscale to fill
-  fw = Math.min(W, 520)
+  fw = Math.min(W, Math.round(520 * (0.5 + 0.5 * rt.detail)))
   fh = Math.max(2, Math.round(fw * H / W))
   field.width = fw; field.height = fh
   fimg = fctx.createImageData(fw, fh)

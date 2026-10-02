@@ -57,7 +57,7 @@ function resize() {
   PR = rt.pixelRatio
   W = canvas.width = Math.floor(window.innerWidth * PR)
   H = canvas.height = Math.floor(window.innerHeight * PR)
-  GW = 240; GH = Math.max(90, Math.round(GW * (H / W)))
+  GW = Math.round(240 * (0.5 + 0.5 * rt.detail)); GH = Math.max(60, Math.round(GW * (H / W)))
   low = document.createElement('canvas'); low.width = GW; low.height = GH
   lctx = low.getContext('2d'); img = lctx.createImageData(GW, GH)
 }

@@ -114,6 +114,15 @@ time (mandelbulb), and fluid reports more JS ms than frame ms. Rank by frame ms.
   page. Switch to `@mdi/js` SVG icons so only the ones used ship.
 - hex-cascade's chunk is 1 MB because it bundles p5; only that sketch pays for it.
 
+**Implemented since (unmeasured; re-run the bench to confirm):** `capability.js` now treats MX / GT / low-end
+GTX parts as integrated; `npm run perf` blends `bench/*.json` frame times in at 80%; frost-grow batches segments
+into one path per width bucket; concentric-rings draws one path per ring plus a quarter-res glow pass;
+mud-cracks, sand-dunes, clouds, microbes, washboard-road and glowing-coals scale grids / counts by `rt.detail`;
+lava-lamp is now one fragment shader (renders correctly on a software GL, not timed). **Still open:** `rt.detail`
+for tessellation-drift and cable-knit; glowing-coals profiling (per-coal clip + gradient is the suspect); GPU ports
+of mud-cracks, ferrofluid, sand-dunes, slime-mold, washboard-road, clouds, dither, zen-garden, fluid, neon-fluid;
+mandelbulb default render mode; the MDI icon font.
+
 Suggested order: the two cost-model fixes (they change how every patch behaves), then frost-grow and
 concentric-rings (quick wins), then `rt.detail` everywhere, then the glpipe ports.
 

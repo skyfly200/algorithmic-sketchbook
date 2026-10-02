@@ -6,13 +6,80 @@ import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-// low-res field for the metaball threshold, scaled up
-const fc = document.createElement('canvas')
-const fx = fc.getContext('2d')
+const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: new URLSearchParams(location.search).get('capture') === '1' })
+const MAX_BLOBS = 16
+
+const VERT = `#version 300 es
+in vec2 position;
+out vec2 v_uv;
+void main() { v_uv = position * 0.5 + 0.5; gl_Position = vec4(position, 0.0, 1.0); }`
+
+// The whole lamp is one pass: glass gradient, base heat, the metaball field with an
+// anti-aliased rim, and a halo taken from the same field.
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+out vec4 outColor;
+uniform vec3 u_blobs[${MAX_BLOBS}];
+uniform int u_n;
+uniform float u_hue, u_bgHue, u_glow, u_warm, u_aspect;
+
+vec3 hsl(float h, float s, float l) {
+  vec3 k = mod(vec3(0.0, 8.0, 4.0) + h * 12.0, 12.0);
+  float a = s * min(l, 1.0 - l);
+  return l - a * clamp(min(k - 3.0, 9.0 - k), -1.0, 1.0);
+}
+
+void main() {
+  vec2 p = vec2(v_uv.x, 1.0 - v_uv.y); // y down, like the old canvas
+  // glass column
+  vec3 c0 = hsl(u_bgHue / 360.0, 0.6, 0.08);
+  vec3 c1 = hsl(u_bgHue / 360.0, 0.7, 0.16);
+  vec3 c2 = hsl(mod(u_bgHue + 30.0, 360.0) / 360.0, 0.8, 0.10);
+  vec3 col = p.y < 0.5 ? mix(c0, c1, p.y * 2.0) : mix(c1, c2, (p.y - 0.5) * 2.0);
+  // base heat glow (a circle of radius 0.5 of the height around the bottom centre)
+  vec2 q = vec2((p.x - 0.5) * u_aspect, 1.0 - p.y);
+  float heat = clamp(1.0 - length(q) / 0.5, 0.0, 1.0);
+  col = mix(col, hsl(u_hue / 360.0, 1.0, 0.55), heat * clamp(0.25 + u_warm, 0.0, 1.0));
+
+  float f = 0.0;
+  for (int i = 0; i < ${MAX_BLOBS}; i++) {
+    if (i >= u_n) break;
+    vec2 d = p - u_blobs[i].xy;
+    f += (u_blobs[i].z * u_blobs[i].z) / (dot(d, d) + 0.0004);
+  }
+  float lit = clamp((f - 1.3) * 0.25, 0.0, 1.0);
+  vec3 wax = hsl(mod(u_hue + lit * 20.0, 360.0) / 360.0, 0.9, 0.36 + lit * 0.38);
+  col += wax * clamp(f * 0.25, 0.0, 1.0) * u_glow * 0.35; // halo
+  float cov = clamp((f - 1.05) * 3.0, 0.0, 1.0);
+  col = mix(col, wax, cov);
+  if (p.x > 0.2 && p.x < 0.28) col = mix(col, vec3(1.0), 0.04); // glass highlight
+  outColor = vec4(col, 1.0);
+}`
+
+function compile(type, src) {
+  const sh = gl.createShader(type)
+  gl.shaderSource(sh, src); gl.compileShader(sh)
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh))
+  return sh
+}
+const prog = gl.createProgram()
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT))
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG))
+gl.bindAttribLocation(prog, 0, 'position')
+gl.linkProgram(prog)
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog))
+gl.useProgram(prog)
+const vbo = gl.createBuffer()
+gl.bindBuffer(gl.ARRAY_BUFFER, vbo)
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
+gl.enableVertexAttribArray(0)
+gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0)
+const U = Object.fromEntries(['u_blobs', 'u_n', 'u_hue', 'u_bgHue', 'u_glow', 'u_warm', 'u_aspect'].map((n) => [n, gl.getUniformLocation(prog, n)]))
+const blobData = new Float32Array(MAX_BLOBS * 3)
 
 const params = rt.params({
-  blobs: { value: 7, min: 3, max: 16, step: 1, label: 'Blobs' },
+  blobs: { value: 7, min: 3, max: MAX_BLOBS, step: 1, label: 'Blobs' },
   heat: { value: 1, min: 0.3, max: 2.5, step: 0.05, label: 'Heat' },
   viscosity: { value: 1, min: 0.3, max: 2, step: 0.05, label: 'Viscosity' },
   hue: { value: 20, min: 0, max: 360, step: 1, label: 'Wax hue' },
@@ -21,17 +88,14 @@ const params = rt.params({
 })
 rt.mapInput('audio.level', 'heat', 0.5)
 
-let W = 0, H = 0, FW = 0, FH = 0
+let W = 0, H = 0
 let blobs = []
 function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  // Higher-res metaball field — capped so retina/4K doesn't explode the
-  // per-pixel × per-blob loop, but far crisper than the old 1/8 grid.
-  const cap = 560
-  const s = Math.min(1, cap / Math.max(W, H))
-  FW = fc.width = Math.max(120, Math.round(W * s))
-  FH = fc.height = Math.max(180, Math.round(H * s))
+  // render below full size on lower quality; the browser scales the canvas up
+  const k = Math.max(0.4, rt.detail)
+  W = canvas.width = Math.max(2, Math.floor(window.innerWidth * rt.pixelRatio * Math.min(1, 0.5 + 0.5 * k)))
+  H = canvas.height = Math.max(2, Math.floor(window.innerHeight * rt.pixelRatio * Math.min(1, 0.5 + 0.5 * k)))
+  gl.viewport(0, 0, W, H)
   init()
 }
 function init() {
@@ -77,66 +141,17 @@ function frame(now) {
     b.rr = b.r * (0.85 + b.temp * 0.4)
   }
 
-  // render metaball field at low res
-  const img = fx.createImageData(FW, FH)
-  const d = img.data
-  const waxR = [255, 140, 40], waxHue = params.hue
-  for (let y = 0; y < FH; y++) {
-    for (let x = 0; x < FW; x++) {
-      let f = 0
-      const nx = x / FW, ny = y / FH
-      for (const b of blobs) {
-        const dx = (nx - b.x), dy = (ny - b.y)
-        f += (b.rr * b.rr) / (dx * dx + dy * dy + 0.0004)
-      }
-      const i = (y * FW + x) * 4
-      // Anti-aliased threshold: a soft coverage ramp across the boundary
-      // reads as a smooth high-res edge even at a modest field size, instead
-      // of the old hard pixelated cutoff.
-      if (f > 1.05) {
-        const cov = Math.min(1, (f - 1.05) * 3.0) // 0 at rim → 1 inside
-        const lit = Math.min(1, (f - 1.3) * 0.25)
-        const hue = (waxHue + lit * 20) % 360
-        const rgb = hslRgb(hue / 360, 0.9, 0.36 + lit * 0.38)
-        d[i] = rgb[0]; d[i + 1] = rgb[1]; d[i + 2] = rgb[2]; d[i + 3] = Math.round(cov * 255)
-      } else {
-        d[i + 3] = 0
-      }
-    }
-  }
-  fx.putImageData(img, 0, 0)
-
-  // glass column background
-  const g = ctx.createLinearGradient(0, 0, 0, H)
-  g.addColorStop(0, `hsl(${params.bgHue}, 60%, 8%)`)
-  g.addColorStop(0.5, `hsl(${params.bgHue}, 70%, 16%)`)
-  g.addColorStop(1, `hsl(${(params.bgHue + 30) % 360}, 80%, 10%)`)
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
-  // base heat glow
-  const bg = ctx.createRadialGradient(W / 2, H, 0, W / 2, H, H * 0.5)
-  bg.addColorStop(0, `hsla(${params.hue}, 100%, 55%, ${0.25 + warm})`)
-  bg.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H)
-
-  ctx.imageSmoothingEnabled = true
-  if (params.glow > 0.01) {
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.globalAlpha = params.glow * 0.6
-    ctx.filter = `blur(${8 * rt.pixelRatio}px)`
-    ctx.drawImage(fc, 0, 0, W, H)
-    ctx.filter = 'none'; ctx.globalAlpha = 1
-    ctx.globalCompositeOperation = 'source-over'
-  }
-  ctx.drawImage(fc, 0, 0, W, H)
-  // glass highlight
-  ctx.fillStyle = 'rgba(255,255,255,0.04)'
-  ctx.fillRect(W * 0.2, 0, W * 0.08, H)
+  const n = Math.min(MAX_BLOBS, blobs.length)
+  for (let i = 0; i < n; i++) { blobData[i * 3] = blobs[i].x; blobData[i * 3 + 1] = blobs[i].y; blobData[i * 3 + 2] = blobs[i].rr }
+  gl.uniform3fv(U.u_blobs, blobData)
+  gl.uniform1i(U.u_n, n)
+  gl.uniform1f(U.u_hue, params.hue)
+  gl.uniform1f(U.u_bgHue, params.bgHue)
+  gl.uniform1f(U.u_glow, params.glow)
+  gl.uniform1f(U.u_warm, warm)
+  gl.uniform1f(U.u_aspect, W / H)
+  gl.drawArrays(gl.TRIANGLES, 0, 3)
   requestAnimationFrame(frame)
-}
-function hslRgb(h, s, l) {
-  const a = s * Math.min(l, 1 - l)
-  const f = (n) => { const k = (n + h * 12) % 12; return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))) }
-  return [f(0), f(8), f(4)]
 }
 window.addEventListener('resize', resize)
 resize()

@@ -28,11 +28,18 @@ const TAU = Math.PI * 2
 let W = 0, H = 0, PR = 1
 let angle = 0 // accumulated base rotation (so speed changes stay continuous)
 let lastNow = 0
+// Glow: the sharp frame is shrunk into a small canvas, blurred there, and added back
+// scaled up. Far cheaper than shadowBlur on every tick.
+const glowCanvas = document.createElement('canvas')
+const glowCtx = glowCanvas.getContext('2d')
+const GLOW_SCALE = 0.25
 
 function resize() {
   PR = rt.pixelRatio
   W = canvas.width = Math.floor(window.innerWidth * PR)
   H = canvas.height = Math.floor(window.innerHeight * PR)
+  glowCanvas.width = Math.max(1, Math.round(W * GLOW_SCALE))
+  glowCanvas.height = Math.max(1, Math.round(H * GLOW_SCALE))
 }
 
 function frame(now) {
@@ -54,7 +61,6 @@ function frame(now) {
   const lw = Math.max(1, ringStep * params.thickness * 0.7)
 
   ctx.lineCap = 'butt'
-  ctx.shadowBlur = params.glow * ringStep * 0.9
   for (let i = 0; i < n; i++) {
     const rr = ringStep * (i + 1)
     if (rr < ringStep * 0.4) continue
@@ -65,17 +71,29 @@ function frame(now) {
     const hue = (params.hue + (i / Math.max(1, n - 1) - 0.5) * params.hueSpan + 360) % 360
     const col = `hsl(${hue}, 85%, ${58 + dir * 6}%)`
     ctx.strokeStyle = col
-    ctx.shadowColor = params.glow > 0 ? col : 'transparent'
     ctx.lineWidth = lw
     const arc = (TAU / ticks) * params.coverage
+    ctx.beginPath()
     for (let k = 0; k < ticks; k++) {
       const a0 = ra + (k / ticks) * TAU
-      ctx.beginPath()
+      ctx.moveTo(cx + Math.cos(a0) * rr, cy + Math.sin(a0) * rr)
       ctx.arc(cx, cy, rr, a0, a0 + arc)
-      ctx.stroke()
     }
+    ctx.stroke()
   }
-  ctx.shadowBlur = 0
+
+  if (params.glow > 0) {
+    const gw = glowCanvas.width, gh = glowCanvas.height
+    glowCtx.clearRect(0, 0, gw, gh)
+    glowCtx.filter = `blur(${Math.max(1, params.glow * ringStep * GLOW_SCALE * 0.9)}px)`
+    glowCtx.drawImage(canvas, 0, 0, gw, gh)
+    glowCtx.filter = 'none'
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.globalAlpha = Math.min(1, params.glow * 1.2)
+    ctx.drawImage(glowCanvas, 0, 0, W, H)
+    ctx.globalAlpha = 1
+    ctx.globalCompositeOperation = 'source-over'
+  }
 
   requestAnimationFrame(frame)
 }

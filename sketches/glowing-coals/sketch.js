@@ -96,7 +96,7 @@ function buildAsh() {
   // pale ash clumps dusted over the bed, weighted toward the bottom, plus a
   // wavy top edge for the ash bank the coals sit in
   ashClumps = []
-  const n = 90 + Math.floor(W * H / (14000 * PR * PR))
+  const n = Math.round((90 + Math.floor(W * H / (14000 * PR * PR))) * rt.detail)
   for (let i = 0; i < n; i++) {
     const yb = Math.pow(rt.rng(), 0.5) // bias downward
     ashClumps.push({ x: rt.random(0, W), y: H * (1 - yb * 0.55), r: rt.random(6, 26) * PR, g: rt.random(0.5, 1), white: rt.rng() < 0.3 })

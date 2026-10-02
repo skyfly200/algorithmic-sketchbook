@@ -30,6 +30,17 @@ const bx = bg.getContext('2d')
 let tips = []
 let seeds = [] // { x, y } nucleation points along the surface
 let lastSurface = ''
+// Segments are gathered per line-width bucket and stroked once per bucket per frame,
+// instead of two stroke() calls per tip per step.
+const WIDTH_BUCKET = 0.3
+const haloPaths = new Map() // bucket -> Path2D
+const corePaths = new Map()
+let nodePath = new Path2D()
+function pathFor(map, key) {
+  let p = map.get(key)
+  if (!p) { p = new Path2D(); map.set(key, p) }
+  return p
+}
 
 function drawSurfaceAndSeeds() {
   lastSurface = params.surface
@@ -136,10 +147,12 @@ function frame(now) {
   }
 
   // grow tips onto the ice layer, on the hex lattice
-  const steps = Math.max(1, Math.round(3 * params.growth))
+  const steps = Math.max(1, Math.round(3 * params.growth * (0.5 + 0.5 * rt.detail)))
+  const maxTips = Math.round(6000 * rt.detail)
   const maxGen = 2 + Math.round(params.feather * 3) // fern detail = branch depth
   const kinkP = params.feather * 0.02 // rare 60° facet kink along a spine
   ix.lineCap = 'round'
+  haloPaths.clear(); corePaths.clear(); nodePath = new Path2D()
   for (let s = 0; s < steps; s++) {
     for (let i = tips.length - 1; i >= 0; i--) {
       const tp = tips[i]
@@ -149,34 +162,41 @@ function frame(now) {
       const sp = 1.6 * PR
       tp.x += Math.cos(tp.a) * sp; tp.y += Math.sin(tp.a) * sp
       // crystalline deposit: a soft halo under a crisp bright core
-      ix.strokeStyle = `hsla(${params.hue}, 55%, 80%, 0.13)`
-      ix.lineWidth = (tp.w + 1.6) * PR
-      ix.beginPath(); ix.moveTo(px, py); ix.lineTo(tp.x, tp.y); ix.stroke()
-      ix.strokeStyle = `hsla(${params.hue}, 42%, 92%, 0.62)`
-      ix.lineWidth = tp.w * PR
-      ix.beginPath(); ix.moveTo(px, py); ix.lineTo(tp.x, tp.y); ix.stroke()
+      const bucket = Math.max(1, Math.round(tp.w / WIDTH_BUCKET))
+      const halo = pathFor(haloPaths, bucket)
+      halo.moveTo(px, py); halo.lineTo(tp.x, tp.y)
+      const core = pathFor(corePaths, bucket)
+      core.moveTo(px, py); core.lineTo(tp.x, tp.y)
       tp.life--
       tp.w *= 0.997
       tp.sinceBranch += sp
       // regular ±60° side-branches at even spacing — the fern comb
-      if (tp.sinceBranch >= tp.gap && tp.gen < maxGen && tips.length < 6000) {
+      if (tp.sinceBranch >= tp.gap && tp.gen < maxGen && tips.length < maxTips) {
         tp.sinceBranch = 0
         const g2 = tp.gap * 0.8
         for (const side of [1, -1]) {
           tips.push({ x: tp.x, y: tp.y, a: snap(tp.a + side * HEX, tp.orient), orient: tp.orient, life: tp.life * 0.5 + 8, w: Math.max(0.6, tp.w * 0.72), gen: tp.gen + 1, sinceBranch: rt.random(0, g2 * 0.4), gap: g2 })
         }
         // a tiny bright facet node where the branch springs
-        ix.fillStyle = `hsla(${params.hue}, 38%, 96%, 0.5)`
-        ix.beginPath(); ix.arc(tp.x, tp.y, tp.w * 0.9 * PR, 0, 6.28); ix.fill()
+        nodePath.moveTo(tp.x + tp.w * 0.9 * PR, tp.y)
+        nodePath.arc(tp.x, tp.y, tp.w * 0.9 * PR, 0, 6.28)
       }
       // rare dendrite tip-split into a 60° Y
-      if (rt.rng() < 0.004 && tp.gen < maxGen && tips.length < 6000) {
+      if (rt.rng() < 0.004 && tp.gen < maxGen && tips.length < maxTips) {
         tips.push({ x: tp.x, y: tp.y, a: snap(tp.a - HEX, tp.orient), orient: tp.orient, life: tp.life, w: tp.w, gen: tp.gen, sinceBranch: tp.sinceBranch, gap: tp.gap })
         tp.a = snap(tp.a + HEX, tp.orient)
       }
       if (tp.life <= 0 || tp.x < 0 || tp.y < 0 || tp.x > W || tp.y > H) tips.splice(i, 1)
     }
   }
+  const haloStyle = `hsla(${params.hue}, 55%, 80%, 0.13)`
+  const coreStyle = `hsla(${params.hue}, 42%, 92%, 0.62)`
+  ix.strokeStyle = haloStyle
+  for (const [b, path] of haloPaths) { ix.lineWidth = (b * WIDTH_BUCKET + 1.6) * PR; ix.stroke(path) }
+  ix.strokeStyle = coreStyle
+  for (const [b, path] of corePaths) { ix.lineWidth = b * WIDTH_BUCKET * PR; ix.stroke(path) }
+  ix.fillStyle = `hsla(${params.hue}, 38%, 96%, 0.5)`
+  ix.fill(nodePath)
   // keep the frost slowly reaching new ground
   if (tips.length < 40 && seeds.length) spawnFromSeeds(6)
 

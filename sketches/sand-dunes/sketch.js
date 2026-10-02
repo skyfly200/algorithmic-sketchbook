@@ -29,7 +29,7 @@ const RS = 3
 let GW = 0, GH = 0, h = null, W = 0, H = 0, PR = 1
 let RW = 0, RH = 0, img = null, low = null, lctx = null, hr = null, hrb = null
 function build() {
-  GW = 130; GH = Math.max(50, Math.round(GW * (H / W)))   // coarser grid → bigger dunes
+  GW = Math.round(130 * (0.6 + 0.4 * rt.detail)); GH = Math.max(50, Math.round(GW * (H / W)))   // coarser grid → bigger dunes
   h = new Uint16Array(GW * GH)
   // Seed transverse dune ridges (perpendicular to the wind) so there is real
   // dune structure from the start; the Werner saltation then migrates, splits

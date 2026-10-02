@@ -45,7 +45,7 @@ function build() {
   // Detritus specks scattered across the slide — the out-of-focus dust in the
   // reference photo. Placed in a normalized 0..1 field so resize keeps them put.
   specks = []
-  const speckN = 900
+  const speckN = Math.round(900 * rt.detail)
   for (let i = 0; i < speckN; i++) {
     specks.push({ x: rt.rng(), y: rt.rng(), r: rand(0.2, 1.6), a: rand(0.03, 0.22), warm: rt.rng() < 0.12 })
   }

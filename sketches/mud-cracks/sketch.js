@@ -85,7 +85,7 @@ function worley(px, py, cell, seed) {
 }
 
 function build() {
-  const CAP = 900000
+  const CAP = Math.round(900000 * rt.detail)
   RW = Math.round(window.innerWidth)
   RH = Math.round(window.innerHeight)
   const sc = Math.sqrt(CAP / (RW * RH)); if (sc < 1) { RW = Math.round(RW * sc); RH = Math.round(RH * sc) }

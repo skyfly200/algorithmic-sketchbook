@@ -8,10 +8,27 @@
  * The gallery shows it until the viewer's live fps monitor (localPerf.js)
  * records a real on-device score for that sketch.
  *
- * Run: npm run perf            (rewrite perf.json)
+ * Measured frame times from bench/*.json are blended in at 80% (`npm run bench -- --out`).
+ *
+ * Run: npm run perf           (rewrite perf.json)
  *      npm run perf -- --table (print the ranked table, no write)
  */
 import { readdirSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
+
+// Measured frame times (bench/*.json, newest file per sketch wins) outweigh the static score.
+const MEASURED_WEIGHT = 0.8
+const toMeasuredScore = (ms) => Math.max(1, Math.min(100, Math.round(100 - 95 * Math.log2(Math.max(2, ms) / 2) / Math.log2(200))))
+function loadBench() {
+  const out = {}
+  if (!existsSync('bench')) return out
+  for (const f of readdirSync('bench').filter((n) => n.endsWith('.json')).sort()) {
+    try {
+      for (const r of JSON.parse(readFileSync(`bench/${f}`, 'utf8')).results ?? []) if (r.frameMs > 0) out[r.slug] = r.frameMs
+    } catch { /* ignore unreadable file */ }
+  }
+  return out
+}
+const bench = loadBench()
 
 const count = (src, re) => (src.match(re) || []).length
 const read = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
@@ -101,7 +118,10 @@ const slugs = readdirSync('sketches', { withFileTypes: true })
 
 const rows = slugs.map((slug) => {
   const { total, parts } = complexity(slug)
-  return { slug, total, score: toScore(total), parts }
+  const staticScore = toScore(total)
+  const ms = bench[slug]
+  const score = ms ? Math.round(MEASURED_WEIGHT * toMeasuredScore(ms) + (1 - MEASURED_WEIGHT) * staticScore) : staticScore
+  return { slug, total, score, parts }
 })
 
 if (process.argv.includes('--table')) {
