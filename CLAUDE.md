@@ -111,6 +111,34 @@ Two layers, both in `PatchView`:
   (`sketch:throttle`, handled in `sketches/_lib/runtime.js`) — it never pauses an
   iframe, because pausing belongs to the deck policy and the two would fight.
 
+## Shared filter chains
+
+Runs of 2+ single-pass shader filters in a Patch deck (each feeding only the next)
+run in one GL context instead of one iframe + bitmap transfer each.
+
+- `src/lib/patch/filterChain.js` finds the runs (pure, tested). `chainRunner.js`
+  draws them (ping-pong RGBA8 targets at compositor size). Hook-up is
+  `refreshChains` / `runChain` in `PatchView.vue`.
+- A filter opts in by being listed in `CHAINABLE_SLUGS` (`src/registry/filters.js`;
+  `tests/filters.test.js` checks the rules): `createGLFilter` is all it draws, no
+  `addTexture`, no glpipe, and no GL state kept between frames (history, feedback,
+  baked noise textures). Write new filters as a pure function of the input, uniforms
+  and `u_time` and they can chain. The iframe stays the param host: in chain mode
+  `glfilter.js` sends its shader once (`filter:program`) and uniforms on change
+  (`filter:uniforms`), parks its canvases at 1x1 and draws nothing. `u_res` / `u_time`
+  belong to the parent. In chain mode `rt.pixelRatio` and `gf.width/height` report the
+  chain's render size, so pixel-valued uniforms (radii, cell sizes) need no special
+  casing; read them every frame, never cache them at load.
+- Members fall back to normal iframe rendering until every program has arrived or if
+  the chain cannot run. A/B test with `localStorage['patch.filterChain'] = 'off'`.
+- Interior node previews refresh about every 0.4 s (live for a selected member).
+- `scripts/scratch/` holds temporary Playwright checks for chains (random-chain fuzzer,
+  chained-vs-unchained diff, before/after screenshots). See its README; delete when no longer needed.
+- The scheduler treats a chain as one unit (`chainSchedule`): only the tail is
+  throttled, charged the whole chain. `deckCost` takes `chain` (`chainSets`) to drop
+  the upload for members and the frame buffers of parked iframes; the head-upload
+  figure (`CHAIN_HEAD_UPLOAD`) is provisional until benchmarked.
+
 ## Patch decks (two-graph compositor)
 
 `src/views/PatchView.vue` runs two patch graphs ("decks" A/B) behind a master
