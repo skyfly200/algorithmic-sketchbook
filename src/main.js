@@ -2,13 +2,20 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { createVuetify } from 'vuetify'
 import 'vuetify/styles'
-import '@mdi/font/css/materialdesignicons.css'
+import { h } from 'vue'
+import { VSvgIcon } from 'vuetify/components/VIcon'
+import mdiPaths from './lib/mdiIcons.js'
 
 import App from './App.vue'
 import router from './router'
 import { hydrateMediaLibrary } from './stores/media.js'
 
+// Icons: only the SVG paths in lib/mdiIcons.js ship (regenerate with `npm run icons`),
+// not the whole Material Design Icons webfont. Names stay the familiar "mdi-foo".
+const mdiSet = { component: (props) => h(VSvgIcon, { ...props, icon: mdiPaths[props.icon] ?? '' }) }
+
 const vuetify = createVuetify({
+  icons: { defaultSet: 'mdi', sets: { mdi: mdiSet } },
   theme: {
     defaultTheme: 'dark',
     themes: {

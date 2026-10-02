@@ -15,10 +15,11 @@
     "remote": "node scripts/remote-server.mjs",
     "remote:build": "vite build && node scripts/remote-server.mjs",
     "perf": "node scripts/perf-audit.mjs",
+    "icons": "node scripts/gen-icons.mjs",
     "bench": "node scripts/bench.mjs"
   },
   "dependencies": {
-    "@mdi/font": "^7.4.47",
+    "@mdi/js": "^7.4.47",
     "laz-perf": "^0.0.7",
     "p5": "^1.11.2",
     "pinia": "^2.2.6",

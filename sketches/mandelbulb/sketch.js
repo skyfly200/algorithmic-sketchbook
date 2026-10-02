@@ -15,6 +15,11 @@
  */
 import { createRuntime } from '../_lib/runtime.js'
 import { createTAAU } from '../_lib/gltaau.js'
+import { probeCapability } from '../../src/lib/patch/capability.js'
+
+// Ray-marching every pixel is too slow on anything but a fast discrete GPU, so lower
+// tiers start in Temporal 0.5x (a saved scene or the control panel still overrides it).
+const DEFAULT_RENDER = probeCapability().gpu === 'discrete' ? 'Native' : 'Temporal 0.5x'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -24,7 +29,7 @@ const params = rt.params({
   dist: { value: 2.6, min: 1.8, max: 4, step: 0.05, label: 'Camera distance' },
   hue: { value: 0.55, min: 0, max: 1, step: 0.01, label: 'Hue' },
   glow: { value: 0.5, min: 0, max: 1.5, step: 0.05, label: 'Halo glow' },
-  render: { value: 'Native', type: 'select', options: ['Native', 'Temporal 0.75x', 'Temporal 0.5x', 'Temporal 0.33x'], label: 'Render mode' },
+  render: { value: DEFAULT_RENDER, type: 'select', options: ['Native', 'Temporal 0.75x', 'Temporal 0.5x', 'Temporal 0.33x'], label: 'Render mode' },
 })
 const RENDER_SCALE = { 'Temporal 0.75x': 0.75, 'Temporal 0.5x': 0.5, 'Temporal 0.33x': 1 / 3 }
 // Music: loudness nudges the orbit, beats flare the halo.

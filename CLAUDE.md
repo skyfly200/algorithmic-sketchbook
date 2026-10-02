@@ -52,6 +52,10 @@ All templates import it. In a sketch:
 
 When adding a sketch, prefer declaring its interesting constants as params.
 
+## Icons
+
+Icons are written `mdi-foo` as before, but resolved to `@mdi/js` SVG paths by `src/lib/mdiIcons.js` (no webfont). After using a new `mdi-*` name run `npm run icons` to regenerate it; an unlisted name renders blank.
+
 ## Scenes
 
 Named snapshots of param values + input mappings + display settings, stored

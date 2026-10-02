@@ -121,7 +121,7 @@ mud-cracks, sand-dunes, clouds, microbes, washboard-road and glowing-coals scale
 lava-lamp is now one fragment shader (renders correctly on a software GL, not timed). **Still open:** `rt.detail`
 for tessellation-drift and cable-knit; glowing-coals profiling (per-coal clip + gradient is the suspect); GPU ports
 of mud-cracks, ferrofluid, sand-dunes, slime-mold, washboard-road, clouds, dither, zen-garden, fluid, neon-fluid;
-mandelbulb default render mode; the MDI icon font.
+(mandelbulb now defaults to Temporal 0.5x unless the GPU probes as discrete; icons now ship as @mdi/js SVG paths, not the webfont.)
 
 Suggested order: the two cost-model fixes (they change how every patch behaves), then frost-grow and
 concentric-rings (quick wins), then `rt.detail` everywhere, then the glpipe ports.
