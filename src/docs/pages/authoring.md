@@ -75,12 +75,100 @@ scene support — in the viewer, the Mixer, Patch and Autopilot alike. See the
 
 ## Source filters
 
-To build a [filter](#/docs/effects-filters) — a sketch that processes an
-upstream image rather than generating its own — build on
-`sketches/_lib/source.js`. `createSource()` gives you a source that can be a
-camera, dropped files, a demo scene, or the live Mixer/Patch feed, with a
-`draw(ctx, w, h, { mirror })` you call each frame before applying your effect.
-Then add the slug to `src/registry/filters.js` so the app treats it as a filter.
+A [filter](#/docs/effects-filters) is a sketch that processes an upstream image
+instead of generating its own. Build it on `sketches/_lib/source.js`:
+`createSource()` gives you a source that can be a camera, dropped files, a demo
+scene, or the live Mixer/Patch feed. Then add the slug to `FILTER_SLUGS` in
+`src/registry/filters.js` so the app treats it as a filter.
+
+### Write per-pixel filters as shaders
+
+A loop over `getImageData` pixels is the usual reason a filter runs slowly. Put
+per-pixel work in a fragment shader with `sketches/_lib/glfilter.js`:
+
+```js
+import { createRuntime } from '../_lib/runtime.js'
+import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
+
+const rt = createRuntime()
+const params = rt.params({
+  amount: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Amount' },
+  radius: { value: 4, min: 1, max: 20, step: 1, label: 'Radius (px)' },
+})
+
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;               // 0..1, y up
+uniform sampler2D u_tex;    // the source
+uniform vec2 u_res;         // output size in pixels
+uniform float u_time;       // seconds
+uniform float u_amount;
+uniform float u_radius;
+out vec4 outColor;
+void main() {
+  vec3 c = texture(u_tex, v_uv).rgb;
+  // sample neighbours at v_uv + offset * u_radius / u_res
+  outColor = vec4(mix(c, 1.0 - c, u_amount), 1.0);
+}`
+
+const gf = createGLFilter({ rt, src: createSource(), canvas: document.getElementById('canvas'), frag: FRAG })
+
+function frame(now) {
+  rt.tick(now)
+  gf.render({ time: now * 0.001 }, (u) => {
+    u.f('u_amount', params.amount)
+    u.f('u_radius', params.radius * rt.pixelRatio) // pixel sizes: multiply by rt.pixelRatio
+  })
+  requestAnimationFrame(frame)
+}
+requestAnimationFrame(frame)
+```
+
+- `gf.render` skips the frame when the source picture, the uniforms and the size
+  are unchanged and the shader does not read `u_time`. A still image with static
+  params costs almost nothing.
+- Pass `mipmaps: true` to `createGLFilter` to read a pre-blurred source with
+  `textureLod(u_tex, uv, lod)`. Use it for blurs, glows and averages instead of
+  reading pixels back.
+- Uniform setters on `u`: `f`, `i`, `v2`, `v3`, `v3arr`. Extra samplers (a LUT,
+  a baked overlay) come from `gf.addTexture(name, unit)`.
+- For several passes (separable blurs, ping-pong simulation state) use
+  `sketches/_lib/glpipe.js`. See `wind`, `ink-bleed` and `vhs-defects`.
+- Press **D** in the viewer (or add `?demo=night-city`) to cycle the built-in demo
+  scenes while you tune the look.
+
+### Make it chainable
+
+Patch runs consecutive shader filters as one shared GL pipeline instead of one
+iframe plus one image transfer each (see [Filter chains](#/docs/effects-filters)).
+A filter joins by being listed in `CHAINABLE_SLUGS` in `src/registry/filters.js`.
+It qualifies when:
+
+- `createGLFilter` is the only thing it draws,
+- it does not call `addTexture` or use `glpipe`,
+- it keeps no GL state between frames (no frame history, feedback or baked noise
+  textures): the output is a pure function of the input picture, the uniforms and
+  `u_time`,
+- it never reads `canvas.width` or `canvas.height`.
+
+Two rules keep a chained filter looking the same as the unchained one:
+
+- **Read sizes every frame.** In a chain, `rt.pixelRatio`, `gf.width` and
+  `gf.height` report the chain's render size, not the iframe's. Multiply pixel
+  radii by `rt.pixelRatio` and derive sizes from `gf.width` inside the render
+  callback. Do not cache them at load.
+- **Use `u_time` for time.** Declare `uniform float u_time` and let the host set
+  it. A custom time uniform changes every frame and floods the chain with updates.
+
+`tests/filters.test.js` checks these rules for every slug in the list.
+
+### Filters that stay outside a chain
+
+Filters that keep history (delay, feedback, tiling, strobe, interlace,
+motion extraction, rolling shutter, FPS limiter) or bake noise and overlay
+textures (fog, shaky film) work fine as filters. They run in their own iframe
+and are simply not in `CHAINABLE_SLUGS`.
 
 ## Templates & the build
 

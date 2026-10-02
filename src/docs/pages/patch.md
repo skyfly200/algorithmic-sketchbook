@@ -22,7 +22,7 @@ arbitrary network and blit the result to a fullscreen stage.
 | Node | What it does |
 | --- | --- |
 | **Effect** | A generator sketch running live in a hidden iframe; its canvas is the node's output. Open ⚙ for its parameters and input mappings. |
-| **Filter** | A source-[filter](#/docs/effects-filters) sketch. Its video input is piped in as the filter's source each frame. |
+| **Filter** | A source-[filter](#/docs/effects-filters) sketch. Its video input is piped in as the filter's source each frame. Consecutive shader filters run together as one [filter chain](#/docs/effects-filters). |
 | **Media** | Your webcam, dropped files, recorded clips, or a library item as a source. |
 | **Text** | Rendered text with a mappable font — size, weight, tracking and colour can all be modulated. |
 | **Mask** | Cuts a content stream to a matte: the matte's brightness sets what shows through. Feed a shape (a **Polygon** or bright **Text**), not a second picture. To mix two pictures, use a **Blend**. |

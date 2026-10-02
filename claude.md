@@ -132,6 +132,8 @@ run in one GL context instead of one iframe + bitmap transfer each.
 - Members fall back to normal iframe rendering until every program has arrived or if
   the chain cannot run. A/B test with `localStorage['patch.filterChain'] = 'off'`.
 - Interior node previews refresh about every 0.4 s (live for a selected member).
+- `scripts/scratch/` holds temporary Playwright checks for chains (random-chain fuzzer,
+  chained-vs-unchained diff, before/after screenshots). See its README; delete when no longer needed.
 - The scheduler treats a chain as one unit (`chainSchedule`): only the tail is
   throttled, charged the whole chain. `deckCost` takes `chain` (`chainSets`) to drop
   the upload for members and the frame buffers of parked iframes; the head-upload

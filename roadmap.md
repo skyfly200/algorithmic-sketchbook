@@ -94,3 +94,7 @@ with a software renderer, so frame rates there are only useful *relatively*.
    rolling-shutter, fps-limiter) and ones with baked textures (fog, shaky-film, light-leaves,
    nebula-gasses, rain-window, lens-flare, curves, camera-lens, polaroid) need per-program
    textures and history in the runner, or the node-module interface, to chain.
+
+Temporary verification scripts for the chain work (random chain fuzzer, chained vs unchained diff,
+before/after screenshots) live in `scripts/scratch/`; see its README. Delete the folder once a real
+benchmark covers the chain path.

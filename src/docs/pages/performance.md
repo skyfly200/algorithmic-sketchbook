@@ -21,6 +21,24 @@ For one deck: **P** = compositor pixels (width × height), **V** = nodes,
 heavy = 12). It is used as a *ratio*, never as milliseconds, so it doesn't depend
 on the machine that produced it. Filters add one image upload per frame.
 
+### Filter chains
+
+A run of chainable filters (see [Filter chains](#/docs/effects-filters)) is priced
+differently from the same filters on their own:
+
+- Each pass still costs its shader weight. The shader work is the same.
+- Members after the first skip the per-frame image upload. The first uploads once
+  into the shared pipeline, at a lower provisional cost.
+- Chained filters never draw in their own page, so their canvases shrink to 1 × 1
+  and their three frame buffers are freed. The shared pipeline holds three
+  buffers of P·4 bytes for the whole deck.
+- The scheduler treats a chain as one unit. Only its last filter is throttled
+  under load, and it is charged the cost of the whole chain.
+
+The constants are `CHAIN_HEAD_UPLOAD` and `CHAIN_RUNNER_BUFFERS` in
+`src/lib/patch/budget.js`. `CHAIN_HEAD_UPLOAD` is a guess until it is benchmarked
+on real hardware. Each page still costs its ~30 MB.
+
 Two consequences worth knowing:
 
 - **Resolution is linear.** Halving the width and height quarters the GPU and

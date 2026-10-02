@@ -36,6 +36,29 @@ The current filters include:
   stop-motion / on-twos stutter, with step-blend and motion echo).
 - **Kaleidoscope** and **strobe / UV** stylings.
 
+## Filter chains
+
+In Patch, a run of two or more filters wired one into the next runs as a **filter
+chain**: one shared GL pipeline draws every pass, instead of each filter being a
+separate page that receives an image transfer each frame. The filters stay
+ordinary nodes. You still edit their parameters, map inputs and save scenes
+exactly as before.
+
+- A chain forms when each filter feeds only the next one. A branch, a Blend or
+  the Output taking an in-between picture ends the chain there.
+- Only filters that are pure single-pass shaders join. Blur, glow, mist, warp,
+  kaleidoscope, funhouse mirror, birefringence, edge detect, halftone, pointillism,
+  CRT and most colour and distortion filters do. Filters that keep history or baked
+  textures (delay, feedback, tiling, strobe, interlace, fog, shaky film, painterly
+  and others) stay separate pages.
+- Preview thumbnails of the middle filters refresh a few times a second, or live
+  while you select one.
+- To compare with the old path, set `localStorage['patch.filterChain'] = 'off'`
+  and reload.
+
+The list of chainable filters is `CHAINABLE_SLUGS` in `src/registry/filters.js`.
+See [Authoring](#/docs/authoring) to make your own filter chainable.
+
 ## Why the split matters
 
 - The gallery's **Effects / Filters** toggle uses it, so you can browse just
