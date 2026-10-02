@@ -3,8 +3,14 @@
  * Pan (drag), zoom (wheel, toward the cursor), reset (double-click). In Julia
  * mode the seed c is a live param (cRe/cIm), so it can be mapped to tilt or the
  * music to morph the set. Single-precision floats zoom cleanly to ~1e-5.
+ *
+ * Render mode: deep views run up to 1500 iterations per pixel. The "Temporal" modes (a prototype of
+ * temporal upscaling, see _lib/gltaau.js) iterate a fraction of the pixels each frame with a
+ * sub-pixel jitter and rebuild the full picture from the previous frames, which are reprojected
+ * through the pan / zoom exactly. Changing the fractal, Julia seed or iteration count starts afresh.
  */
 import { createRuntime } from '../_lib/runtime.js'
+import { createTAAU } from '../_lib/gltaau.js'
 
 const rt = createRuntime()
 const FRACTALS = ['Mandelbrot', 'Burning Ship', 'Tricorn', 'Multibrot', 'Celtic']
@@ -18,7 +24,9 @@ const params = rt.params({
   cIm: { value: 0.156, min: -1, max: 1, step: 0.001, label: 'Julia c — imag' },
   hue: { value: +rt.rng().toFixed(2), min: 0, max: 1, step: 0.01, label: 'Hue' },
   colorCycle: { value: 0.3, min: 0, max: 2, step: 0.05, label: 'Palette cycle' },
+  render: { value: 'Native', type: 'select', options: ['Native', 'Temporal 0.75x', 'Temporal 0.5x', 'Temporal 0.33x'], label: 'Render mode' },
 })
+const RENDER_SCALE = { 'Temporal 0.75x': 0.75, 'Temporal 0.5x': 0.5, 'Temporal 0.33x': 1 / 3 }
 // Music gently cycles the palette by default; map tilt→cRe/cIm to morph Julia,
 // or beat→zoomSpeed to pump the dive.
 rt.mapInput('audio.volume', 'colorCycle', 0.6)
@@ -58,7 +66,9 @@ const FRAG = `#version 300 es
 precision highp float;
 uniform vec2 u_res, u_center, u_c;
 uniform float u_scale, u_iters, u_julia, u_hue, u_colorCycle, u_time, u_fractal;
-out vec4 outColor;
+uniform vec2 u_jitter;                   // sub-pixel offset of this frame's samples (0 when native)
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out float outDepth; // not used by a flat scene; the temporal pass wants a value
 vec3 palette(float t) {
   return 0.5 + 0.5 * cos(6.2831 * (t + vec3(0.0, 0.33, 0.67)) + u_hue * 6.2831);
 }
@@ -76,8 +86,9 @@ vec2 step_f(vec2 z, vec2 c) {
   return vec2(abs(z.x * z.x - z.y * z.y), 2.0 * z.x * z.y) + c;
 }
 void main() {
+  outDepth = 1.0;
   float minr = min(u_res.x, u_res.y);
-  vec2 uv = (2.0 * gl_FragCoord.xy - u_res) / minr;
+  vec2 uv = (2.0 * (gl_FragCoord.xy + u_jitter) - u_res) / minr;
   vec2 p = u_center + uv * u_scale;
   vec2 z = u_julia > 0.5 ? p : vec2(0.0);
   vec2 c = u_julia > 0.5 ? u_c : p;
@@ -117,8 +128,15 @@ gl.enableVertexAttribArray(position)
 gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
 const u = {}
-for (const n of ['u_res', 'u_center', 'u_c', 'u_scale', 'u_iters', 'u_julia', 'u_hue', 'u_colorCycle', 'u_time', 'u_fractal'])
+for (const n of ['u_res', 'u_center', 'u_c', 'u_scale', 'u_iters', 'u_julia', 'u_hue', 'u_colorCycle', 'u_time', 'u_fractal', 'u_jitter'])
   u[n] = gl.getUniformLocation(program, n)
+
+let taau = null // lazily created, null when the GPU can't render to float targets
+let taauTried = false
+const taauOpts = new URLSearchParams(location.search) // ?alpha= &history=0 &kernel= (tuning / comparison)
+const shapeKey = (iters) => [params.fractal, params.julia, params.cRe, params.cIm, Math.round(iters / 50)].join('|')
+let lastShape = ''
+let lastHue = params.hue
 
 // --- interaction ---
 function aspect() {
@@ -174,6 +192,7 @@ function resize() {
   canvas.width = window.innerWidth * rt.pixelRatio
   canvas.height = window.innerHeight * rt.pixelRatio
   gl.viewport(0, 0, canvas.width, canvas.height)
+  if (taau) taau.resize(canvas.width, canvas.height, RENDER_SCALE[params.render] ?? 1)
 }
 
 // CPU copy of the escape-time iteration (mirrors the shader's step_f) so the
@@ -272,7 +291,9 @@ function frame(now) {
   const depth = Math.max(0, -Math.log10(scale))
   const iters = Math.min(1500, params.iterations + depth * 90)
 
-  gl.uniform2f(u.u_res, canvas.width, canvas.height)
+  const rscale = RENDER_SCALE[params.render]
+  if (rscale && !taauTried) { taauTried = true; taau = createTAAU(gl); if (taau) resize() }
+  gl.useProgram(program)
   gl.uniform2f(u.u_center, center[0], center[1])
   gl.uniform2f(u.u_c, params.cRe, params.cIm)
   gl.uniform1f(u.u_scale, scale)
@@ -282,7 +303,29 @@ function frame(now) {
   gl.uniform1f(u.u_colorCycle, params.colorCycle)
   gl.uniform1f(u.u_time, now * 0.001)
   gl.uniform1f(u.u_fractal, FRACTALS.indexOf(params.fractal))
-  gl.drawArrays(gl.TRIANGLES, 0, 3)
+  if (taau && rscale) {
+    taau.resize(canvas.width, canvas.height, rscale)
+    // a different fractal / seed / iteration budget invalidates the history; a hue change is blended in
+    const shape = shapeKey(iters)
+    if (shape !== lastShape) { taau.reset(); lastShape = shape }
+    const tintChanged = params.hue !== lastHue
+    lastHue = params.hue
+    const { size, jitter } = taau.begin()
+    gl.uniform2f(u.u_res, size[0], size[1])
+    gl.uniform2f(u.u_jitter, jitter[0], jitter[1])
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+    taau.end({ center, scale }, {
+      alpha: tintChanged ? 0.6 : +(taauOpts.get('alpha') ?? 0.15),
+      history: taauOpts.get('history') !== '0',
+      kernel: +(taauOpts.get('kernel') ?? 6),
+    })
+  } else {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.viewport(0, 0, canvas.width, canvas.height)
+    gl.uniform2f(u.u_res, canvas.width, canvas.height)
+    gl.uniform2f(u.u_jitter, 0, 0)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+  }
   requestAnimationFrame(frame)
 }
 

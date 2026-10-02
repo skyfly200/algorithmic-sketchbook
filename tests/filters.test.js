@@ -24,11 +24,11 @@ describe('chainable filters', () => {
     expect(CHAINABLE_SLUGS.length).toBe(new Set(CHAINABLE_SLUGS).size)
     for (const s of CHAINABLE_SLUGS) expect(FILTER_SLUG_SET.has(s), s).toBe(true)
   })
-  it('are single-pass createGLFilter sketches with no extra GL state', () => {
+  it('are single-pass createGLFilter sketches with no GL state of their own', () => {
     for (const s of CHAINABLE_SLUGS) {
       const src = read(s)
       expect(src, `${s} uses createGLFilter`).toMatch(/createGLFilter\(/)
-      expect(src, `${s} has no addTexture`).not.toMatch(/addTexture\(/)
+      expect(src, `${s} draws no raw GL`).not.toMatch(/getContext\(['"](webgl|experimental-webgl)/)
       expect(src, `${s} has no glpipe`).not.toMatch(/createGLPipe/)
       expect(src, `${s} reads canvas size directly`).not.toMatch(/canvas\.(width|height)/)
     }

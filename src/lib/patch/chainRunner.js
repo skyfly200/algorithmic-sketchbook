@@ -4,7 +4,12 @@
 // fragment shader (`setProgram`) and uniform values (`setUniforms`). We upload the
 // head's input once, ping-pong the passes through two framebuffers, and copy the
 // last pass into the tail's 2D canvas. u_res and u_time are ours.
+// A member may also own extra textures (LUTs, baked overlays): it sends them as
+// `filter:texture` and they are bound on units 1+ for its pass (unit 0 is the picture).
+// A stateful member (its shader samples u_prev / u_prevIn, see glhistory.js) gets its own
+// frame history here, copied after each of its passes.
 import { VERT } from '../../../sketches/_lib/glfilter.js'
+import { createHistory } from '../../../sketches/_lib/glhistory.js'
 
 export function createChainRunner() {
   const canvas = document.createElement('canvas')
@@ -15,7 +20,7 @@ export function createChainRunner() {
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo)
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
 
-  const progs = new Map() // node id -> { prog, frag, mipmaps, animated, locs, uniforms, ver, failed }
+  const progs = new Map() // node id -> { prog, frag, mipmaps, animated, locs, uniforms, textures, ver, failed }
   const inTex = makeTex()
   const targets = [makeTarget(), makeTarget()]
   let W = 0
@@ -81,8 +86,9 @@ export function createChainRunner() {
     const old = progs.get(id)
     if (old && old.frag === frag) { old.mipmaps = mipmaps; old.animated = animated; return !old.failed }
     if (old?.prog) gl.deleteProgram(old.prog)
-    const entry = { frag, mipmaps, animated, prog: null, locs: {}, uniforms: old?.uniforms ?? [], ver: 0, failed: false }
-    try { entry.prog = build(frag) } catch { entry.failed = true }
+    const entry = { frag, mipmaps, animated, prog: null, locs: {}, uniforms: old?.uniforms ?? [], textures: old?.textures ?? new Map(), hist: null, ver: 0, failed: false }
+    try { entry.prog = build(frag); entry.hist = createHistory(gl, frag) } catch { entry.failed = true }
+    old?.hist?.dispose()
     progs.set(id, entry)
     return !entry.failed
   }
@@ -92,11 +98,45 @@ export function createChainRunner() {
     p.uniforms = list
     p.ver++
   }
-  const ready = (id) => { const p = progs.get(id); return !!p && !p.failed && !!p.prog }
+  // An extra texture the member declared but has not uploaded yet keeps its chain from running.
+  const ready = (id) => {
+    const p = progs.get(id)
+    if (!p || p.failed || !p.prog) return false
+    for (const t of p.textures.values()) if (!t.loaded) return false
+    return true
+  }
+  // `filter:texture`: a declaration (no payload yet) or an upload (ImageBitmap, or raw bytes + w/h).
+  function setTexture(id, d) {
+    const p = progs.get(id)
+    if (!p) { d.bitmap?.close?.(); return }
+    let t = p.textures.get(d.name)
+    if (!t) p.textures.set(d.name, (t = { tex: gl.createTexture(), unit: d.unit, loaded: false }))
+    t.unit = d.unit
+    if (!d.bitmap && !d.data) return
+    gl.activeTexture(gl.TEXTURE0 + t.unit)
+    gl.bindTexture(gl.TEXTURE_2D, t.tex)
+    const f = d.filter === 'NEAREST' ? gl.NEAREST : gl.LINEAR
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    if (d.bitmap) { // flip is baked into the bitmap by the sender
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, d.bitmap)
+      d.bitmap.close?.()
+    } else {
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, !!d.flipY)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, d.w, d.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, d.data)
+    }
+    gl.activeTexture(gl.TEXTURE0)
+    t.loaded = true
+    p.ver++
+  }
   const failed = (id) => !!progs.get(id)?.failed
   function drop(id) {
     const p = progs.get(id)
     if (p?.prog) gl.deleteProgram(p.prog)
+    if (p) for (const t of p.textures.values()) gl.deleteTexture(t.tex)
+    p?.hist?.dispose()
     progs.delete(id)
   }
 
@@ -115,10 +155,17 @@ export function createChainRunner() {
   function bindPass(id, srcTex, time) {
     const p = progs.get(id)
     gl.useProgram(p.prog)
+    const loc = (n) => (n in p.locs ? p.locs[n] : (p.locs[n] = gl.getUniformLocation(p.prog, n)))
+    for (const [name, t] of p.textures) { // extras on units 1+, then back to unit 0 for the picture
+      gl.activeTexture(gl.TEXTURE0 + t.unit)
+      gl.bindTexture(gl.TEXTURE_2D, t.tex)
+      gl.uniform1i(loc(name), t.unit)
+    }
+    p.hist?.bind(loc)
+    gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, srcTex)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, p.mipmaps ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR)
     if (p.mipmaps) gl.generateMipmap(gl.TEXTURE_2D)
-    const loc = (n) => (n in p.locs ? p.locs[n] : (p.locs[n] = gl.getUniformLocation(p.prog, n)))
     gl.uniform1i(loc('u_tex'), 0)
     gl.uniform2f(loc('u_res'), W, H)
     gl.uniform1f(loc('u_time'), time)
@@ -136,6 +183,7 @@ export function createChainRunner() {
   function run(ids, input, w, h, time, outCtx, thumbs = null) {
     if (lost || !input || !ids.every(ready)) return false
     size(w, h)
+    for (const id of ids) progs.get(id).hist?.resize(w, h)
     gl.viewport(0, 0, w, h)
     gl.bindBuffer(gl.ARRAY_BUFFER, vbo)
     gl.activeTexture(gl.TEXTURE0)
@@ -157,11 +205,12 @@ export function createChainRunner() {
       else gl.bindFramebuffer(gl.FRAMEBUFFER, targets[ping].fbo)
       bindPass(ids[i], srcTex, time)
       gl.drawArrays(gl.TRIANGLES, 0, 3)
+      progs.get(ids[i]).hist?.after(srcTex) // (the thumb draw above does not advance history)
       if (!last) { srcTex = targets[ping].tex; ping ^= 1 }
     }
     outCtx.drawImage(canvas, 0, 0)
     return true
   }
 
-  return { setProgram, setUniforms, ready, failed, drop, signature, run, get lost() { return lost } }
+  return { setProgram, setUniforms, setTexture, ready, failed, drop, signature, run, get lost() { return lost } }
 }

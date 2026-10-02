@@ -3,15 +3,14 @@ import { chromium } from 'playwright'
 import { preview } from 'vite'
 const root = process.cwd()
 const server = await preview({ root, preview: { port: 4399, strictPort: true } })
+const slugs = process.argv.slice(2).length ? process.argv.slice(2) : ['solarize', 'duotone', 'invert'] // optional: slugs to chain
 const graph = {
   nodes: [
     { id: 1, type: 'text', x: 0, y: 0, params: { text: 'CHAIN TEST', font: 'sans-serif', size: 0.25, weight: 700, tracking: 0.04, x: 0.5, y: 0.5, hue: 200, sat: 82, val: 96, rotate: 0, italic: false, glow: 0.4, bg: false, seqMode: 'off', lyrics: '', lineDur: 3, loopSeq: true, transition: 'None', transDur: 0.4 } },
-    { id: 2, type: 'filter', x: 0, y: 0, params: { slug: 'solarize', seed: 1 } },
-    { id: 3, type: 'filter', x: 0, y: 0, params: { slug: 'duotone', seed: 1 } },
-    { id: 4, type: 'filter', x: 0, y: 0, params: { slug: 'invert', seed: 1 } },
-    { id: 5, type: 'output', x: 0, y: 0, params: {} },
+    ...slugs.map((slug, i) => ({ id: 2 + i, type: 'filter', x: 0, y: 0, params: { slug, seed: 1 } })),
+    { id: 2 + slugs.length, type: 'output', x: 0, y: 0, params: {} },
   ],
-  edges: [{ from: 1, to: 2, port: 0 }, { from: 2, to: 3, port: 0 }, { from: 3, to: 4, port: 0 }, { from: 4, to: 5, port: 0 }],
+  edges: Array.from({ length: slugs.length + 1 }, (_, i) => ({ from: 1 + i, to: 2 + i, port: 0 })),
   links: [], effects: {},
 }
 const browser = await chromium.launch({ channel: 'msedge', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] })
@@ -34,7 +33,7 @@ async function grab(mode) {
     t.getContext('2d').drawImage(c, 0, 0, 160, 90)
     return { m: window.__m, w: c.width, h: c.height, px: Array.from(t.getContext('2d').getImageData(0, 0, 160, 90).data) }
   })
-  await page.screenshot({ path: `scripts/scratch/out/chain-${mode}.png` })
+  await page.screenshot({ path: `scripts/scratch/out/chain-${mode}-${slugs.join('+')}.png` })
   await ctx.close()
   return { ...data, logs }
 }

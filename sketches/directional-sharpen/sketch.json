@@ -1,0 +1,14 @@
+{
+  "title": "Directional Sharpen",
+  "description": "Unsharp mask along a single direction on the GPU. Pick a fixed angle to undo motion blur or shake along that line, or sharpen across edges so each pixel follows its own brightness gradient: edges get crisper without amplifying the noise that runs along them. Amount is audio-mappable. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "sharpen",
+    "motion-blur",
+    "detail"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-10-01"
+}

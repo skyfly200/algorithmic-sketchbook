@@ -1,0 +1,14 @@
+{
+  "title": "Difference of Gaussians",
+  "description": "Band-pass detail from two blurs subtracted on the GPU. Band-pass shows grey relief, Ink lines is the XDoG sketch operator (black linework on paper) and Add detail boosts the band back onto the colour picture. Radius, blur ratio, gain and line threshold are live; gain is audio-mappable. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "edges",
+    "sketch",
+    "detail"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-10-01"
+}

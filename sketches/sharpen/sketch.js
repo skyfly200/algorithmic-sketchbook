@@ -14,6 +14,7 @@ const params = rt.params({
   method: { value: 'Unsharp mask', type: 'select', options: METHODS, label: 'Method' },
   amount: { value: 1.2, min: 0, max: 5, step: 0.05, label: 'Amount' },
   radius: { value: 2, min: 0.5, max: 10, step: 0.1, label: 'Radius' },
+  falloff: { value: 2, min: 0, max: 6, step: 0.1, label: 'Radius falloff' },
   threshold: { value: 0.02, min: 0, max: 0.3, step: 0.005, label: 'Threshold' },
   lumaOnly: { value: true, type: 'bool', label: 'Luminance only' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
@@ -29,6 +30,7 @@ uniform int u_method;
 uniform float u_amount;
 uniform float u_radius;
 uniform float u_threshold;
+uniform float u_falloff;
 uniform bool u_luma;
 out vec4 outColor;
 
@@ -43,7 +45,7 @@ vec3 blur(float r) {
     float f = (float(i) + 0.5) / 16.0;
     float a = float(i) * 2.399963;
     float d = r * sqrt(f);
-    float w = exp(-2.0 * f);
+    float w = exp(-u_falloff * f);
     acc += texture(u_tex, v_uv + vec2(cos(a), sin(a)) * d * px).rgb * w;
     wsum += w;
   }
@@ -80,6 +82,7 @@ function frame(now) {
     u.f('u_amount', params.amount)
     u.f('u_radius', params.radius * rt.pixelRatio)
     u.f('u_threshold', params.threshold)
+    u.f('u_falloff', params.falloff)
     u.i('u_luma', params.lumaOnly ? 1 : 0)
   })
   requestAnimationFrame(frame)

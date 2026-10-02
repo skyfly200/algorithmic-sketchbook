@@ -24,9 +24,18 @@
  * (`filter:program`) and its uniform values whenever they change
  * (`filter:uniforms`); the parent runs the whole chain in one GL context.
  * u_res and u_time are the parent's. In chain mode rt.pixelRatio and gf.width/height
- * report the parent's render size, so size-dependent uniforms need no special casing.
- * A sketch that adds extra textures declines.
+ * report the parent's render size, so size-dependent uniforms need no special casing
+ * (a 'resize' event is dispatched when the size changes, so sketches that bake
+ * size-dependent layers rebuild them).
+ * Extra textures (addTexture) are shared too: each upload() is snapshotted and sent
+ * as `filter:texture` (an ImageBitmap for canvases, raw bytes for typed arrays), and
+ * all of them are resent when the chain is joined.
+ * A shader that samples `u_prev` (its own previous output) or `u_prevIn` (the previous
+ * input picture) is a stateful filter (see glhistory.js): it redraws every frame, and
+ * chains keep the same history per member.
  */
+import { createHistory, usesHistory } from './glhistory.js'
+
 export const VERT = `#version 300 es
 in vec2 position;
 out vec2 v_uv;
@@ -39,7 +48,8 @@ void main() {
 // read a pre-blurred version with textureLod(u_tex, uv, lod) in a single cheap tap.
 export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
   const capture = new URLSearchParams(location.search).get('capture') === '1'
-  const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: capture })
+  // a history filter reads its own output back (copyTexSubImage2D), which wants a non-multisampled canvas
+  const gl = canvas.getContext('webgl2', usesHistory(frag) ? { preserveDrawingBuffer: capture, antialias: false } : { preserveDrawingBuffer: capture })
   const buf = document.createElement('canvas')
   const bctx = buf.getContext('2d')
 
@@ -75,7 +85,8 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
   const loc = (n) => (n in locs ? locs[n] : (locs[n] = gl.getUniformLocation(program, n)))
   // A shader that reads u_time anywhere beyond its declaration animates on its
   // own, so it can never skip frames.
-  const animated = /u_time/.test(frag.replace(/uniform\s+\w+\s+u_time\s*;/g, ''))
+  const hist = createHistory(gl, frag)
+  const animated = !!hist || /u_time/.test(frag.replace(/uniform\s+\w+\s+u_time\s*;/g, ''))
   let sig = ''
   // In chain mode the uniform calls are recorded for the parent instead of
   // reaching GL. u_res / u_time are the parent's to set.
@@ -96,28 +107,47 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
   }
   // A chained filter never draws, so it parks its canvases at 1x1 instead of holding
   // full-size frame buffers (the parent's cost model counts on this).
-  const park = () => { canvas.width = canvas.height = buf.width = buf.height = 1 }
+  const park = () => { canvas.width = canvas.height = buf.width = buf.height = 1; hist?.resize(1, 1) }
   const basePixelRatio = rt.pixelRatio
-  let declined = false // extra textures can't be shared, so such a sketch stays an iframe
-  const toParent = (msg) => { try { window.parent.postMessage(msg, '*') } catch { /* no parent */ } }
+  const toParent = (msg, transfer) => { try { window.parent.postMessage(msg, '*', transfer) } catch { /* no parent */ } }
+  const extras = [] // addTexture() registrations: { name, unit, filter, flipY, source, w, h, seq, restore }
+  // Snapshot one extra texture for the parent. Canvases / ImageData go as an ImageBitmap
+  // (flip baked in: bitmaps ignore UNPACK_FLIP_Y), typed arrays as a copy.
+  async function sendTexture(x) {
+    const msg = { type: 'filter:texture', name: x.name, unit: x.unit, filter: x.filter, flipY: x.flipY }
+    if (!x.source) return toParent(msg) // declared, nothing uploaded yet
+    const seq = ++x.seq
+    if (ArrayBuffer.isView(x.source)) {
+      msg.data = x.source.slice(); msg.w = x.w; msg.h = x.h
+      return toParent(msg)
+    }
+    try {
+      const bmp = await createImageBitmap(x.source, { imageOrientation: x.flipY ? 'flipY' : 'none', premultiplyAlpha: 'none' })
+      if (seq !== x.seq || !chain) return bmp.close()
+      msg.bitmap = bmp
+      toParent(msg, [bmp])
+    } catch { /* source gone; the next upload resends */ }
+  }
   window.addEventListener('message', (e) => {
     const d = e.data
     if (!d || d.type !== 'filter:chain' || window.parent === window || e.source !== window.parent) return
     if (d.on) {
-      chain = !declined
-      if (chain) {
-        // The parent renders at its own size: report that size (rt.pixelRatio, gf.width/height)
-        // so pixel-valued params (radii, cell sizes) mean the same thing as unchained.
-        if (d.width > 0 && window.innerWidth > 0) rt.pixelRatio = d.width / window.innerWidth
-        resize()
-        park()
-      }
+      chain = true
+      // The parent renders at its own size: report that size (rt.pixelRatio, gf.width/height)
+      // so pixel-valued params (radii, cell sizes) mean the same thing as unchained.
+      if (d.width > 0 && window.innerWidth > 0) rt.pixelRatio = d.width / window.innerWidth
+      resize()
+      park()
+      window.dispatchEvent(new Event('resize')) // sketches re-bake size-dependent layers
       chainSent = null // (re)send the uniforms along with the program
-      toParent({ type: 'filter:program', ok: chain, frag, mipmaps, animated })
+      toParent({ type: 'filter:program', ok: true, frag, mipmaps, animated })
+      for (const x of extras) sendTexture(x)
     } else if (chain) {
       chain = false
       rt.pixelRatio = basePixelRatio
       resize() // back to full size; redraws from our own source
+      window.dispatchEvent(new Event('resize'))
+      for (const x of extras) if (x.source) x.restore()
     }
   })
   gl.uniform1i(loc('u_tex'), 0)
@@ -127,7 +157,9 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
   // a canvas/ImageData/typed array (+ width/height for raw arrays) and forces the
   // next render() to draw even if nothing else changed.
   function addTexture(name, unit, { filter = 'LINEAR', flipY = true } = {}) {
-    declined = true
+    const x = { name, unit, filter, flipY, source: null, w: 0, h: 0, seq: 0, restore: null }
+    extras.push(x)
+    if (chain) sendTexture(x) // declared late (a lazy bake): the parent waits for its first upload
     const t = gl.createTexture()
     gl.activeTexture(gl.TEXTURE0 + unit)
     gl.bindTexture(gl.TEXTURE_2D, t)
@@ -138,17 +170,23 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
     gl.uniform1i(loc(name), unit)
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, tex)
+    x.restore = () => {
+      const { source, w, h } = x
+      gl.activeTexture(gl.TEXTURE0 + unit)
+      gl.bindTexture(gl.TEXTURE_2D, t)
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, flipY)
+      if (w) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, source)
+      else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, tex)
+      forceDraw = true
+    }
     return {
       upload(source, w, h) {
-        gl.activeTexture(gl.TEXTURE0 + unit)
-        gl.bindTexture(gl.TEXTURE_2D, t)
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, flipY)
-        if (w) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, source)
-        else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
-        gl.activeTexture(gl.TEXTURE0)
-        gl.bindTexture(gl.TEXTURE_2D, tex)
-        forceDraw = true
+        x.source = source; x.w = w; x.h = h
+        if (chain) sendTexture(x) // the parent owns the GL texture while chained
+        else x.restore()
       },
     }
   }
@@ -165,6 +203,7 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
     canvas.width = buf.width = W
     canvas.height = buf.height = H
     gl.viewport(0, 0, W, H)
+    hist?.resize(W, H)
     lastVersion = -1 // force a fresh upload + draw
   }
   window.addEventListener('resize', resize)
@@ -204,7 +243,9 @@ export function createGLFilter({ rt, src, canvas, frag, mipmaps = false }) {
         lastMirror = mirror
       }
       lastSig = sig
+      hist?.bind(loc)
       gl.drawArrays(gl.TRIANGLES, 0, 3)
+      hist?.after(tex)
       return true
     },
   }

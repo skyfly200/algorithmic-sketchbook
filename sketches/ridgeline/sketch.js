@@ -190,8 +190,12 @@ function frame(now) {
   const t = now * 0.001
   const lines = Math.max(8, Math.round(params.lines))
   const spanX = W - W * 0.32
-  // sample density: enough to be smooth, scaled by quality
-  const cols = Math.max(80, Math.round(spanX / (2.4 / Math.max(0.4, rt.pixelRatio))))
+  // Sample density. The step is a fixed ~2.4 CSS px (it used to shrink as pixelRatio grew, so
+  // columns scaled with pixelRatio squared) and widens as quality drops (rt.detail). The floor
+  // keeps the top fbm octave (u_freq * 16 cycles across the span) at >= 0.5 columns per cycle (it carries 1/32 of the amplitude).
+  const freq = 2.5 + params.detail * 15
+  const stepPx = (2.4 * rt.pixelRatio) / Math.max(0.35, rt.detail)
+  const cols = Math.max(80, Math.ceil(freq * 8), Math.round(spanX / stepPx))
 
   gl.bindVertexArray(vao)
   gl.clearColor(5 / 255, 6 / 255, 10 / 255, 1)

@@ -11,7 +11,7 @@ defineProps({
 })
 const emit = defineEmits([
   'update:modelValue', 'upload', 'url', 'screen-live', 'screen-grab',
-  'google', 'point-cloud', 'geodata', 'terrain', 'open-settings',
+  'google', 'point-cloud', 'geodata', 'terrain', 'upscale', 'open-settings',
 ])
 </script>
 
@@ -39,6 +39,9 @@ const emit = defineEmits([
         </button>
         <button class="wiz-card" :class="{ 'wiz-card--dim': !hasGoogle }" @click="hasGoogle ? emit('google') : emit('open-settings')">
           <v-icon icon="mdi-google-photos" size="26" /><span>Google Photos</span><small>{{ hasGoogle ? 'Pick from your library' : 'Add a client ID in Settings' }}</small>
+        </button>
+        <button class="wiz-card" @click="emit('upscale')">
+          <v-icon icon="mdi-image-auto-adjust" size="26" /><span>AI upscale</span><small>Enlarge images 2–4× → Media</small>
         </button>
         <button class="wiz-card" @click="emit('point-cloud')">
           <v-icon icon="mdi-dots-hexagon" size="26" /><span>Point cloud / LiDAR</span><small>.ply / .las / .xyz / .pts → Geometry</small>

@@ -1,0 +1,14 @@
+{
+  "title": "Median",
+  "description": "Median filter on the GPU: each pixel becomes the median of its neighbourhood, which removes speckle and fine texture while keeping edges sharp. A 3x3 exact window or a 5x5 row-median approximation, with adjustable tap spacing for a chunkier painted look. Works on the camera, a dropped clip, the demo, or the layers below in the Mixer/Patch.",
+  "tags": [
+    "filter",
+    "median",
+    "denoise",
+    "painterly"
+  ],
+  "tech": [
+    "webgl"
+  ],
+  "created": "2026-10-01"
+}

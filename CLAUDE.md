@@ -97,6 +97,44 @@ every frame is the most common way a sketch ends up slow.
 Night city). Press **D** in a sketch (or `?demo=night-city`) to cycle them; a
 sketch can still pass its own `createSource({ demo })`.
 
+## Upscaling
+
+Two separate tools; neither is a general "make it bigger" node, because every Patch node
+canvas is the compositor's W×H, so a filter node cannot add pixels.
+
+- `detail-upscale` (a chainable filter): edge push + contrast-adaptive sharpen for a picture
+  that was already enlarged. `Source scale` is how many times it was stretched. Plain
+  reconstruction, not a neural net; described as such in its manifest.
+- AI upscale (Import wizard → "AI upscale", `UpscaleDialog.vue`): images only. A Swin2SR model
+  (Hugging Face `Xenova/swin2SR-*`, see `MODELS` in `src/lib/upscale/neural.js`) runs in a module
+  worker (`worker.js`) through Transformers.js loaded from a *pinned jsDelivr URL*, not npm (the
+  package pulls in Node-only deps). Weights download on first use and are cached by the library.
+  `tiles.js` (pure, tested) cuts the picture into 64 px tiles with 8 px overlap and a keep-region
+  stitch, and caps the output at 4096 px. WebGPU is used when an adapter exists, with a fresh
+  WASM worker as the fallback; alpha is resampled separately. Cancel = abort, which terminates
+  the worker. Results go to the media library as PNGs and the first also gets a Media node.
+  Video is deliberately unsupported (per-frame inference is far too slow).
+- Cost on a slow CPU with single-threaded WASM: about 0.8 ms per input pixel for the fast ×2
+  model, about 4 ms for the ×4 one. Scratch checks: `scripts/scratch/neural-spike.mjs`,
+  `neural-e2e.mjs`, `wizard-upscale.mjs`, `upscale-shader.mjs`.
+
+## Temporal upscaling (prototype)
+
+`sketches/_lib/gltaau.js` is an FSR2 / TAAU-style temporal upscaler for heavy, ray-based shader
+sketches (not DLSS: no network, no engine motion vectors). The sketch renders its scene at a fraction
+of the canvas size into a low-res target (colour + ray depth) with a sub-pixel Halton jitter; a
+resolve pass reprojects the previous full-size frame through the previous camera (exact: from ray + depth
+for a pinhole camera, or an affine map for a flat 2D pan / zoom scene), clamps it to the local colour distribution (variance clipping in YCoCg), and blends.
+`mandelbulb` (pinhole camera) and `fractal-explorer` (2D `{ center, scale }`) are wired up (Render mode:
+Native / Temporal 0.75x / 0.5x / 0.33x, default Native). To adopt it a sketch must: add `u_jitter` to the
+pixel position, write `layout(location=1) out float` ray distance (any value for a flat scene), report its
+camera each frame (`{ ro, uu, vv, ww, f }` or `{ center, scale }`), and call `taau.reset()` when the scene
+itself changes. Content that moves without the camera (animated waves, plasma) cannot be
+reprojected and does not benefit: ocean-surface was tried and got slower and softer, so it was reverted.
+Cheap shaders (infinite-zoom, plasma) lose to the resolve pass's own cost; use it on expensive ones.
+Not wired into Patch yet. Check with `scripts/scratch/taau-compare.mjs` (PSNR against a 2x supersampled
+reference, plus per-frame cost) and `taau-montage.mjs`.
+
 ## Patch scheduling
 
 Two layers, both in `PatchView`:
@@ -121,14 +159,28 @@ run in one GL context instead of one iframe + bitmap transfer each.
   `refreshChains` / `runChain` in `PatchView.vue`.
 - A filter opts in by being listed in `CHAINABLE_SLUGS` (`src/registry/filters.js`;
   `tests/filters.test.js` checks the rules): `createGLFilter` is all it draws, no
-  `addTexture`, no glpipe, and no GL state kept between frames (history, feedback,
-  baked noise textures). Write new filters as a pure function of the input, uniforms
-  and `u_time` and they can chain. The iframe stays the param host: in chain mode
+  glpipe, and no raw GL of its own. Write new filters as a pure function of the input,
+  uniforms, `u_time`, uploaded textures and (optionally) frame history, and they can
+  chain. The iframe stays the param host: in chain mode
   `glfilter.js` sends its shader once (`filter:program`) and uniforms on change
   (`filter:uniforms`), parks its canvases at 1x1 and draws nothing. `u_res` / `u_time`
   belong to the parent. In chain mode `rt.pixelRatio` and `gf.width/height` report the
   chain's render size, so pixel-valued uniforms (radii, cell sizes) need no special
-  casing; read them every frame, never cache them at load.
+  casing; read them every frame, never cache them at load. A window `resize` also
+  fires when a filter joins or leaves a chain, so bakes that depend on the size rebuild.
+- Extra textures (`gf.addTexture`: LUTs, baked overlays; `curves`, `camera-lens`,
+  `polaroid`) are shared too: each `upload()` is sent as `filter:texture` (an
+  ImageBitmap with the flip baked in, or raw bytes), bound on units 1+ in the runner, and
+  resent when the filter joins. A chain does not run until every declared texture has
+  arrived. Bake into a 2D canvas / typed array and `upload()` it; never use raw GL.
+- Stateful filters (`feedback`, `interlace`): a shader that samples `u_prev` (its own
+  previous output) and/or `u_prevIn` (the picture that fed it last draw) gets a per-member
+  history (`sketches/_lib/glhistory.js`, shared by `glfilter.js` and `chainRunner.js`; units
+  6 and 7). Such a filter is `animated` (redraws every frame) and its history restarts
+  from black on a resize. `u_prev` is the *displayed* output, so anything the shader adds
+  at the end (a mirror) feeds back into its own loop. Needs one slot per kind of state,
+  so filters that hold a frame apart from their output (strobe, fps-limiter) or a ring of
+  past frames (delay, tiling, rolling-shutter, motion-extraction) are not chainable yet.
 - Members fall back to normal iframe rendering until every program has arrived or if
   the chain cannot run. A/B test with `localStorage['patch.filterChain'] = 'off'`.
 - Interior node previews refresh about every 0.4 s (live for a selected member).
