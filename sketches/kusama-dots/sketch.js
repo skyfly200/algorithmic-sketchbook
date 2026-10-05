@@ -24,8 +24,11 @@ const params = rt.params({
   spin: { value: 0.05, min: -0.5, max: 0.5, step: 0.01, label: 'Rotation' },
   breathe: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Breathe' },
 })
-// Beats push a pulse through the field (adds to the wave depth momentarily).
-rt.mapInput('audio.pulse', 'waves', 0.6)
+// Default mappings — beats push a pulse through the field, bass swells the
+// dots, and hats/cymbals make them shimmer (jitter re-seats each dot a little).
+rt.mapInput('audio.pulse', 'waves', 0.5)
+rt.mapInput('audio.low', 'dotScale', 0.1)
+rt.mapInput('audio.high', 'jitter', 0.2)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')

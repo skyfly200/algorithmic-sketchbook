@@ -19,13 +19,19 @@ const params = rt.params({
   glow: { value: 0.6, min: 0, max: 1, step: 0.02, label: 'Glow' },
   colorMode: { value: 'Temperature', type: 'select', options: COLORS, label: 'Colour' },
   hue: { value: 0.6, min: 0, max: 1, step: 0.01, label: 'Hue' },
+  // 0.5 = dead ahead (also what Patch shows, where default mappings start off).
+  // The pointer mappings below are centred, so the pointer swings the vanishing
+  // point both ways around this base across the whole screen.
   steerX: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Steer X' },
   steerY: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Steer Y' },
 })
-// Pointer steers the vanishing point; a beat kicks the warp.
-rt.mapInput('mouse.x', 'steerX', 1)
-rt.mapInput('mouse.y', 'steerY', 1)
+// Default mappings — the pointer steers the vanishing point, a beat kicks the
+// warp, loudness pushes the speed, and the highs brighten the glow.
+rt.mapInput('mouse.x', 'steerX', 1, { center: true })
+rt.mapInput('mouse.y', 'steerY', 1, { center: true })
 rt.mapInput('audio.pulse', 'warp', 0.5)
+rt.mapInput('audio.volume', 'speed', 0.15)
+rt.mapInput('audio.high', 'glow', 0.3)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')

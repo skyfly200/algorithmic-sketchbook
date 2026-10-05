@@ -610,6 +610,15 @@ onUnmounted(() => {
                   title="Ignore input below this level, then rescale above it — cuts the noise floor"
                   @update:model-value="(v) => { m.gate = v; syncMappings() }"
                 />
+                <v-switch
+                  :model-value="!!m.center"
+                  density="compact"
+                  hide-details
+                  color="primary"
+                  label="centred (±)"
+                  title="Swing the param both ways around its value: the input's midpoint is no change, low pulls it down, high pushes it up — e.g. pointer look / steer"
+                  @update:model-value="(v) => { if (v) m.center = true; else delete m.center; syncMappings() }"
+                />
               </v-card>
 
               <!-- Audio input (shown when the sketch can react to audio) -->

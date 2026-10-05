@@ -21,12 +21,18 @@ const params = rt.params({
   sunY: { value: 0.42, min: 0.05, max: 0.9, step: 0.01, label: 'Sun height' },
   sunSize: { value: 0.14, min: 0.02, max: 0.35, step: 0.01, label: 'Sun size' },
   stars: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Stars' },
+  // 0.5 = looking straight ahead (also what Patch shows, where default
+  // mappings start off). The pointer mappings below are centred, so the pointer
+  // swings the look both ways around this base across the whole screen.
   parX: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Look X' },
   parY: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Look Y' },
 })
-// Pointer looks around the scene by default (map any input to override).
-rt.mapInput('mouse.x', 'parX', 1)
-rt.mapInput('mouse.y', 'parY', 1)
+// Default mappings — the pointer looks around, bass pushes the drift, and the
+// sun rises and sets on a slow cycle.
+rt.mapInput('mouse.x', 'parX', 1, { center: true })
+rt.mapInput('mouse.y', 'parY', 1, { center: true })
+rt.mapInput('audio.low', 'speed', 0.15)
+rt.mapInput('time.sin', 'sunY', 0.08)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
@@ -86,14 +92,17 @@ function frame(now) {
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
 
   // parallax offset: pointer look (centered at 0.5) scaled by depth, plus a
-  // small beat bob so the scene breathes with the music.
+  // small beat bob so the scene breathes with the music. One convention for
+  // every layer: looking right/up shifts the scene left/down, and the nearer a
+  // layer is the further it shifts — so the sun and stars (farthest) barely move.
   const lookX = (params.parX - 0.5) * 2
   const lookY = (params.parY - 0.5) * 2
   const bob = rt.beat.state.pulse * 0.02
+  const u = Math.min(W, H) / 720 * params.depth // parallax unit, resolution-independent
 
-  // sun / moon disc — sits behind the ridges, moves a touch with the look
-  const sunX = W * (0.5 + lookX * 0.06 * params.depth)
-  const sunY = H * (params.sunY + lookY * 0.05 * params.depth - bob)
+  // sun / moon disc — sits behind the ridges, moves least of all
+  const sunX = W * 0.5 - lookX * 4 * u
+  const sunY = H * (params.sunY - bob) + lookY * 3 * u
   const sr = Math.min(W, H) * params.sunSize
   const sg = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sr * 2.4)
   sg.addColorStop(0, P.sun); sg.addColorStop(0.35, P.sun); sg.addColorStop(1, 'rgba(0,0,0,0)')
@@ -108,8 +117,8 @@ function frame(now) {
     for (const s of starList) {
       const tw = 0.5 + 0.5 * Math.sin(t * 1.5 + s.ph)
       ctx.globalAlpha = params.stars * tw * (1 - s.y / 0.6) * 0.9
-      const sx = s.x * W + lookX * 6 * params.depth
-      const sy = s.y * H - lookY * 6 * params.depth
+      const sx = s.x * W - lookX * 4 * u
+      const sy = s.y * H + lookY * 3 * u
       ctx.fillStyle = '#fff'
       ctx.fillRect(sx, sy, s.r * rt.pixelRatio, s.r * rt.pixelRatio)
     }
@@ -122,9 +131,10 @@ function frame(now) {
     const d = L === 1 ? 1 : i / (L - 1) // 0 far … 1 near
     // near layers scroll faster and sit lower; parallax shifts them more
     const scroll = t * params.speed * (0.15 + d * 1.1) * 60
-    const px = lookX * (10 + d * 90) * params.depth
-    const py = lookY * (6 + d * 40) * params.depth
-    const baseY = H * (0.32 + d * 0.6) - py
+    // px is added to the noise sample position, which shifts the ridge left
+    const px = lookX * (10 + d * 90) * u
+    const py = lookY * (6 + d * 40) * u
+    const baseY = H * (0.32 + d * 0.6) + py
     const amp = H * (0.06 + d * 0.20) * (0.6 + params.ruggedness * 0.7)
     // colour: interpolate far→near, then apply atmospheric haze toward the sky
     const hue = P.hueFar + (P.hueNear - P.hueFar) * d

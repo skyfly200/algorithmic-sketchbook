@@ -46,7 +46,10 @@ All templates import it. In a sketch:
 - Tweakable params: `const params = rt.params({ name: { value, min, max,
   step, label } })` (`type: 'bool'` for switches); read `params.name` in the
   loop — it includes input modulation. `rt.mapInput('beat.pulse', 'name',
-  0.3)` adds a default input mapping. Declaring params gives the sketch a
+  0.3)` adds a default input mapping. Mappings only *add* source × amount ×
+  range to the base; for a pointer/tilt param centred on its middle, pass
+  `{ center: true }` as the 4th arg (source 0.5 = no change) and keep the base
+  at the centre — Patch loads sketches with default mappings off. Declaring params gives the sketch a
   controls panel in the viewer (sliders, mapping editor, saveable scenes) via
   postMessage — no extra wiring needed.
 

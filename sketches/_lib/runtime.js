@@ -28,7 +28,10 @@
  * (param values + input mappings + display settings). Input sources:
  * audio.pulse/level/low/mid/high/volume, mouse.x/y, tilt.x/y + shake
  * (accelerometer/gyro), time.sin — each 0..1; a mapping's amount (-1..1) adds
- * source × amount × (max − min) to the param's base value. Legacy 'beat.*'
+ * source × amount × (max − min) to the param's base value. A centred mapping
+ * ({ center: true }) uses (source − 0.5) instead, so e.g. the pointer swings a
+ * param both ways around a mid base: rt.mapInput('mouse.x', 'lookX', 1,
+ * { center: true }). Legacy 'beat.*'
  * source names (older saved scenes) still resolve.
  *
  * Two host messages: `sketch:ready` (params announced — early) and
@@ -39,6 +42,7 @@
  * Everything is opt-in — sketches that ignore all of this still work.
  */
 import { createBeatDetector } from './beat.js'
+import { shapeSource, applyMapping } from './mapping.js'
 import { createMidiInput, createLeapInput, createArtnetInput, createRemoteInput } from './inputs.js'
 
 // GPU power hint. When the app asks for it (?gpu=high, driven by the global
@@ -552,13 +556,9 @@ export function createRuntime() {
     for (const m of mappings) {
       const def = schema[m.param]
       if (!def || typeof def.min !== 'number') continue
-      let v = sourceValue(m.source, now)
-      // Advanced output shaping (all sources are 0..1 here):
-      //  • gate — ignore input below a floor, then rescale [gate..1] → [0..1]
-      //  • curve — response shape: >0 eases out (boosts low input, more
-      //    sensitive), <0 eases in (only strong input registers, punchy)
-      if (m.gate > 0) v = v <= m.gate ? 0 : (v - m.gate) / (1 - m.gate)
-      if (m.curve) v = Math.pow(clamp(v, 0, 1), Math.pow(2, -m.curve * 2.5))
+      // gate / curve response shaping, then smoothing, then the (optionally
+      // centred) contribution — see ./mapping.js
+      let v = shapeSource(sourceValue(m.source, now), m)
       const sm = m.smooth ?? 0
       if (sm > 0) {
         const key = m.source + '>' + m.param
@@ -566,11 +566,7 @@ export function createRuntime() {
         v = prev == null ? v : prev * sm + v * (1 - sm)
         smoothed.set(key, v)
       }
-      effective[m.param] = clamp(
-        effective[m.param] + v * m.amount * (def.max - def.min),
-        def.min,
-        def.max,
-      )
+      effective[m.param] = applyMapping(effective[m.param], v, m, def)
     }
   }
 
@@ -831,13 +827,19 @@ export function createRuntime() {
     onState(cb) { onStateCb = cb; if (sceneState != null) cb(sceneState) },
     get state() { return sceneState },
 
-    mapInput(source, param, amount = 0.5, smooth = defaultSmooth(source)) {
+    // rt.mapInput(source, param, amount, smooth)  — or pass options as the 4th
+    // argument: rt.mapInput('mouse.x', 'lookX', 1, { center: true, smooth: 0.2 })
+    // (center: the source's midpoint is no change — see ./mapping.js).
+    mapInput(source, param, amount = 0.5, opts) {
+      const o = opts !== null && typeof opts === 'object' ? opts : { smooth: opts }
       // Default mappings used to run with no inertia (smooth 0), so the param
       // snapped to the raw input every frame — visibly jumpy, especially in
       // Autopilot where every layer reacts to the shared mic at once. Give
       // each a source-appropriate smoothing unless the caller overrides it.
-      defaultMappings.push({ source, param, amount, smooth })
-      if (!noDefaultMap) setMappings([...mappings, { source, param, amount, smooth }])
+      const m = { source, param, amount, smooth: o.smooth ?? defaultSmooth(source) }
+      if (o.center) m.center = true
+      defaultMappings.push(m)
+      if (!noDefaultMap) setMappings([...mappings, { ...m }])
     },
 
     // Delay `sketch:loaded` until a promise settles — for sketches that fetch

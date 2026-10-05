@@ -41,6 +41,11 @@ Beyond source and amount, a mapping can be shaped:
 - **Invert** flips the response (`1 - source`).
 - **Scale curve** bends the response — ease-in, ease-out or S-curve — so, say, a
   beat hits hard then tails off gently.
+- **Centred (±)** makes the mapping swing the param both ways: the source's
+  midpoint means "no change", below it pulls the param down and above it pushes
+  it up. Normally a mapping only adds to the param, which suits audio (silence =
+  no change) but not a pointer steering a view from the middle of the screen —
+  that's what centred is for (Star Field's steer, Parallax Layers' look).
 
 ## Audio
 
