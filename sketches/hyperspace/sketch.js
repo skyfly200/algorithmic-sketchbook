@@ -38,8 +38,10 @@ const params = rt.params({
 })
 // The signature control: the mouse turns the universe through the 4th
 // dimension; beats give the auto-spin a shove.
-rt.mapInput('mouse.x', 'rotXW', 0.5)
-rt.mapInput('mouse.y', 'rotYW', 0.5)
+// Centred: 0.5 is no turn, so the pointer turns both ways (±180°) around the
+// base rather than only ever one way.
+rt.mapInput('mouse.x', 'rotXW', 1, { center: true })
+rt.mapInput('mouse.y', 'rotYW', 1, { center: true })
 rt.mapInput('audio.pulse', 'spin', 0.4)
 
 const scene = new THREE.Scene()

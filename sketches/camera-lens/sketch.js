@@ -113,7 +113,9 @@ const params = rt.params({
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })
 // Rack focus by moving the mouse up and down — works with no permissions.
-rt.mapInput('mouse.y', 'focalPlane', 0.5)
+// Centred: the pointer racks focus from near (bottom) to far (top) around the
+// mid-depth base, instead of only reaching the far half.
+rt.mapInput('mouse.y', 'focalPlane', 1, { center: true })
 
 const FRAG = `#version 300 es
 precision highp float;

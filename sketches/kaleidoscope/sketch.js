@@ -21,8 +21,10 @@ const params = rt.params({
   srcY: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Sample Y' },
 })
 // Steer the sampled wedge with the mouse; beats kick the mandala's spin.
-rt.mapInput('mouse.x', 'srcX', 0.5)
-rt.mapInput('mouse.y', 'srcY', 0.5)
+// Centred: the pointer swings the sample point both ways around its base
+// (screen centre = the base), across the slider's whole range.
+rt.mapInput('mouse.x', 'srcX', 1, { center: true })
+rt.mapInput('mouse.y', 'srcY', 1, { center: true })
 rt.mapInput('audio.pulse', 'spin', 0.3)
 
 const canvas = document.getElementById('canvas')

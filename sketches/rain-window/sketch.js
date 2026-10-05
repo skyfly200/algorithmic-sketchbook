@@ -24,7 +24,9 @@ const params = rt.params({
   trails: { value: 0.7, min: 0, max: 1, step: 0.02, label: 'Streak clarity' },
 })
 // Tilt which way the drops run by moving the mouse (or tilting the device).
-rt.mapInput('mouse.x', 'wind', 0.6)
+// Centred: 0.5 is still air, so the pointer blows the rain either way around
+// the (randomised) base wind instead of only ever to the right.
+rt.mapInput('mouse.x', 'wind', 1, { center: true })
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
