@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { shapeSource, applyMapping } from '../sketches/_lib/mapping.js'
 
 const unit = { min: 0, max: 1 }
@@ -65,4 +66,40 @@ describe('shapeSource', () => {
     expect(shapeSource(0, { curve: 1 })).toBe(0)
     expect(shapeSource(1, { curve: -1 })).toBe(1)
   })
+})
+
+// Every pointer / tilt source rests at 0.5 (screen centre, a level device), so an
+// additive mapping from one can only push its param one way and moves it off its
+// base when the input is idle. Each sketch's default pointer / tilt mappings must
+// be centred, onto a param whose base leaves room to swing both ways.
+describe('sketch default mappings', () => {
+  const sketches = readdirSync('sketches')
+    .filter((s) => !s.startsWith('_') && existsSync(`sketches/${s}/sketch.js`))
+    .map((slug) => ({ slug, src: readFileSync(`sketches/${slug}/sketch.js`, 'utf8') }))
+  const pointerMappings = sketches.flatMap(({ slug, src }) =>
+    [...src.matchAll(/rt\.mapInput\(\s*'((?:mouse|tilt)\.[xy])',\s*'(\w+)',([^)]*)\)/g)].map(
+      ([, source, param, rest]) => ({ slug, src, source, param, rest }),
+    ),
+  )
+
+  it('finds the pointer and tilt mappings', () => {
+    expect(pointerMappings.length).toBeGreaterThanOrEqual(12)
+  })
+
+  it.each(pointerMappings.map((m) => [`${m.slug}: ${m.source} -> ${m.param}`, m]))(
+    '%s is centred on a mid-range base',
+    (_, { src, param, rest }) => {
+      expect(rest).toMatch(/center:\s*true/)
+      const decl = src.match(new RegExp(`\\b${param}:\\s*\\{([^}]*)\\}`))
+      expect(decl, `param ${param} declared`).toBeTruthy()
+      const num = (k) => Number(decl[1].match(new RegExp(`\\b${k}:\\s*(-?[\\d.]+)`))?.[1])
+      const [min, max] = [num('min'), num('max')]
+      const value = num('value') // NaN when the base is randomised
+      expect(max).toBeGreaterThan(min)
+      if (!Number.isNaN(value)) {
+        expect(value).toBeGreaterThan(min)
+        expect(value).toBeLessThan(max)
+      }
+    },
+  )
 })

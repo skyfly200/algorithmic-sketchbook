@@ -21,9 +21,15 @@ const params = rt.params({
   gloss: { value: 0.9, min: 0.2, max: 1.5, step: 0.05, label: 'Gloss' },
   wobble: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Wobble' },
   hue: { value: Math.round(rt.random(0, 360)), min: 0, max: 360, step: 1, label: 'Surface hue' },
+  // Tray lean; 0.5 is level. Off level, gravity points the way the tray leans.
+  leanX: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Lean X' },
+  leanY: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Lean Y' },
 })
-// The device accelerometer can tilt the surface too (falls back to the mouse).
-rt.mapInput('tilt.x', 'tilt', 0)
+// The device accelerometer can lean the tray too (falls back to the mouse).
+// Centred, so a level device is no change and tilting swings both ways; off by
+// default (amount 0), raise it in the mapping editor.
+rt.mapInput('tilt.x', 'leanX', 0, { center: true })
+rt.mapInput('tilt.y', 'leanY', 0, { center: true })
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
@@ -87,14 +93,22 @@ canvas.addEventListener('pointerdown', (e) => {
 })
 
 function gravity(now) {
-  // Mouse tilts the tray toward the cursor; with no recent mouse the tray tilts
-  // itself in a slow circle. The runtime's tilt.x mapping can add to this.
+  // Mouse tilts the tray toward the cursor; otherwise a lean (device tilt or
+  // the Lean sliders) tilts it that way; with neither the tray tilts itself in
+  // a slow circle.
   const mag = params.tilt * 0.16 * PR
+  const lx = (params.leanX - 0.5) * 2
+  const ly = (params.leanY - 0.5) * 2
   if (now - ptr.t < 2500) {
     const dx = ptr.x - W / 2
     const dy = ptr.y - H / 2
     const d = Math.hypot(dx, dy) + 1e-3
     return { gx: (dx / d) * mag, gy: (dy / d) * mag }
+  }
+  const lean = Math.hypot(lx, ly)
+  if (lean > 0.04) {
+    const k = (Math.min(1, lean) / lean) * mag
+    return { gx: lx * k, gy: ly * k }
   }
   const a = now * 0.00035
   return { gx: Math.cos(a) * mag, gy: Math.sin(a) * mag }
