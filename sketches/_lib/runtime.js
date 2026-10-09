@@ -22,6 +22,12 @@
  *   })
  *   params.speed                          // read the live (modulated) value
  *   rt.mapInput('audio.pulse', 'speed', 0.35) // default input→param mapping
+ *   rt.phase('spin', params.speed)        // ∫ speed dt — use instead of t * speed
+ *
+ * Never animate with `t * params.x` when x can be modulated: every change of x
+ * then jumps the phase by t × Δx, which after a few minutes is many cycles, so
+ * the motion strobes with the music. rt.phase(key, rate) integrates rate over
+ * the frame time measured by rt.tick (once per key per frame) instead.
  *
  * Declaring params connects the sketch to the viewer over postMessage: the
  * viewer renders sliders, edits mappings, and saves/applies scenes
@@ -676,6 +682,9 @@ export function createRuntime() {
   // to know the GPU state is warm (Patch's cue standby) waits for this instead.
   const LOADED_FRAMES = 3
   let tickCount = 0, loadHolds = 0, loadedSent = false
+  // rt.phase(): per-key accumulators advanced by the last rt.tick's frame time
+  let tickNow = 0, tickDt = 0
+  const phases = new Map()
   function checkLoaded() {
     if (loadedSent || loadHolds > 0 || tickCount < LOADED_FRAMES) return
     loadedSent = true
@@ -850,7 +859,19 @@ export function createRuntime() {
       Promise.resolve(promise).catch(() => {}).finally(() => { loadHolds--; checkLoaded() })
     },
 
+    // Integrated phase: adds rate × (seconds since the previous tick) to the
+    // key's accumulator, at most once per tick, and returns it.
+    phase(key, rate) {
+      let p = phases.get(key)
+      if (!p) { p = { v: 0, tick: -1 }; phases.set(key, p) }
+      if (p.tick !== tickCount) { p.tick = tickCount; p.v += rate * tickDt }
+      return p.v
+    },
+
     tick(now = performance.now()) {
+      // frame time for rt.phase(), capped so a backgrounded tab doesn't leap
+      tickDt = tickNow ? Math.min(0.25, Math.max(0, (now - tickNow) / 1000)) : 0
+      tickNow = now
       tickCount++
       checkLoaded()
       fpsTick?.(now)

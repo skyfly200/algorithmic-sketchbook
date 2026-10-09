@@ -108,19 +108,22 @@ rt.onBeat(({ energy }) => {
   for (let k = 0; k < 4 + energy * 14; k++) sparkles.set(Math.floor(rt.rng() * n), 1)
 })
 
+// ∫ speed dt, set once per frame: speed follows a desk fader, and t × speed
+// would jump the patterns whenever it moves
+let speedT = 0
 function pixel(i, n, t) {
   const hue = params.hue
   const sp = params.spread
   switch (params.pattern) {
     case 'rainbow':
-      return [hue + (i / n) * 360 * sp + t * 40 * params.speed, 1, 1]
+      return [hue + (i / n) * 360 * sp + speedT * 40, 1, 1]
     case 'chase': {
       const d = (((i - chasePhase) % n) + n) % n
       const v = Math.exp(-d / (2 + n * 0.04 * sp))
       return [hue + d * 1.2, 1, v]
     }
     case 'breathe':
-      return [hue + Math.sin(i * 0.05 * sp) * 18, 0.95, 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 1.7 * params.speed))]
+      return [hue + Math.sin(i * 0.05 * sp) * 18, 0.95, 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(speedT * 1.7))]
     case 'sparkle': {
       const e = sparkles.get(i) ?? 0
       return [hue + (rt.rng() - 0.5) * 30, e > 0.5 ? 0.25 : 0.9, 0.04 + e]
@@ -131,7 +134,7 @@ function pixel(i, n, t) {
       return [f < 0.6 ? 130 : f < 0.85 ? 55 : 5, 1, 0.9]
     }
     case 'fire': {
-      const fl = 0.5 + 0.5 * Math.sin(t * 11 * params.speed + i * 13.7) * Math.sin(t * 7 + i * 5.1)
+      const fl = 0.5 + 0.5 * Math.sin(speedT * 11 + i * 13.7) * Math.sin(t * 7 + i * 5.1)
       const v = Math.max(0.05, Math.min(1, 0.35 + fl * 0.8 - (i / n) * 0.25 * sp))
       return [20 + fl * 30, 1, v]
     }
@@ -139,7 +142,7 @@ function pixel(i, n, t) {
       const p = leds[i]
       const u = (p.x / W) * 6 * sp
       const w = (p.y / H) * 6 * sp
-      const v = Math.sin(u + t * 2 * params.speed) + Math.sin(w + t * 1.6) + Math.sin((u + w + t) * 0.7)
+      const v = Math.sin(u + speedT * 2) + Math.sin(w + t * 1.6) + Math.sin((u + w + t) * 0.7)
       return [hue + v * 55, 1, 0.45 + 0.4 * Math.sin(v * Math.PI * 0.5)]
     }
   }
@@ -159,6 +162,7 @@ function frame(now) {
   }
   const n = leds.length
 
+  speedT = rt.phase('speed', params.speed)
   chasePhase += dt * params.speed * n * 0.35
   for (const [i, e] of sparkles) {
     const ne = e - dt * 2.2

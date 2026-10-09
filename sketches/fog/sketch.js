@@ -119,7 +119,7 @@ function frame(now) {
   // compose drifting layers, then bias them toward the ground
   fctx.clearRect(0, 0, fw, fh)
   fctx.globalCompositeOperation = 'lighter'
-  const v = t * 40 * params.drift
+  const v = rt.phase('drift', 40 * params.drift)
   layer(noiseA, v * 0.6, v * 0.08, 1.6, d * 0.5)
   layer(noiseB, -v * 0.35, v * 0.05, 2.2, d * 0.4)
   layer(noiseA, v * 1.15, -v * 0.06, 0.9, d * 0.35)

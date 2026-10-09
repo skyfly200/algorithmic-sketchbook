@@ -37,7 +37,7 @@ out vec4 outColor;
 
 void main() {
   vec2 r = u_res;
-  float t = u_time * u_speed;
+  float t = u_speed; // ∫ speed dt (set in JS)
   vec3 c;
   float l, z = t;
   for (int i = 0; i < 3; i++) {
@@ -85,7 +85,7 @@ function frame(now) {
   rt.tick(now)
   gl.uniform2f(uRes, canvas.width, canvas.height)
   gl.uniform1f(uTime, now * 0.001)
-  gl.uniform1f(uSpeed, params.speed)
+  gl.uniform1f(uSpeed, rt.phase('speed', params.speed)) // integrated: speed is modulated
   gl.uniform1f(uOffset, params.offset)
   gl.uniform1f(uWarp, params.warp)
   gl.uniform1f(uTiles, params.tiles)

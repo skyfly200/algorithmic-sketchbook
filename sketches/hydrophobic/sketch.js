@@ -39,12 +39,14 @@ let H = 0
 let PR = 1
 let surface = null // pre-rendered matte surface with micro-texture
 
+let surfaceHue = null, surfaceAt = 0
 function buildSurface() {
   const c = document.createElement('canvas')
   c.width = W
   c.height = H
   const d = c.getContext('2d')
   const hue = params.hue
+  surfaceHue = hue
   const g = d.createLinearGradient(0, 0, W, H)
   g.addColorStop(0, `hsl(${hue}, 30%, 9%)`)
   g.addColorStop(0.5, `hsl(${hue}, 24%, 6%)`)
@@ -179,6 +181,9 @@ function frame(now) {
 
   // --- render ---
   ctx.globalCompositeOperation = 'source-over'
+  // Surface hue is baked into the surface; rebake when it changes (at most
+  // ~6x a second while the slider is dragged)
+  if (params.hue !== surfaceHue && now - surfaceAt > 150) { surface = buildSurface(); surfaceAt = now }
   ctx.drawImage(surface, 0, 0)
   // Draw small beads first so big ones sit on top.
   drops.sort((p, q) => p.r - q.r)

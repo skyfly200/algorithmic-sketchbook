@@ -3435,7 +3435,7 @@ const TIER_KEY = 'sketchbook-patch-tier'
 const tierPref = ref(localStorage.getItem(TIER_KEY) || 'auto')
 const tier = computed(() => (tierPref.value === 'auto' ? classifyTier(capProbe) : tierPref.value))
 function setTierPref(v) { tierPref.value = v; localStorage.setItem(TIER_KEY, v) }
-const slugInfo = (slug) => ({ weight: costOfSlug(slug, perfScores), three: !!store.bySlug(slug)?.tech?.includes('three') })
+const slugInfo = (slug) => ({ weight: costOfSlug(slug, perfScores), three: !!store.bySlug(slug)?.tech?.some((t) => t.startsWith('three')) }) // manifests say 'three.js'
 const deckCosts = computed(() => {
   resLabel.value // resolution changes W/H (plain lets), so depend on the ref that accompanies them
   return decks.map((d, i) => deckCost(d.nodes, { pixels: W * H, info: slugInfo, chain: chainRunner ? chainSets(chainCaches[i](d.nodes, d.edges, isChainNode).index) : null }))

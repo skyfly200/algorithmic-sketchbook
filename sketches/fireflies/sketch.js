@@ -49,7 +49,7 @@ function build() {
       spd: rt.random(0.7, 1.3),
       phase: rt.random(0, Math.PI * 2), // blink phase
       rate: rt.random(0.7, 1.35), // personal blink rate
-      hue: params.hue + rt.random(-14, 16),
+      dh: rt.random(-14, 16), // offset from Glow hue (applied live when drawing)
     })
   }
   flies.sort((a, b) => a.depth - b.depth) // far first, near drawn on top
@@ -137,15 +137,16 @@ function frame(now) {
     let bright = 0.08 + s * s * s * 0.92
     bright = Math.min(1, bright + flash * 0.9) // beat flashes the whole swarm
     const r = f.size * (2.5 + params.glow * 4.5) * (0.6 + bright * 0.6)
+    const fh = params.hue + f.dh
     const grd = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, r)
     const a = bright * (0.5 + f.depth * 0.5)
-    grd.addColorStop(0, `hsla(${f.hue}, 95%, 72%, ${a})`)
-    grd.addColorStop(0.35, `hsla(${f.hue - 8}, 95%, 55%, ${a * 0.5})`)
+    grd.addColorStop(0, `hsla(${fh}, 95%, 72%, ${a})`)
+    grd.addColorStop(0.35, `hsla(${fh - 8}, 95%, 55%, ${a * 0.5})`)
     grd.addColorStop(1, 'hsla(50, 90%, 50%, 0)')
     ctx.fillStyle = grd
     ctx.beginPath(); ctx.arc(f.x, f.y, r, 0, Math.PI * 2); ctx.fill()
     // hot core
-    ctx.fillStyle = `hsla(${f.hue + 6}, 100%, 88%, ${bright})`
+    ctx.fillStyle = `hsla(${fh + 6}, 100%, 88%, ${bright})`
     ctx.beginPath(); ctx.arc(f.x, f.y, f.size * (0.7 + bright * 0.5), 0, Math.PI * 2); ctx.fill()
   }
   ctx.globalCompositeOperation = 'source-over'

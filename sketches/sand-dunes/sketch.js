@@ -74,7 +74,8 @@ function relax(x, y) {
 function step() {
   const ang = (params.windDir * Math.PI) / 180
   const hopLen = Math.round(params.hop)
-  const wx = Math.round(Math.cos(ang)) || 1, wy = Math.round(Math.sin(ang))
+  // nearest of the 8 grid directions (cos and sin can't both round to 0)
+  const wx = Math.round(Math.cos(ang)), wy = Math.round(Math.sin(ang))
   const iters = Math.round(GW * GH * 0.5 * params.wind * params.supply)
   for (let k = 0; k < iters; k++) {
     const x = (rt.rng() * GW) | 0, y = (rt.rng() * GH) | 0
@@ -111,7 +112,7 @@ function render(now) {
   const d = img.data
   const hue = params.hue
   const inv = 1 / RS
-  const t = now * 0.001
+  const ripT = rt.phase('ripple', params.wind * 1.4) // wind is modulated: integrate it
   // Pass 1: resample the coarse height field into the fine render buffer, then
   // a light separable blur so dune bodies read as smooth rolling sand rather
   // than cell-scale grain (the ripples are added back procedurally in Pass 2).
@@ -160,7 +161,7 @@ function render(now) {
       // flanks, fading on steep slip-faces and bare flats
       const stoss = Math.max(0, gdotw) / (slope + 0.001)
       const proj = x * wxf + y * wyf
-      const rip = Math.sin(proj * rFreq - t * params.wind * 1.4)
+      const rip = Math.sin(proj * rFreq - ripT)
         + 0.35 * Math.sin(proj * rFreq * 2.7 + (x * wyf - y * wxf) * 0.13)
       const rmask = stoss * Math.min(1, slope * 2.5) * Math.max(0, 1 - slope * 0.4)
       shade += rip * rAmp * rmask

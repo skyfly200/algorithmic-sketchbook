@@ -54,7 +54,7 @@ function frame(now) {
   ctx.shadowColor = `hsl(${params.hue}, 100%, 55%)`
   ctx.shadowBlur = 8 * rt.pixelRatio * params.glow
   ctx.lineWidth = 2 * rt.pixelRatio
-  const ph = t * params.phase
+  const ph = rt.phase('phase', params.phase)
 
   if (params.mode === 'wave2d') {
     // a 2D wave surface: a stack of scan-lines each showing a slice of a

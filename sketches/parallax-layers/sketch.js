@@ -127,10 +127,11 @@ function frame(now) {
 
   // ridgelines, far → near
   const step = Math.max(2, Math.floor(3 / rt.detail)) * Math.ceil(rt.pixelRatio)
+  const travel = rt.phase('scroll', params.speed * 60) // speed is modulated: integrate it
   for (let i = 0; i < L; i++) {
     const d = L === 1 ? 1 : i / (L - 1) // 0 far … 1 near
     // near layers scroll faster and sit lower; parallax shifts them more
-    const scroll = t * params.speed * (0.15 + d * 1.1) * 60
+    const scroll = travel * (0.15 + d * 1.1)
     // px is added to the noise sample position, which shifts the ridge left
     const px = lookX * (10 + d * 90) * u
     const py = lookY * (6 + d * 40) * u

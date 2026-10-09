@@ -280,10 +280,11 @@ function frame(now) {
   ctx.globalAlpha = 1
   // animated hot upwellings, anchored on the sphere (rotate + foreshorten)
   ctx.globalCompositeOperation = 'lighter'
+  const turbT = rt.phase('turbulence', params.turbulence) // modulated: integrate it
   for (const u of upwell) {
     const p = project(u.lat, u.lon + rot * (1 - 0.22 * Math.sin(u.lat) * Math.sin(u.lat)))
     if (p.z <= 0.02) continue
-    const flick = 0.5 + 0.5 * Math.sin(t * u.sp * params.turbulence + u.ph)
+    const flick = 0.5 + 0.5 * Math.sin(turbT * u.sp + u.ph)
     const s = R * 0.05 * (0.6 + flick) * (0.4 + p.z * 0.6)
     const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, s)
     g.addColorStop(0, col(params.temp, 0.9, 0.18 * flick * smooth(p.z * 3)))

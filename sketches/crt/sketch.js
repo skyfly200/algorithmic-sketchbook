@@ -56,6 +56,7 @@ uniform float u_scan;
 uniform float u_mask;
 uniform float u_bloom;
 uniform float u_sat;
+uniform float u_bleed;     // chroma bleed: R/B horizontal offset in uv
 uniform float u_pr;
 uniform float u_humY;      // px, y down
 uniform float u_humA;
@@ -68,6 +69,10 @@ vec3 tube(vec2 uv) {
   float u = (uv.x - 0.5) / bow + 0.5;
   if (u < 0.0 || u > 1.0) return vec3(0.0);
   vec3 c = tex(vec2(u, uv.y));
+  if (u_bleed > 0.0) {                                 // colour smears sideways
+    c.r = tex(vec2(u - u_bleed, uv.y)).r;
+    c.b = tex(vec2(u + u_bleed, uv.y)).b;
+  }
   float l = dot(c, LUMA);
   return clamp(l + (c - l) * u_sat, 0.0, 1.0);
 }
@@ -127,8 +132,10 @@ function frame(now) {
     u.f('u_scan', params.scan)
     u.f('u_mask', params.mask)
     u.f('u_bloom', params.bloom)
-    // chroma bleed in the old version only ever applied a saturation lift
-    u.f('u_sat', params.chroma * 3 * rt.pixelRatio > 0.3 ? 1.2 : 1)
+    // chroma bleed: a saturation lift plus red / blue smeared apart sideways
+    // (up to ~4 CSS px); it used to be a quality-dependent on/off saturation step
+    u.f('u_sat', 1 + params.chroma * 0.3)
+    u.f('u_bleed', (params.chroma * 4 * rt.pixelRatio) / Math.max(1, gf.width))
     u.f('u_pr', rt.pixelRatio)
     u.f('u_humY', params.roll > 0.01 ? (t * 40 * params.roll) % H : -1000)
     u.f('u_humA', params.roll > 0.01 ? roll * 0.12 : 0)

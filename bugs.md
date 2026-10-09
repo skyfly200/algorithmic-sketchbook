@@ -96,3 +96,48 @@ but has not been looked at on real hardware or in the real UI.
 - The repo tracks both `CLAUDE.md` and `claude.md` as separate files. Only `CLAUDE.md` was edited
   (new sections on filter helpers, demo scenes and Patch scheduling), so the two now differ.
   Decide which is canonical and sync or remove the other.
+
+## Effects review (2026-10-09): found, not fixed yet
+Read-through of all 181 sketches plus a headless run of each with every param at its
+min / max / each option (no console or shader errors anywhere). Clear bugs were fixed
+in the same branch; these were left because they need a design call or a bigger change.
+
+- **Dead or misleading options.** blur: "Fast" and "Smooth" render the same as Native
+  (the shader only branches on Bokeh). edge-detect "Direction hue" is one
+  flat colour with the Laplacian kernel. light-show: the 'leaves' gobo is the breakup gobo.
+  fps-limiter's audio mapping has amount 0.
+- **Sliders that only apply on resize / respray.** luminol (pattern, density), egg-speckle
+  (tint shift; "Renew rate" never clears the speck layer), worm-bin (worm length), star-field
+  (count changes under 0.08 are ignored), moss (colonies), droplet-bounce (lowering Droplets).
+- **Beat-only behaviour with no fallback.** rubens-tube audio drive, washboard-road "grade
+  on beat". strobe and lightning now fall back to their rate clock when no beats arrive.
+- **led-pixels Art-Net.** Mappings only add to the base and the defaults sit at the top of
+  their ranges, so ch1 can't dim the rig and ch3 / ch4 only push up. Needs low bases when a
+  desk is driving it.
+- **Geometry.** pattern-tessellator's trellis pips miss the line crossings; soap-film's 'star'
+  frame is a cog and the film edge pin assumes a circle; marbling's single comb tine is off
+  centre; lava-lamp blobs are stretched to the window aspect; synthwave "Hill height" barely
+  shows (no real mountains); bright-waves-logo clip radii exceed the art square.
+- **Unmapped speed sliders that jump while dragged** (t × slider, same class as the mapped
+  ones fixed with `rt.phase`): azulejos, birefringence, diffraction-grating-3d,
+  fibonacci-spiral, bright-waves-logo, ripple, ridgeline, topo-map, stained-glass, warp,
+  standing-waves, funhouse-mirror.
+- **8-bit trail residue.** Low-alpha black fades never reach black: laser-traces (Afterglow
+  >= 0.96), flow-field, matrix-rain, neon-fluid, oscilloscope. Needs a shared fade helper.
+- **Perf (CPU per-pixel or per-item gradients every frame).** mud-cracks, dither (three
+  Float32Arrays + getImageData per frame), cymatics (up to 60k fillRects), ferrofluid,
+  slime-mold / sand-dunes `hsl()` per pixel, cable-knit, fibonacci-spiral and embers (a radial
+  gradient per item), rubens-tube Table mode, fog and laser-traces (full-res `ctx.filter`
+  blur), kuwahara (fixed 17x17 loop at any radius), reishi-spores (static growths redrawn),
+  self-similar-fractals (up to 531k fills on a zoom step, no culling).
+  Memory: delay and motion-extraction allocate 46 / 30 full-res canvases whatever the delay.
+  Always-animated filters (read `u_time` even when still): crystallize (Drift 0),
+  displace (Self maps), gradient-map (Cycle 0), channel-offset (glitch 0).
+- **Seeds.** `Math.random` instead of `rt.rng` (so `?seed` doesn't reproduce): camera-lens
+  dirt, condensation, beat-rings, disco-ball, dither, motion-extraction, neon-fluid,
+  phi-spheres. grass-field sets `u_seed` but never reads it.
+- **Manifests** that describe things the sketch doesn't do: wormhole (stars),
+  tessellation-drift (6 tilings, not 2), diffraction-grating-3d / escher-creatures /
+  camera-lens (missing shapes or lens types), disco-ball (spots aren't reflections),
+  hydrophobic (drops roll off, don't bounce), interlace (no de-interlace bob), fish-scales
+  (beats flash, don't ripple), pulsar, oscilloscope (wave2d), mushroom-fruiting.

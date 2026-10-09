@@ -103,3 +103,43 @@ describe('sketch default mappings', () => {
     },
   )
 })
+
+describe('sketch default mappings: amounts and timing', () => {
+  const sketches = readdirSync('sketches')
+    .filter((s) => !s.startsWith('_') && existsSync(`sketches/${s}/sketch.js`))
+    .map((slug) => ({ slug, src: readFileSync(`sketches/${slug}/sketch.js`, 'utf8') }))
+  const mappings = sketches.flatMap(({ slug, src }) =>
+    [...src.matchAll(/rt\.mapInput\(\s*'([\w.]+)',\s*'(\w+)',\s*(-?[\d.]+)/g)].map(
+      ([, source, param, amount]) => ({ slug, src, source, param, amount: Number(amount) }),
+    ),
+  )
+  // impulses (a beat, an onset, a shake) may deliberately kick a param to its end
+  const impulse = /^(audio\.pulse|beat\.pulse|audio\.flux|shake|touch\.down|midi\.note)$/
+
+  it('finds the default mappings', () => {
+    expect(mappings.length).toBeGreaterThan(100)
+  })
+
+  // amount is a fraction of the param's range (-1..1), not a value in its units:
+  // color-filter's 'hue' at 60 and polarization's 'analyzer' at 90 meant degrees
+  // and pinned the param at its max on the faintest signal
+  it.each(mappings.filter((m) => !impulse.test(m.source)).map((m) => [`${m.slug}: ${m.source} -> ${m.param} (${m.amount})`, m]))(
+    '%s has an amount within -1..1',
+    (_, { amount }) => {
+      expect(Math.abs(amount)).toBeLessThanOrEqual(1)
+    },
+  )
+
+  // t × param jumps the phase by t × Δparam whenever a mapped param moves (many
+  // cycles after a few minutes); integrate with rt.phase(key, rate) instead
+  it.each(mappings.map((m) => [`${m.slug}: ${m.param}`, m]))(
+    '%s is not used as a rate multiplied by the clock',
+    (_, { src, param }) => {
+      const clock = String.raw`\b(?:t|time|u_time)\b`
+      const p = String.raw`\bparams\.${param}\b`
+      expect(src).not.toMatch(new RegExp(`${clock}\\s*\\*[^;,)\\n]{0,24}${p}`))
+      expect(src).not.toMatch(new RegExp(`${p}[^;,(\\n]{0,24}\\*\\s*${clock}`))
+      expect(src).not.toMatch(new RegExp(`\\bu_time\\s*\\*[^;,)\\n]{0,12}\\bu_${param}\\b`))
+    },
+  )
+})

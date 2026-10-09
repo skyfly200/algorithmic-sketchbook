@@ -33,7 +33,8 @@ function resize() {
 let phase = 0
 let last = 0
 let flashHold = 0
-rt.onBeat(() => { if (params.onBeat) flashHold = 1 })
+let lastBeat = -Infinity
+rt.onBeat(() => { if (params.onBeat) { flashHold = 1; lastBeat = performance.now() * 0.001 } })
 
 function frame(now) {
   rt.tick(now)
@@ -44,7 +45,10 @@ function frame(now) {
   if (!src.ready) { requestAnimationFrame(frame); return }
 
   phase += dt * params.rate
-  const on = params.onBeat ? flashHold > 0.5 : (phase % 1) < params.duty
+  // Follow the beat while beats are arriving; with no audio (mic off, a quiet
+  // room) fall back to the rate clock rather than staying dark forever.
+  const beatLive = params.onBeat && t - lastBeat < 2
+  const on = beatLive ? flashHold > 0.5 : (phase % 1) < params.duty
   flashHold = Math.max(0, flashHold - dt * params.rate)
 
   if (on) {

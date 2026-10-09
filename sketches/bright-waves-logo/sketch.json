@@ -2,6 +2,6 @@
   "title": "Bright Waves Logo",
   "description": "The site's animated SVG mark as a compositable layer — transparent by default so it drops into the Mixer or Patch as a branding / watermark overlay over live visuals. Size, spin, and a beat pulse are mappable to audio.",
   "tags": ["branding", "svg", "overlay", "audio-reactive"],
-  "tech": ["svg", "smil"],
+  "tech": ["canvas2d"],
   "created": "2026-07-12"
 }

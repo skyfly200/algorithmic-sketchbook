@@ -34,7 +34,13 @@ function hexPath(c, r) {
   }
   c.closePath()
 }
+// Per-cell randoms from a seeded hash of the cell's grid position, so rebuilding
+// for a new Honey fill / Warmth keeps the same comb and only tops cells up
+const combSeed = rt.rng() * 1000
+const cellRand = (i, j, k) => { const v = Math.sin(i * 12.9898 + j * 78.233 + k * 37.719 + combSeed) * 43758.5453; return v - Math.floor(v) }
+let combKey = '', combAt = 0
 function buildComb() {
+  combKey = params.cellSize + '|' + params.honey + '|' + params.warmth
   hexR = 40 * params.cellSize * PR
   comb.width = W; comb.height = H
   cells = []
@@ -47,10 +53,11 @@ function buildComb() {
   let col = 0
   for (let cx = -r; cx < W + r; cx += hx, col++) {
     const yoff = (col % 2) * hy / 2
-    for (let cy = -r; cy < H + r; cy += hy) {
+    let row = 0
+    for (let cy = -r; cy < H + r; cy += hy, row++) {
       const x = cx, y = cy + yoff
-      const kind = rt.rng()
-      const filled = rt.rng() < params.honey
+      const kind = cellRand(col, row, 1)
+      const filled = cellRand(col, row, 2) < params.honey
       cells.push({ x, y, filled, kind })
       cctx.save()
       cctx.translate(x, y)
@@ -193,7 +200,9 @@ function frame(now) {
   const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016)
   last = now
   bustle = Math.max(0, bustle - dt)
-  if (params.cellSize !== lastCell) { lastCell = params.cellSize; buildComb() }
+  if (params.cellSize !== lastCell) { lastCell = params.cellSize; buildComb(); combAt = now }
+  // Honey fill / Warmth are baked into the comb: rebake (throttled while dragging)
+  else if (params.cellSize + '|' + params.honey + '|' + params.warmth !== combKey && now - combAt > 150) { buildComb(); combAt = now }
   if (beeList.length !== wantBees()) buildBees()
 
   ctx.drawImage(comb, 0, 0)

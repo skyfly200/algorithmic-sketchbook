@@ -237,7 +237,12 @@ let modelLoaded = false
 let fourd = null // 4D object being projected each frame (polytope or Klein bottle)
 
 function setArtifactChild(obj) {
-  while (artifact.children.length) artifact.remove(artifact.children[0])
+  while (artifact.children.length) {
+    const old = artifact.children[0]
+    artifact.remove(old)
+    // free per-shape geometry (materials such as holoMat are shared and kept)
+    old.traverse((o) => { if (o.geometry) o.geometry.dispose() })
+  }
   artifact.add(obj)
 }
 function buildArtifact(shape) {
@@ -288,7 +293,8 @@ function build4DNetwork({ verts, edges, tris }, showNodes) {
 // Rotate the current 4D object through the w-planes and project it to 3D.
 function update4D(t) {
   const warp = params.warp
-  const ax = t * 0.31 * warp, ay = t * 0.47 * warp, az = t * 0.23 * warp
+  const wt = rt.phase('warp', warp) // ∫ warp dt, so a mapped warp doesn't jump the angles
+  const ax = wt * 0.31, ay = wt * 0.47, az = wt * 0.23
   const dist = 2.6
   const gl = uniforms.u_glitch.value
   const { verts, edges, lg, pg, fg, facePos, linePos, lineCol, ptPos, ptCol, proj } = fourd

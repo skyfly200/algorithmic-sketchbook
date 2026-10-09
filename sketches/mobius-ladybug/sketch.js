@@ -79,6 +79,15 @@ function rebuildBand() {
       pos.push(_p.x, _p.y, _p.z)
     }
   }
+  // same vertex count every time: rewrite the buffer in place, so dragging the
+  // twist doesn't leave a new GPU buffer behind on each rebuild
+  const old = bandGeom.getAttribute('position')
+  if (old && old.array.length === pos.length) {
+    old.array.set(pos)
+    old.needsUpdate = true
+    bandGeom.computeVertexNormals()
+    return
+  }
   const row = SSEG + 1
   for (let i = 0; i < USEG; i++) for (let j = 0; j < SSEG; j++) {
     const a = i * row + j, b = a + row

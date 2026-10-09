@@ -88,8 +88,9 @@ function frame(now) {
   mx.globalCompositeOperation = 'source-over'
   mx.fillStyle = '#fff'; mx.fillRect(0, 0, mw, mh)
   mx.globalCompositeOperation = 'multiply'
-  const sway = Math.sin(t * 0.6 * params.wind) * 30
-  const v = t * 12 * params.wind
+  const wt = rt.phase('wind', params.wind) // ∫ wind dt: wind is modulated
+  const sway = Math.sin(wt * 0.6) * 30
+  const v = wt * 12
   for (let i = 0; i < planes.length; i++) {
     const p = planes[i]
     const sc = p.scale * (1 + i * params.focus * 0.3) // focus spreads the planes apart → stronger beat

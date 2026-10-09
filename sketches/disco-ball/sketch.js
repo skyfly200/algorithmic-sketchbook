@@ -229,12 +229,13 @@ renderer.setAnimationLoop((now) => {
       const bright = 1 + Math.random() * 5 * params.sparkle
       facets.setColorAt(i, colA.setScalar(bright))
     }
-    // And relax a batch back to mirror-grey.
-    for (let k = 0; k < 40; k++) {
-      facets.setColorAt(Math.floor(Math.random() * facetDirs.length), colA.setScalar(1))
-    }
-    facets.instanceColor.needsUpdate = true
   }
+  // And relax a batch back to mirror-grey, even with Sparkle at 0, or the
+  // facets lit before it was turned down would stay white for good.
+  for (let k = 0; k < 40; k++) {
+    facets.setColorAt(Math.floor(Math.random() * facetDirs.length), colA.setScalar(1))
+  }
+  facets.instanceColor.needsUpdate = true
 
   controls.update()
   renderer.render(scene, camera)
