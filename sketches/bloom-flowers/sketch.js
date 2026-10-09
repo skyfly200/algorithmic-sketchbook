@@ -361,6 +361,8 @@ function clearFlowers() {
   for (const f of flowers) {
     f.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose()
+      // centre and stem materials are made per flower too (petals are in petalMats)
+      if (o.material) for (const m of [].concat(o.material)) m.dispose()
     })
     scene.remove(f.group)
   }

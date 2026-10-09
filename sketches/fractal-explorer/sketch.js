@@ -66,6 +66,7 @@ const FRAG = `#version 300 es
 precision highp float;
 uniform vec2 u_res, u_center, u_c;
 uniform float u_scale, u_iters, u_julia, u_hue, u_colorCycle, u_time, u_fractal;
+uniform float u_cycleT; // ∫ colorCycle dt (modulated, so not the clock × colorCycle)
 uniform vec2 u_jitter;                   // sub-pixel offset of this frame's samples (0 when native)
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out float outDepth; // not used by a flat scene; the temporal pass wants a value
@@ -103,7 +104,7 @@ void main() {
   if (!escaped) { outColor = vec4(0.02, 0.02, 0.03, 1.0); return; } // inside set
   // Smooth (continuous) iteration count.
   float sm = iter + 1.0 - log2(log2(dot(z, z)) * 0.5);
-  vec3 col = palette(sm * 0.025 + u_time * u_colorCycle * 0.08);
+  vec3 col = palette(sm * 0.025 + u_cycleT * 0.08);
   outColor = vec4(col, 1.0);
 }`
 
@@ -128,7 +129,7 @@ gl.enableVertexAttribArray(position)
 gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
 const u = {}
-for (const n of ['u_res', 'u_center', 'u_c', 'u_scale', 'u_iters', 'u_julia', 'u_hue', 'u_colorCycle', 'u_time', 'u_fractal', 'u_jitter'])
+for (const n of ['u_res', 'u_center', 'u_c', 'u_scale', 'u_iters', 'u_julia', 'u_hue', 'u_colorCycle', 'u_time', 'u_cycleT', 'u_fractal', 'u_jitter'])
   u[n] = gl.getUniformLocation(program, n)
 
 let taau = null // lazily created, null when the GPU can't render to float targets
@@ -301,6 +302,7 @@ function frame(now) {
   gl.uniform1f(u.u_julia, params.julia ? 1 : 0)
   gl.uniform1f(u.u_hue, params.hue)
   gl.uniform1f(u.u_colorCycle, params.colorCycle)
+  gl.uniform1f(u.u_cycleT, rt.phase('colorCycle', params.colorCycle))
   gl.uniform1f(u.u_time, now * 0.001)
   gl.uniform1f(u.u_fractal, FRACTALS.indexOf(params.fractal))
   if (taau && rscale) {

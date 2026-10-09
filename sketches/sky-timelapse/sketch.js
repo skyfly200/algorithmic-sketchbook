@@ -147,20 +147,30 @@ function drawMoon(x, y, R, ph, blood, corona = 0) {
   ctx.restore()
 }
 
+// Clouds are built on their own half-res layer: the horizon tint has to be
+// clipped to the clouds (source-atop), which on the main canvas would wash
+// the whole opaque sky, sun and stars instead.
+const cloudCv = document.createElement('canvas')
+const cloudCtx = cloudCv.getContext('2d')
 function drawClouds(img, ox, scale, alpha, tint) {
-  const tile = Math.max(W, H) * scale
-  const x0 = -(((ox % tile) + tile) % tile)
-  ctx.globalAlpha = alpha
-  for (let x = x0; x < W; x += tile) ctx.drawImage(img, x, 0, tile, tile)
+  if (alpha <= 0.002) return
+  const cw = Math.max(1, W >> 1), ch = Math.max(1, H >> 1)
+  if (cloudCv.width !== cw || cloudCv.height !== ch) { cloudCv.width = cw; cloudCv.height = ch }
+  const tile = Math.max(cw, ch) * scale
+  const x0 = -((((ox * 0.5) % tile) + tile) % tile)
+  cloudCtx.globalCompositeOperation = 'source-over'
+  cloudCtx.clearRect(0, 0, cw, ch)
+  for (let x = x0; x < cw; x += tile) cloudCtx.drawImage(img, x, 0, tile, tile)
   // tint clouds toward the horizon light
-  ctx.globalCompositeOperation = 'source-atop'
-  ctx.globalAlpha = alpha
-  const g = ctx.createLinearGradient(0, 0, 0, H)
+  cloudCtx.globalCompositeOperation = 'source-atop'
+  const g = cloudCtx.createLinearGradient(0, 0, 0, ch)
   g.addColorStop(0, `rgba(${tint[0]},${tint[1]},${tint[2]},0.5)`)
   g.addColorStop(1, `rgba(${Math.min(255, tint[0] + 40)},${Math.min(255, tint[1] + 20)},${tint[2]},0.9)`)
-  ctx.fillStyle = g
-  ctx.fillRect(0, 0, W, H)
-  ctx.globalCompositeOperation = 'source-over'
+  cloudCtx.fillStyle = g
+  cloudCtx.fillRect(0, 0, cw, ch)
+  cloudCtx.globalCompositeOperation = 'source-over'
+  ctx.globalAlpha = alpha
+  ctx.drawImage(cloudCv, 0, 0, W, H)
   ctx.globalAlpha = 1
 }
 
@@ -246,7 +256,7 @@ function frame(now) {
   }
 
   // clouds drift on the wind, lit by the current horizon colour
-  const drift = t * 20 * params.wind
+  const drift = rt.phase('wind', 20 * params.wind) // wind is modulated: integrate it
   const tint = sky.bot
   drawClouds(cloudA, drift * 0.5, 1.5, params.clouds * (0.5 + dayF * 0.5), tint)
   drawClouds(cloudB, drift * 0.9, 2.3, params.clouds * 0.6 * (0.4 + dayF * 0.6), tint)

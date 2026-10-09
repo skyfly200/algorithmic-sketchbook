@@ -29,7 +29,7 @@ const VERT = `#version 300 es
 in vec2 position; void main(){ gl_Position=vec4(position,0.,1.); }`
 const FRAG = `#version 300 es
 precision highp float;
-uniform vec2 u_res, u_mouse; uniform float u_time,u_seed;
+uniform vec2 u_res, u_mouse; uniform float u_time,u_seed,u_swayT; // u_swayT = ∫ (1.1+wind*1.2) dt
 uniform float u_density,u_wind,u_gust,u_height,u_hue,u_dry,u_flowers,u_sun;
 out vec4 o;
 #define SHELLS 44
@@ -72,13 +72,15 @@ void main(){
     // Wind is a diagonal travelling wave desynchronised per tuft (ph0), plus
     // roaming gust patches from a low-frequency field — so gusts roll across in
     // patches instead of the whole field swaying as one.
-    float ph=wp.y*0.20 + wp.x*0.11 - u_time*(1.1+u_wind*1.2) + ph0*0.7;
+    float ph=wp.y*0.20 + wp.x*0.11 - u_swayT + ph0*0.7;
     float sway=(sin(ph)+0.4*sin(ph*1.7+ph0))*u_wind*(0.6+0.5*r2);
     float gustField=sin(wp.x*0.05+wp.y*0.04-u_time*0.6)*sin(wp.y*0.037-u_time*0.43+1.3);
     float gust=max(0.0,gustField)*u_gust*1.4;
     // pointer parts the grass (u_mouse sits off-screen until the pointer moves)
     vec2 mg=ground(u_mouse,d); float md=length(wp-mg);
-    float part=exp(-md*0.9)*sign(wp.x-mg.x)*1.1;
+    // only a pointer on the ground parts it: the parked (99,99) or a sky position
+    // projects to a spot just in front of the camera and parted the foreground
+    float part=u_mouse.y<HZ-0.01 ? exp(-md*0.9)*sign(wp.x-mg.x)*1.1 : 0.0;
     wp.x+=(sway+gust+lean+part)*y*0.32;
     vec2 cf=wp*density, cell=floor(cf), f=fract(cf);
     // patchy meadow: lush and thin areas from a low-frequency field
@@ -123,14 +125,14 @@ function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShade
 const prog=gl.createProgram();gl.attachShader(prog,sh(gl.VERTEX_SHADER,VERT));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FRAG));gl.linkProgram(prog);gl.useProgram(prog)
 const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW)
 const loc=gl.getAttribLocation(prog,'position');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0)
-const U={};for(const n of ['u_res','u_mouse','u_time','u_seed','u_density','u_wind','u_gust','u_height','u_hue','u_dry','u_flowers','u_sun'])U[n]=gl.getUniformLocation(prog,n)
+const U={};for(const n of ['u_res','u_mouse','u_time','u_swayT','u_seed','u_density','u_wind','u_gust','u_height','u_hue','u_dry','u_flowers','u_sun'])U[n]=gl.getUniformLocation(prog,n)
 const seed=rt.random(0,10)
 let mx=99,my=99,tmx=99,tmy=99 // parked off-screen: no parting until the pointer moves
 window.addEventListener('pointermove',(e)=>{ const px=e.clientX*rt.pixelRatio, py=(window.innerHeight-e.clientY)*rt.pixelRatio; tmx=(px-0.5*canvas.width)/canvas.height; tmy=(py-0.5*canvas.height)/canvas.height })
 function resize(){canvas.width=window.innerWidth*rt.pixelRatio;canvas.height=window.innerHeight*rt.pixelRatio;gl.viewport(0,0,canvas.width,canvas.height)}
 function frame(now){rt.tick(now); mx+=(tmx-mx)*0.12; my+=(tmy-my)*0.12
   gl.uniform2f(U.u_res,canvas.width,canvas.height);gl.uniform2f(U.u_mouse,mx,my)
-  gl.uniform1f(U.u_time,now*0.001);gl.uniform1f(U.u_seed,seed)
+  gl.uniform1f(U.u_time,now*0.001);gl.uniform1f(U.u_swayT,rt.phase('sway',1.1+params.wind*1.2));gl.uniform1f(U.u_seed,seed)
   gl.uniform1f(U.u_density,params.density);gl.uniform1f(U.u_wind,params.wind);gl.uniform1f(U.u_gust,params.gust)
   gl.uniform1f(U.u_height,params.height);gl.uniform1f(U.u_hue,params.hue);gl.uniform1f(U.u_dry,params.dry)
   gl.uniform1f(U.u_flowers,params.flowers);gl.uniform1f(U.u_sun,params.sun)

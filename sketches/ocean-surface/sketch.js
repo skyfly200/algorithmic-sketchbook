@@ -30,7 +30,7 @@ const VERT = `#version 300 es
 in vec2 position; void main(){ gl_Position=vec4(position,0.,1.); }`
 const FRAG = `#version 300 es
 precision highp float;
-uniform vec2 u_res; uniform float u_time,u_seed;
+uniform vec2 u_res; uniform float u_time,u_seed,u_windT; // u_windT = ∫ windSpeed dt
 uniform vec2 u_sun;
 uniform float u_chop,u_wind,u_scale,u_sunH,u_deep,u_sss,u_glitter,u_foam;
 out vec4 o;
@@ -42,7 +42,7 @@ vec3 hsl(float h,float s,float l){ vec3 r=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)
 // domain warp turns parallel ripples into choppy, interacting swell. We also
 // carry the analytic slope for exact normals and a steepness sum for foam.
 float waves(vec2 p, out vec2 deriv, out float steep){
-  float f=1.0*u_scale, a=1.0, sp=u_wind, ang=u_seed, ampSum=0.0, h=0.0;
+  float f=1.0*u_scale, a=1.0, sp=1.0, ang=u_seed, ampSum=0.0, h=0.0;
   deriv=vec2(0.0); steep=0.0;
   // Large-scale meander: bend the whole sampling grid with a couple of slow,
   // very-low-frequency waves so the wave train never tiles across the ocean.
@@ -55,7 +55,7 @@ float waves(vec2 p, out vec2 deriv, out float steep){
   float k=0.8+0.28*u_chop;             // choppiness now sharpens the crests
   for(int i=0;i<OCT;i++){
     vec2 d=vec2(cos(ang),sin(ang));
-    float x=dot(d,wp)*f + u_time*sp*1.4;
+    float x=dot(d,wp)*f + u_windT*sp*1.4;
     float w=exp(k*(sin(x)-1.0));       // sharp-crested wave, sharper when choppy
     float dw=w*k*cos(x);               // d/dx
     h+=a*w; ampSum+=a;
@@ -122,13 +122,13 @@ function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShade
 const prog=gl.createProgram();gl.attachShader(prog,sh(gl.VERTEX_SHADER,VERT));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FRAG));gl.linkProgram(prog);gl.useProgram(prog)
 const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW)
 const loc=gl.getAttribLocation(prog,'position');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0)
-const U={};for(const n of ['u_res','u_time','u_seed','u_sun','u_chop','u_wind','u_scale','u_sunH','u_deep','u_sss','u_glitter','u_foam'])U[n]=gl.getUniformLocation(prog,n)
+const U={};for(const n of ['u_res','u_time','u_windT','u_seed','u_sun','u_chop','u_wind','u_scale','u_sunH','u_deep','u_sss','u_glitter','u_foam'])U[n]=gl.getUniformLocation(prog,n)
 const seed=rt.random(0,10)
 let sunX=0.2,tSunX=0.2
 window.addEventListener('pointermove',(e)=>{ if(e.buttons) tSunX=(e.clientX/window.innerWidth)*2-1 })
 function resize(){canvas.width=window.innerWidth*rt.pixelRatio;canvas.height=window.innerHeight*rt.pixelRatio;gl.viewport(0,0,canvas.width,canvas.height)}
 function frame(now){rt.tick(now); sunX+=(tSunX-sunX)*0.04
-  gl.uniform2f(U.u_res,canvas.width,canvas.height);gl.uniform1f(U.u_time,now*0.001);gl.uniform1f(U.u_seed,seed)
+  gl.uniform2f(U.u_res,canvas.width,canvas.height);gl.uniform1f(U.u_time,now*0.001);gl.uniform1f(U.u_windT,rt.phase('wind',params.windSpeed));gl.uniform1f(U.u_seed,seed)
   gl.uniform2f(U.u_sun,sunX,params.sunHeight)
   gl.uniform1f(U.u_chop,params.choppiness);gl.uniform1f(U.u_wind,params.windSpeed);gl.uniform1f(U.u_scale,params.scale)
   gl.uniform1f(U.u_sunH,params.sunHeight);gl.uniform1f(U.u_deep,params.deep);gl.uniform1f(U.u_sss,params.sss);gl.uniform1f(U.u_glitter,params.glitter);gl.uniform1f(U.u_foam,params.foam)

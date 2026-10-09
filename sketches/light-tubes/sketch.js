@@ -34,8 +34,8 @@ function build() {
   const cx = W / 2, cy = H / 2
   const R = Math.min(W, H) * 0.42
   for (let i = 0; i < n; i++) {
-    const hue = params.hue + (rt.rng() - 0.5) * params.spread
-    const t = { hue, phase: rt.random(0, 100), flick: rt.random(0.6, 1.4), len: 0, x1: 0, y1: 0, x2: 0, y2: 0 }
+    // hue offset only: Base hue / Hue spread are applied live when drawing
+    const t = { off: rt.rng() - 0.5, phase: rt.random(0, 100), flick: rt.random(0.6, 1.4), len: 0, x1: 0, y1: 0, x2: 0, y2: 0 }
     if (params.layout === 'Grid') {
       const cols = Math.ceil(Math.sqrt(n))
       const gx = i % cols, gy = (i / cols) | 0
@@ -103,6 +103,7 @@ function frame(now) {
   const glow = params.glow * (1 + surge)
   const base = 6 * PR * params.thickness
   for (const tb of tubes) {
+    const hue = params.hue + tb.off * params.spread
     // flicker: mostly steady with occasional dips, per-tube timing
     let fl = 0.82 + 0.18 * Math.sin(t * 7 * tb.flick + tb.phase)
     if (params.flicker > 0) {
@@ -113,11 +114,11 @@ function frame(now) {
     // stacked halo: wide + faint to narrow + bright
     for (let s = 4; s >= 1; s--) {
       const a = (0.05 + 0.05 * (4 - s)) * g
-      ctx.strokeStyle = `hsla(${tb.hue}, 90%, 60%, ${Math.min(0.6, a)})`
+      ctx.strokeStyle = `hsla(${hue}, 90%, 60%, ${Math.min(0.6, a)})`
       strokePath(tb, base * (s * 1.6 + 1))
     }
     // bright near-white core
-    ctx.strokeStyle = `hsla(${tb.hue}, 80%, ${Math.min(96, 78 + g * 8)}%, ${Math.min(1, 0.6 * g)})`
+    ctx.strokeStyle = `hsla(${hue}, 80%, ${Math.min(96, 78 + g * 8)}%, ${Math.min(1, 0.6 * g)})`
     strokePath(tb, base * 0.6)
     // travelling hot pulse
     if (params.pulse > 0.01 && !tb.arc) {
@@ -125,8 +126,8 @@ function frame(now) {
       const px = tb.x1 + (tb.x2 - tb.x1) * u, py = tb.y1 + (tb.y2 - tb.y1) * u
       const pr = base * 2.4
       const rg = ctx.createRadialGradient(px, py, 0, px, py, pr)
-      rg.addColorStop(0, `hsla(${tb.hue}, 60%, 96%, ${Math.min(1, 0.9 * g)})`)
-      rg.addColorStop(1, `hsla(${tb.hue}, 90%, 60%, 0)`)
+      rg.addColorStop(0, `hsla(${hue}, 60%, 96%, ${Math.min(1, 0.9 * g)})`)
+      rg.addColorStop(1, `hsla(${hue}, 90%, 60%, 0)`)
       ctx.fillStyle = rg
       ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI * 2); ctx.fill()
     }

@@ -192,8 +192,13 @@ function seedDish() {
 
 function rebuild() {
   const detail = rt.detail
-  simW = Math.max(128, Math.min(768, Math.round(window.innerWidth * 0.45 * detail)))
-  simH = Math.max(128, Math.min(768, Math.round(window.innerHeight * 0.45 * detail)))
+  const w = Math.max(128, Math.min(768, Math.round(window.innerWidth * 0.45 * detail)))
+  const h = Math.max(128, Math.min(768, Math.round(window.innerHeight * 0.45 * detail)))
+  if (fbA && w === simW && h === simH) return // same grid: keep the dish growing
+  // free the old pair (fbA/fbB are texA/texB, possibly swapped by the ping-pong)
+  for (const t of [fbA, fbB]) if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex) }
+  simW = w
+  simH = h
   texA = makeTarget(simW, simH)
   texB = makeTarget(simW, simH)
   fbA = texA

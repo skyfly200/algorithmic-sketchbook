@@ -142,8 +142,9 @@ function updateDrops(t, dt, field) {
     // damping rises with distance from the centre — outer drops settle quickly
     // while the ones near the magnet stay lively
     const distProx = Math.min(1, Math.hypot(d.x - winX, d.y - winY) / rx)
-    const visc = params.viscosity * (1 - Math.min(0.7, distProx * 0.6))
-    const damp = Math.pow(0.02 + visc * 0.78, dt * 6)
+    // (higher Viscosity = stronger damping; it used to be the other way round)
+    const visc = params.viscosity * (0.4 + 0.6 * distProx)
+    const damp = Math.pow(0.02 + (1 - visc) * 0.6, dt * 6)
     d.vx *= damp
     d.vy *= damp
     d.x += d.vx * dt * 60

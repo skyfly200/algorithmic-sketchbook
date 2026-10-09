@@ -26,7 +26,7 @@ const params = rt.params({
   posterize: { value: 0, min: 0, max: 1, step: 0.02, label: 'Posterize' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })
-rt.mapInput('audio.mid', 'hue', 60)
+rt.mapInput('audio.mid', 'hue', 0.17) // amount is a fraction of the range: ~60°
 
 const FRAG = `#version 300 es
 precision highp float;

@@ -132,7 +132,13 @@ function frame(now) {
 
   gl.uniform2f(u.res, canvas.width, canvas.height)
   gl.uniform2f(u.A, A0, A1); gl.uniform2f(u.B, B0, B1)
-  gl.uniform1f(u.p, Math.round(params.p)); gl.uniform1f(u.q, Math.round(params.q))
+  // {p,q} tiles the hyperbolic plane only when (p-2)(q-2) > 4; smaller pairs are
+  // spherical / Euclidean and the reflection circle degenerates into noise, so
+  // lift q to the smallest value that works (3,q -> 3,7; 4,q -> 4,5; 5|6,3 -> 5|6,4)
+  const tp = Math.round(params.p)
+  let tq = Math.round(params.q)
+  while ((tp - 2) * (tq - 2) <= 4) tq++
+  gl.uniform1f(u.p, tp); gl.uniform1f(u.q, tq)
   gl.uniform1f(u.edges, params.edges); gl.uniform1f(u.glow, params.glow)
   gl.uniform1i(u.pal, Math.max(0, PALS.indexOf(params.palette)))
   gl.drawArrays(gl.TRIANGLES, 0, 3)

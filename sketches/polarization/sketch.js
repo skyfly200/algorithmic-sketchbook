@@ -20,7 +20,7 @@ const params = rt.params({
   brightness: { value: 1.1, min: 0.4, max: 2, step: 0.05, label: 'Brightness' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })
-rt.mapInput('audio.mid', 'analyzer', 90)
+rt.mapInput('audio.mid', 'analyzer', 0.5) // amount is a fraction of the range: up to 90°
 rt.mapInput('audio.pulse', 'retardation', 0.5)
 
 const FRAG = `#version 300 es

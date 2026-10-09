@@ -148,7 +148,7 @@ function frame(now) {
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
 
   // the orbiting light direction (shared) — this is what slides the glares
-  const la = t * params.lightOrbit * 0.6
+  const la = rt.phase('light', params.lightOrbit * 0.6)
   const lx = Math.cos(la), ly = Math.sin(la) * 0.6 - 0.4
 
   // gentle mutual jostling + drift

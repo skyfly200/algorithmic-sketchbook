@@ -52,6 +52,11 @@ All templates import it. In a sketch:
   at the centre — Patch loads sketches with default mappings off. Declaring params gives the sketch a
   controls panel in the viewer (sliders, mapping editor, saveable scenes) via
   postMessage — no extra wiring needed.
+- Animating with a param as a rate: use `rt.phase('key', params.speed)` (∫ speed dt,
+  advanced once per `rt.tick`), never `t * params.speed`. A mapped or dragged param
+  otherwise jumps the phase by t × Δspeed, which strobes after a few minutes.
+  Mapping amounts are a fraction of the range (-1..1), not values in the param's units.
+  `tests/mapping.test.js` checks both for every default mapping.
 
 When adding a sketch, prefer declaring its interesting constants as params.
 

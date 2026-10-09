@@ -261,14 +261,16 @@ function frame(now) {
 
   // 1) compute each coal's temperature: own breath + shared airflow + gust +
   //    pooled heat from nearby drifting hot spots + the pointer's fanning.
+  const breathPh = rt.phase('breath', 0.8 * (0.5 + params.airflow))
+  const ripplePh = rt.phase('ripple', 1.2 + params.airflow * 2.2)
   for (const c of coals) {
-    const breath = 0.72 + 0.28 * Math.sin(t * 0.8 * (0.5 + params.airflow) - c.x * 0.004 - c.y * 0.0025)
+    const breath = 0.72 + 0.28 * Math.sin(breathPh - c.x * 0.004 - c.y * 0.0025)
     let h = c.base * (0.55 + 0.45 * Math.sin(t * c.rate + c.phase)) * breath
     h *= 1 + params.airflow * 0.35 * Math.sin(t * 0.7 + c.x * 0.003)
     // incoming airflow: a bright ripple of pooled oxygen sweeps across the bed
     // along the airflow direction, flaring embers hotter as it passes over them
     const proj = (c.x * adx + c.y * ady) * 0.011
-    const ripple = Math.sin(proj - t * (1.2 + params.airflow * 2.2))
+    const ripple = Math.sin(proj - ripplePh)
     h += params.airflow * 0.5 * Math.max(0, ripple) * (0.6 + 0.4 * ripple)
     h += gust * 0.4
     for (const s of hotspots) {

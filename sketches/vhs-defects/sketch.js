@@ -239,5 +239,6 @@ function frame(now) {
   requestAnimationFrame(frame)
 }
 
-window.addEventListener('resize', () => { low = null })
+// force a size check; keep `low` so ensureTargets() can release it
+window.addEventListener('resize', () => { tw = th = 0 })
 requestAnimationFrame(frame)

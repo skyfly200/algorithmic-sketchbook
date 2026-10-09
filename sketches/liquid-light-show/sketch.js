@@ -76,10 +76,13 @@ let lastN = 0, bloom = 0
 rt.onBeat(({ energy }) => { bloom = Math.min(1.6, bloom + 0.5 + energy) })
 
 function drawCell(c, t, H_, backlit) {
-  const heat = params.heat * (1 + bloom * 0.5)
-  const cx = (c.hx + c.ax * Math.sin(t * c.sx * params.flow + c.px)) * W
-  const cy = (c.hy + c.ay * Math.cos(t * c.sy * params.flow + c.py)) * H
-  const r = c.baseR * minS * (0.75 + 0.35 * Math.sin(t * c.breath * heat + c.bph)) * (1 + bloom * 0.25)
+  // heat and flow are modulated (audio, beat bloom), so integrate them rather
+  // than multiplying the clock, which would jump every time they change
+  const heatT = rt.phase('heat', params.heat * (1 + bloom * 0.5))
+  const flowT = rt.phase('flow', params.flow)
+  const cx = (c.hx + c.ax * Math.sin(flowT * c.sx + c.px)) * W
+  const cy = (c.hy + c.ay * Math.cos(flowT * c.sy + c.py)) * H
+  const r = c.baseR * minS * (0.75 + 0.35 * Math.sin(heatT * c.breath + c.bph)) * (1 + bloom * 0.25)
   const hue = (H_[c.pick % H_.length] + c.hueJ + t * c.hueDrift) % 360
   const g = params.glow
 
@@ -90,7 +93,7 @@ function drawCell(c, t, H_, backlit) {
   for (let i = 0; i <= N; i++) {
     const th = (i / N) * TAU
     let rr = 1
-    for (const hh of c.h) rr += visc * hh.a * Math.sin(hh.k * th + hh.w * t * heat + hh.p)
+    for (const hh of c.h) rr += visc * hh.a * Math.sin(hh.k * th + hh.w * heatT + hh.p)
     const x = Math.cos(th) * r * rr, y = Math.sin(th) * r * rr
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
   }
@@ -118,7 +121,7 @@ function drawCell(c, t, H_, backlit) {
 
   // interior air bubbles
   for (const b of c.bub) {
-    const ba = b.a + t * b.s * params.flow
+    const ba = b.a + flowT * b.s
     const bx = Math.cos(ba) * r * b.r * 0.7, by = Math.sin(ba) * r * b.r * 0.7
     const bs = b.sz * r
     const bg = ctx.createRadialGradient(bx, by, 0, bx, by, bs)

@@ -38,7 +38,7 @@ uniform float u_pulse;     // beat pulse 1 -> 0
 uniform float u_depth;
 uniform float u_scale;
 uniform float u_branch;
-uniform float u_swim;
+uniform float u_swim;      // ∫ swim dt (set in JS; swim is modulated)
 uniform float u_walls;
 uniform float u_hue;
 uniform float u_spread;
@@ -60,7 +60,7 @@ void voronoi(vec2 p, float swim, out float f1, out float f2, out vec2 id) {
   for (int i = -1; i <= 1; i++) {
     vec2 g = vec2(float(i), float(j));
     vec2 o = hash2(n + g);
-    o = 0.5 + 0.42 * sin(u_time * swim + 6.2831 * o); // swimming points
+    o = 0.5 + 0.42 * sin(swim + 6.2831 * o); // swimming points
     vec2 r = g + o - f;
     float d = dot(r, r);
     if (d < f1) { f2 = f1; f1 = d; id = n + g; }
@@ -185,7 +185,7 @@ function frame(now) {
   gl.uniform1f(U.u_depth, depth)
   gl.uniform1f(U.u_scale, params.scale)
   gl.uniform1f(U.u_branch, params.branch)
-  gl.uniform1f(U.u_swim, params.swim)
+  gl.uniform1f(U.u_swim, rt.phase('swim', params.swim))
   gl.uniform1f(U.u_walls, params.walls)
   gl.uniform1f(U.u_hue, params.hue)
   gl.uniform1f(U.u_spread, params.spread)

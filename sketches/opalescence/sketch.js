@@ -38,6 +38,7 @@ void main() { gl_Position = vec4(position, 0.0, 1.0); }`
 const FRAG = `#version 300 es
 precision highp float;
 uniform vec2 u_res;
+uniform float u_domT, u_playT; // ∫ 0.22(0.3+play) dt, ∫ play dt (play is modulated)
 uniform float u_time, u_scale, u_depth, u_play, u_sat, u_milk, u_sparkle, u_tilt, u_flow, u_hue, u_pulse;
 out vec4 outColor;
 
@@ -57,7 +58,7 @@ vec3 voro(vec2 x) {
   for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
     vec2 g = vec2(float(i), float(j));
     vec2 o = h22(n + g);
-    o = 0.5 + 0.5 * sin(u_time * 0.22 * (0.3 + u_play) + 6.2831853 * o); // domains drift
+    o = 0.5 + 0.5 * sin(u_domT + 6.2831853 * o); // domains drift
     vec2 r = g + o - f;
     float d = dot(r, r);
     if (d < f1) { f2 = f1; f1 = d; idc = n + g; }
@@ -92,13 +93,13 @@ void main() {
   // thin-film optical path difference (sphere-spacing × angle), in nm-ish units
   float T = mix(260.0, 1500.0, cr) * u_depth;
   float ang = u_tilt * 1.3 + s * 0.9 + 0.35 * sin(t * 0.3 + cr * 6.2831853) + u_pulse * 0.6;
-  float opd = 2.0 * T * cos(ang) + s * 380.0 + t * u_play * 130.0 + u_hue * 600.0;
+  float opd = 2.0 * T * cos(ang) + s * 380.0 + u_playT * 130.0 + u_hue * 600.0;
 
   vec3 iri = spectral(opd);
   iri = mix(vec3(dot(iri, vec3(0.3333))), iri, 1.25); // deepen saturation
 
   // which domains are "firing" right now — only some flash at any tilt
-  float fire = 0.5 + 0.5 * sin(t * u_play * 1.4 + cr * 23.0 + s * 2.5 + u_tilt * 3.0);
+  float fire = 0.5 + 0.5 * sin(u_playT * 1.4 + cr * 23.0 + s * 2.5 + u_tilt * 3.0);
   fire = pow(clamp(fire, 0.0, 1.0), 2.2) * (0.7 + 0.5 * u_pulse);
 
   // milky pearl body with faint internal cloudiness
@@ -144,7 +145,7 @@ gl.enableVertexAttribArray(position)
 gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
 const u = {}
-for (const name of ['u_res', 'u_time', 'u_scale', 'u_depth', 'u_play', 'u_sat', 'u_milk', 'u_sparkle', 'u_tilt', 'u_flow', 'u_hue', 'u_pulse'])
+for (const name of ['u_res', 'u_time', 'u_domT', 'u_playT', 'u_scale', 'u_depth', 'u_play', 'u_sat', 'u_milk', 'u_sparkle', 'u_tilt', 'u_flow', 'u_hue', 'u_pulse'])
   u[name] = gl.getUniformLocation(program, name)
 
 function resize() {
@@ -160,6 +161,8 @@ function frame(now) {
   gl.uniform1f(u.u_scale, params.scale)
   gl.uniform1f(u.u_depth, params.depth)
   gl.uniform1f(u.u_play, params.play)
+  gl.uniform1f(u.u_domT, rt.phase('domains', 0.22 * (0.3 + params.play)))
+  gl.uniform1f(u.u_playT, rt.phase('play', params.play))
   gl.uniform1f(u.u_sat, params.saturation)
   gl.uniform1f(u.u_milk, params.milkiness)
   gl.uniform1f(u.u_sparkle, params.sparkle)
