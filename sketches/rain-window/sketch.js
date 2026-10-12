@@ -7,11 +7,18 @@
  * down, swallowing the drops in its path (merging, area-conserving) and wiping
  * a clear streak through the fog that slowly mists back over.
  *
- * The wiped glass lives in a persistent "wet" mask that fades (re-condenses)
- * each frame; the clear streaks are the sharp background shown through it.
+ * The drop simulation runs in JS (it is cheap); everything that touches the
+ * picture is one fragment shader, so it can also run inside a Patch filter
+ * chain. Each frame the drops are binned into a coarse grid and packed into a
+ * small data texture (up to 8 drops per cell, centre + radius); the shader
+ * finds the drops over its pixel and refracts the scene through them. The
+ * wiped glass is a persistent "wet" mask kept at a third of the size in a 2D
+ * canvas that fades (re-condenses) each frame, uploaded as a second texture.
+ * The misted glass is a blur read from the source's mip chain.
  */
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -28,51 +35,129 @@ const params = rt.params({
 // the (randomised) base wind instead of only ever to the right.
 rt.mapInput('mouse.x', 'wind', 1, { center: true })
 
-const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-const src = createSource()
+const K = 8 // drop slots per grid cell (2 texels each)
 
-// Background layers: a misted (blurred, paled) copy for the glass, and a sharp
-// copy for what the drops refract and the streaks reveal.
-const fogC = document.createElement('canvas')
-const fogCtx = fogC.getContext('2d')
-const sharpC = document.createElement('canvas')
-const sharpCtx = sharpC.getContext('2d')
-// Persistent "wet" mask — white where water has cleared the fog; fades back.
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform sampler2D u_drops;   // per cell: K slots of (x hi, x lo, y hi, y lo)(r hi, r lo, -, -)
+uniform sampler2D u_wet;     // wiped-glass mask (red)
+uniform vec2 u_res;
+uniform float u_cell;        // grid cell size, px
+uniform vec2 u_grid;         // grid size, cells
+uniform float u_fog;
+uniform float u_sigma;       // fog blur, px
+uniform float u_trails;
+uniform float u_mag;         // drop magnification
+out vec4 outColor;
+
+vec3 sharpAt(vec2 p) { return texture(u_tex, vec2(p.x / u_res.x, 1.0 - p.y / u_res.y)).rgb; }
+
+void main() {
+  vec2 px = vec2(v_uv.x, 1.0 - v_uv.y) * u_res;   // y-down px
+
+  // 1) misted glass: a blurred, brightened, paled copy of the scene
+  float lod = max(0.0, log2(u_sigma * 0.5));
+  vec3 acc = vec3(0.0);
+  float wsum = 0.0;
+  for (int i = 0; i < 16; i++) {
+    float r = u_sigma * 1.8 * sqrt((float(i) + 0.5) / 16.0);
+    float a = float(i) * 2.39996;
+    float w = exp(-0.5 * (r * r) / (u_sigma * u_sigma));
+    acc += textureLod(u_tex, v_uv + vec2(cos(a), sin(a)) * r / u_res, lod).rgb * w;
+    wsum += w;
+  }
+  vec3 col = min(acc / wsum * (1.0 + u_fog * 0.1), 1.0);
+  col = mix(col, vec3(206.0, 212.0, 224.0) / 255.0, u_fog * 0.4);
+
+  // 2) clear streaks: the sharp scene through the wet mask
+  if (u_trails > 0.01) {
+    float wet = texture(u_wet, v_uv).r;
+    col = mix(col, sharpAt(px), wet * (0.55 + 0.45 * u_trails));
+  }
+
+  // 3) the drops over this pixel, painted in order
+  ivec2 cell = clamp(ivec2(floor(px / u_cell)), ivec2(0), ivec2(u_grid) - 1);
+  for (int k = 0; k < ${K}; k++) {
+    ivec2 tp = ivec2((cell.x * ${K} + k) * 2, cell.y);
+    vec4 b = floor(texelFetch(u_drops, tp + ivec2(1, 0), 0) * 255.0 + 0.5);
+    float r = (b.x * 256.0 + b.y) / 64.0;
+    if (r <= 0.0) break;
+    vec4 a = floor(texelFetch(u_drops, tp, 0) * 255.0 + 0.5);
+    vec2 c = vec2(a.x * 256.0 + a.y, a.z * 256.0 + a.w) / 8.0 - 64.0;
+    float dist = length(px - c);
+    if (dist > r * 1.03 + 1.0) continue;
+    // the scene behind, magnified and point-inverted about a spot a touch above the centre
+    float cov = clamp(r - dist + 0.5, 0.0, 1.0);
+    if (cov > 0.0) {
+      vec2 cc = c - vec2(0.0, r * 0.15);
+      col = mix(col, sharpAt(cc - (px - cc) / u_mag), cov);
+    }
+    // refracted dark rim
+    float lw = max(0.6, r * 0.12);
+    float rim = clamp(lw * 0.5 + 0.5 - abs(dist - r * 0.96), 0.0, 1.0) * min(1.0, lw);
+    col = mix(col, vec3(10.0, 14.0, 22.0) / 255.0, 0.45 * rim);
+    // specular highlight (upper left): the tiny window reflection
+    float hd = length(px - (c - vec2(0.32, 0.34) * r));
+    col = mix(col, vec3(1.0), 0.85 * max(0.0, 1.0 - hd / (0.5 * r)));
+  }
+  outColor = vec4(col, 1.0);
+}`
+
+const canvas = document.getElementById('canvas')
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG, mipmaps: true })
+const dropsTex = gf.addTexture('u_drops', 1, { filter: 'NEAREST', flipY: false })
+const wetTex = gf.addTexture('u_wet', 2)
+
+// Persistent "wet" mask at a third of the size — white where water has cleared
+// the fog; fades back to black.
+const WET_SCALE = 1 / 3
 const wetC = document.createElement('canvas')
 const wetCtx = wetC.getContext('2d')
-// Composited clear streaks (sharp bg masked by wet).
-const clearC = document.createElement('canvas')
-const clearCtx = clearC.getContext('2d')
-// The fog is a heavy blur of a soft picture: blur a quarter-resolution copy and
-// scale it up (16x fewer pixels to filter), and only redo it when the source
-// picture (or the fog amount) actually changed.
-const fogSmall = document.createElement('canvas')
-const fogSmallCtx = fogSmall.getContext('2d')
-let fogVer = -1
-let fogSig = ''
 
 let W = 0
 let H = 0
 let PR = 1
-function resize() {
-  PR = rt.pixelRatio
-  W = canvas.width = Math.floor(window.innerWidth * PR)
-  H = canvas.height = Math.floor(window.innerHeight * PR)
-  for (const c of [fogC, sharpC, wetC, clearC]) {
-    c.width = W
-    c.height = H
+let cellPx = 32
+let gridW = 1
+let gridH = 1
+let texW = 2
+let data = new Uint8Array(8)
+let counts = new Uint8Array(1)
+
+// Called every frame: follows the render size (which changes when the filter
+// joins or leaves a Patch chain) without ever caching it at load.
+function ensureSize() {
+  const w = gf.width
+  const h = gf.height
+  if (w === W && h === H && rt.pixelRatio === PR) return
+  if (W > 0 && w > 0) { // keep the drops where they were on the glass
+    const s = w / W
+    for (const d of drops) { d.x *= s; d.y *= s; d.r *= s; d.vy *= s }
   }
-  wetCtx.clearRect(0, 0, W, H)
+  W = w
+  H = h
+  PR = rt.pixelRatio
+  cellPx = Math.max(8, Math.round(32 * PR))
+  gridW = Math.max(1, Math.ceil(W / cellPx))
+  gridH = Math.max(1, Math.ceil(H / cellPx))
+  texW = gridW * K * 2
+  data = new Uint8Array(texW * gridH * 4)
+  counts = new Uint8Array(gridW * gridH)
+  wetC.width = Math.max(2, Math.ceil(W * WET_SCALE))
+  wetC.height = Math.max(2, Math.ceil(H * WET_SCALE))
+  wetCtx.fillStyle = '#000'
+  wetCtx.fillRect(0, 0, wetC.width, wetC.height)
 }
 
 // --- droplets ---------------------------------------------------------------
-// r is in canvas px. Small drops cling and grow; once heavy they slide.
+// r is in render px. Small drops cling and grow; once heavy they slide.
 let drops = []
-const rand = (a, b) => a + Math.random() * (b - a)
+const rand = (a, b) => a + rt.rng() * (b - a)
 
 function spawn(x, y, r, sliding = false) {
-  drops.push({ x, y, r, vy: 0, vx: 0, sliding, wob: Math.random() * Math.PI * 2 })
+  drops.push({ x, y, r, vy: 0, vx: 0, sliding, wob: rt.rng() * Math.PI * 2 })
 }
 
 function slideThreshold() {
@@ -83,23 +168,24 @@ function slideThreshold() {
 function step() {
   const g = slideThreshold()
   const maxDrops = Math.floor((260 + 360 * params.density) * rt.detail)
-  const minDim = Math.min(W, H)
+  const ws = wetC.width / W
 
   // Nucleation: seed new clinging droplets across the glass.
   const spawnTries = Math.ceil(params.density * 6)
   for (let i = 0; i < spawnTries; i++) {
     if (drops.length >= maxDrops) break
-    if (Math.random() < 0.5) spawn(rand(0, W), rand(0, H), rand(0.8, 2.2) * PR * params.dropSize)
+    if (rt.rng() < 0.5) spawn(rand(0, W), rand(0, H), rand(0.8, 2.2) * PR * params.dropSize)
   }
 
   const windX = (params.wind - 0.5) * 2 * 1.4 * PR // -1.4..1.4 px bias
 
+  wetCtx.fillStyle = '#fff'
   for (let i = 0; i < drops.length; i++) {
     const d = drops[i]
     if (!d.sliding) {
       // Condensation growth, slowing as it gets big.
       d.r += (0.05 + 0.05 * params.density) * PR * (1 - d.r / (g * 1.6))
-      if (d.r >= g * (0.85 + Math.random() * 0.4)) {
+      if (d.r >= g * (0.85 + rt.rng() * 0.4)) {
         d.sliding = true
         d.vy = 0.4 * PR
       }
@@ -114,12 +200,10 @@ function step() {
     d.y += d.vy
 
     // Wipe the fog along the path and shed the odd residual bead.
-    wetCtx.globalCompositeOperation = 'source-over'
-    wetCtx.fillStyle = '#fff'
     wetCtx.beginPath()
-    wetCtx.arc(d.x, d.y, d.r * 0.85, 0, Math.PI * 2)
+    wetCtx.arc(d.x * ws, d.y * ws, Math.max(0.5, d.r * 0.85 * ws), 0, Math.PI * 2)
     wetCtx.fill()
-    if (Math.random() < 0.14 && d.r > 4 * PR) {
+    if (rt.rng() < 0.14 && d.r > 4 * PR) {
       spawn(d.x + rand(-d.r, d.r) * 0.6, d.y - d.r, rand(0.9, 1.8) * PR * params.dropSize)
       d.r *= 0.985 // lose a little mass to the residual
     }
@@ -171,104 +255,62 @@ function step() {
 
   // Re-fog: the wet streaks slowly dry and mist over again.
   const dry = 0.006 + (1 - params.trails) * 0.05
-  wetCtx.globalCompositeOperation = 'destination-out'
   wetCtx.fillStyle = `rgba(0,0,0,${dry})`
-  wetCtx.fillRect(0, 0, W, H)
-  wetCtx.globalCompositeOperation = 'source-over'
-  void minDim
+  wetCtx.fillRect(0, 0, wetC.width, wetC.height)
 }
 
-// Refract the sharp background inside a drop: the scene behind it, magnified
-// and point-inverted (as a spherical droplet really does).
-function drawDrop(d) {
-  const m = 1 + 0.35 * params.refraction
-  ctx.save()
-  ctx.beginPath()
-  ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2)
-  ctx.clip()
-  ctx.translate(d.x, d.y - d.r * 0.15) // sample a touch above (drops look up)
-  ctx.scale(-m, -m) // point inversion + magnify
-  ctx.drawImage(sharpC, -d.x, -(d.y - d.r * 0.15), W, H)
-  ctx.restore()
-
-  // Refracted dark rim + a slim bright edge on the lower side.
-  ctx.lineWidth = Math.max(0.6, d.r * 0.12)
-  ctx.strokeStyle = 'rgba(10,14,22,0.45)'
-  ctx.beginPath()
-  ctx.arc(d.x, d.y, d.r * 0.96, 0, Math.PI * 2)
-  ctx.stroke()
-
-  // Specular highlight (upper-left) — the tiny window reflection.
-  const hx = d.x - d.r * 0.32
-  const hy = d.y - d.r * 0.34
-  const hg = ctx.createRadialGradient(hx, hy, 0, hx, hy, d.r * 0.5)
-  hg.addColorStop(0, 'rgba(255,255,255,0.85)')
-  hg.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.fillStyle = hg
-  ctx.beginPath()
-  ctx.arc(hx, hy, d.r * 0.5, 0, Math.PI * 2)
-  ctx.fill()
+// Bin the drops into the grid texture, in draw order (later drops paint over
+// earlier ones). A cell that is somehow over-full drops the latest arrivals.
+function pack() {
+  data.fill(0)
+  counts.fill(0)
+  const clamp16 = (v) => (v < 0 ? 0 : v > 65535 ? 65535 : Math.round(v))
+  for (const d of drops) {
+    const ext = d.r * 1.03 + 1.5
+    const x0 = Math.max(0, Math.floor((d.x - ext) / cellPx))
+    const x1 = Math.min(gridW - 1, Math.floor((d.x + ext) / cellPx))
+    const y0 = Math.max(0, Math.floor((d.y - ext) / cellPx))
+    const y1 = Math.min(gridH - 1, Math.floor((d.y + ext) / cellPx))
+    if (x0 > x1 || y0 > y1) continue
+    const X = clamp16((d.x + 64) * 8)
+    const Y = clamp16((d.y + 64) * 8)
+    const R = Math.max(1, clamp16(d.r * 64))
+    for (let cy = y0; cy <= y1; cy++) {
+      for (let cx = x0; cx <= x1; cx++) {
+        const ci = cy * gridW + cx
+        const k = counts[ci]
+        if (k >= K) continue
+        counts[ci] = k + 1
+        const o = (cy * texW + (cx * K + k) * 2) * 4
+        data[o] = X >> 8
+        data[o + 1] = X & 255
+        data[o + 2] = Y >> 8
+        data[o + 3] = Y & 255
+        data[o + 4] = R >> 8
+        data[o + 5] = R & 255
+        data[o + 7] = 255
+      }
+    }
+  }
 }
 
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) {
-    requestAnimationFrame(frame)
-    return
+  ensureSize()
+  if (W > 0 && H > 0) {
+    step()
+    pack()
+    dropsTex.upload(data, texW, gridH)
+    wetTex.upload(wetC)
   }
-
-  const sig = `${params.fog}|${W}x${H}`
-  if (src.version !== fogVer || sig !== fogSig) {
-    fogVer = src.version
-    fogSig = sig
-    // Sharp background (for refraction + streaks).
-    sharpCtx.globalCompositeOperation = 'source-over'
-    sharpCtx.filter = 'none'
-    src.draw(sharpCtx, W, H)
-
-    // Fogged glass: blurred, paled version of the scene (blurred at 1/4 size).
-    const fw = Math.max(2, W >> 2), fh = Math.max(2, H >> 2)
-    if (fogSmall.width !== fw || fogSmall.height !== fh) { fogSmall.width = fw; fogSmall.height = fh }
-    fogSmallCtx.clearRect(0, 0, fw, fh)
-    fogSmallCtx.filter = `blur(${((3 + params.fog * 7) * PR) / 4}px) brightness(${1 + params.fog * 0.1})`
-    src.draw(fogSmallCtx, fw, fh)
-    fogSmallCtx.filter = 'none'
-    fogCtx.imageSmoothingEnabled = true
-    fogCtx.clearRect(0, 0, W, H)
-    fogCtx.drawImage(fogSmall, 0, 0, W, H)
-    fogCtx.fillStyle = `rgba(206,212,224,${params.fog * 0.4})`
-    fogCtx.fillRect(0, 0, W, H)
-  }
-
-  step()
-
-  // 1) misted glass
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.globalAlpha = 1
-  ctx.drawImage(fogC, 0, 0)
-
-  // 2) clear streaks: sharp bg shown through the wet mask
-  if (params.trails > 0.01) {
-    clearCtx.globalCompositeOperation = 'source-over'
-    clearCtx.globalAlpha = 1
-    clearCtx.clearRect(0, 0, W, H)
-    clearCtx.drawImage(sharpC, 0, 0)
-    clearCtx.globalCompositeOperation = 'destination-in'
-    clearCtx.drawImage(wetC, 0, 0)
-    clearCtx.globalCompositeOperation = 'source-over'
-    ctx.globalAlpha = 0.55 + 0.45 * params.trails
-    ctx.drawImage(clearC, 0, 0)
-    ctx.globalAlpha = 1
-  }
-
-  // 3) the drops themselves
-  for (const d of drops) drawDrop(d)
-
+  gf.render({ time: now * 0.001 }, (u) => {
+    u.f('u_cell', cellPx)
+    u.v2('u_grid', gridW, gridH)
+    u.f('u_fog', params.fog)
+    u.f('u_sigma', (3 + params.fog * 7) * PR)
+    u.f('u_trails', params.trails)
+    u.f('u_mag', 1 + 0.35 * params.refraction)
+  })
   requestAnimationFrame(frame)
 }
-
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

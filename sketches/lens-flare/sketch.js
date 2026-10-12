@@ -1,14 +1,20 @@
 /**
  * Lens Flare over a live source (camera / dropped photo or video / demo / the
  * Mixer layers below). The flare anchors to the brightest point of the image
- * (smoothed so it glides, not jitters) or to a click-and-drag position. It's
- * built from the classic anamorphic kit: a hot core with chromatic halo, a
- * horizontal cyan streak, a ring, and a chain of polygonal ghosts spaced
- * along the line from the light through the frame centre — all additive, all
- * scaled by how bright the found light actually is.
+ * or to a click-and-drag position. It's built from the classic anamorphic kit:
+ * a hot core with chromatic halo, a horizontal cyan streak, a ring, and a chain
+ * of polygonal ghosts spaced along the line from the light through the frame
+ * centre — all additive, all scaled by how bright the found light actually is.
+ *
+ * One fragment shader, so it can run inside a Patch filter chain. The light is
+ * found in the shader too (no pixel readback): a coarse-to-fine search down the
+ * source's mip chain (an ~8-cell scan of a top mip, then three 4x4 refinements),
+ * finished with a soft arg-max so the anchor moves continuously as the picture
+ * changes. That keeps the output a pure function of the input picture.
  */
 import { createRuntime } from '../_lib/runtime.js'
-import { createSource, clamp } from '../_lib/source.js'
+import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -26,24 +32,196 @@ const params = rt.params({
 // The flare surges with the music.
 rt.mapInput('audio.volume', 'intensity', 0.6)
 
-const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-const src = createSource()
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform float u_time;
+uniform int u_auto;        // 1: anchor to the brightest point, 0: to u_manual
+uniform vec2 u_manual;     // manual light position, 0..1, y down
+uniform float u_intensity;
+uniform float u_burst;
+uniform float u_spikes;
+uniform float u_streak;
+uniform float u_ghosts;
+uniform float u_halo;
+uniform float u_chroma;
+uniform float u_thresh;
+out vec4 outColor;
 
-const tiny = document.createElement('canvas')
-tiny.width = 48
-tiny.height = 32
-const tctx = tiny.getContext('2d', { willReadFrequently: true })
+const float TAU = 6.28318530718;
+float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+float lumAt(ivec2 p, int lod) { return luma(texelFetch(u_tex, p, lod).rgb); }
 
-let W = 0
-let H = 0
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
+// Brightest point of the picture: xy = uv (y up), z = its brightness.
+// Every fragment runs the same fetches, so they all agree (and hit the cache).
+vec3 findLight() {
+  ivec2 s0 = textureSize(u_tex, 0);
+  float mx = float(max(s0.x, s0.y));
+  int top = int(floor(log2(mx)));
+  int c = clamp(int(ceil(log2(mx / 8.0))), 0, top);
+  ivec2 s = textureSize(u_tex, c);
+  ivec2 best = ivec2(0);
+  float bl = -1.0;
+  for (int j = 0; j < 8; j++) {
+    if (j >= s.y) break;
+    for (int i = 0; i < 8; i++) {
+      if (i >= s.x) break;
+      float l = lumAt(ivec2(i, j), c);
+      if (l > bl) { bl = l; best = ivec2(i, j); }
+    }
+  }
+  for (int k = 0; k < 3; k++) {
+    if (c == 0) break;
+    c--;
+    s = textureSize(u_tex, c);
+    ivec2 base = best * 2 - 1;
+    ivec2 nb = clamp(best * 2, ivec2(0), s - 1);
+    float nbl = -1.0;
+    for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) {
+      ivec2 p = base + ivec2(i, j);
+      if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, s))) continue;
+      float l = lumAt(p, c);
+      if (l > nbl) { nbl = l; nb = p; }
+    }
+    best = nb;
+    bl = nbl;
+  }
+  // soft arg-max over the winner's neighbourhood: sub-cell, continuous position
+  vec2 acc = vec2(0.0);
+  float ws = 0.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    ivec2 p = best + ivec2(i, j);
+    if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, s))) continue;
+    float w = exp((lumAt(p, c) - bl) * 30.0);
+    acc += (vec2(p) + 0.5) * w;
+    ws += w;
+  }
+  return vec3(acc / ws / vec2(s), bl);
 }
 
-// Smoothed light position + strength.
-const light = { x: 0.7, y: 0.3, s: 0.8 }
+// one additive radial-gradient blob: alpha a at the centre, 0 at radius r
+vec3 glow(vec2 p, vec2 c, float r, vec3 rgb, float a) {
+  if (r < 0.5 || a <= 0.003) return vec3(0.0);
+  return rgb * a * max(0.0, 1.0 - length(p - c) / r);
+}
+// antialiased ring stroke
+float ring(float d, float r, float w) { return clamp(w * 0.5 + 0.5 - abs(d - r), 0.0, 1.0); }
+
+void main() {
+  vec3 base = texture(u_tex, v_uv).rgb;
+  vec2 px = vec2(v_uv.x, 1.0 - v_uv.y) * u_res;   // y-down px
+
+  vec2 L;
+  float I = u_intensity;
+  if (u_auto == 1) {
+    vec3 f = findLight();
+    L = vec2(f.x, 1.0 - f.y) * u_res;
+    // below threshold the flare fades out rather than popping
+    I *= clamp((f.z - u_thresh) / (1.0 - u_thresh), 0.0, 1.0);
+  } else {
+    L = u_manual * u_res;
+  }
+  if (I <= 0.01) { outColor = vec4(base, 1.0); return; }
+
+  vec2 C = u_res * 0.5;
+  float m = min(u_res.x, u_res.y);
+  float t = u_time;
+  float flicker = 1.0 + 0.06 * sin(t * 13.7) + 0.04 * sin(t * 7.1);
+  vec2 d = px - L;
+  float dist = length(d);
+  vec3 add = vec3(0.0);
+
+  // hot core
+  add += glow(px, L, m * 0.05 * flicker, vec3(1.0), 0.9 * I);
+  add += glow(px, L, m * 0.16 * flicker, vec3(255.0, 235.0, 200.0) / 255.0, 0.45 * I);
+
+  // radial starburst: alternating long / short diffraction spikes
+  if (u_burst > 0.01) {
+    float n = floor(u_spikes + 0.5);
+    float len = m * (0.22 + 0.55 * u_burst) * flicker;
+    if (dist < len * 1.31) {
+      float k = I * u_burst;
+      for (int i = 0; i < 24; i++) {
+        float fi = float(i);
+        if (fi >= n) break;
+        float a = fi / n * TAU;
+        float lng = mod(fi, 2.0) < 0.5 ? 1.0 : 0.5;
+        float ll = len * lng * (0.7 + 0.6 * abs(sin(fi * 1.3 + t)));
+        vec2 dir = vec2(cos(a), sin(a));
+        float along = dot(d, dir);
+        if (along < 0.0 || along > ll) continue;
+        float lw = max(1.0, m * 0.004 * lng);
+        float cov = clamp(lw * 0.5 + 0.5 - abs(d.x * dir.y - d.y * dir.x), 0.0, 1.0);
+        if (cov <= 0.0) continue;
+        float f = along / ll;
+        vec3 col = f < 0.5 ? mix(vec3(255.0, 240.0, 210.0), vec3(255.0, 210.0, 170.0), f * 2.0)
+                           : mix(vec3(255.0, 210.0, 170.0), vec3(255.0, 200.0, 160.0), f * 2.0 - 1.0);
+        float al = f < 0.5 ? mix(0.5, 0.12, f * 2.0) : mix(0.12, 0.0, f * 2.0 - 1.0);
+        add += col / 255.0 * al * k * cov;
+      }
+    }
+  }
+
+  // chromatic fringe
+  if (u_chroma > 0.01) {
+    add += glow(px, L - vec2(m * 0.01, 0.0), m * 0.2, vec3(255.0, 80.0, 60.0) / 255.0, 0.12 * I * u_chroma);
+    add += glow(px, L + vec2(m * 0.01, 0.0), m * 0.23, vec3(80.0, 120.0, 255.0) / 255.0, 0.12 * I * u_chroma);
+  }
+
+  // anamorphic streak: a long thin horizontal cyan blur
+  if (u_streak > 0.01) {
+    float sw = u_res.x * 0.9 * u_streak;
+    float sh = m * 0.006 * (1.0 + u_streak);
+    float u = abs(d.x) / sw;
+    if (u < 1.0) {
+      float cov = clamp(sh + 0.5 - abs(d.y), 0.0, 1.0);
+      vec3 col = mix(vec3(80.0, 160.0, 255.0), vec3(150.0, 210.0, 255.0), 1.0 - u) / 255.0;
+      add += col * 0.5 * I * (1.0 - u) * cov;
+    }
+    add += glow(px, L, m * 0.02, vec3(200.0, 235.0, 255.0) / 255.0, 0.8 * I);
+  }
+
+  // halo rings around the light
+  if (u_halo > 0.01) {
+    float hr = m * 0.28;
+    add += vec3(255.0, 190.0, 140.0) / 255.0 * 0.22 * I * u_halo * ring(dist, hr, m * 0.02);
+    add += vec3(140.0, 180.0, 255.0) / 255.0 * 0.14 * I * u_halo * ring(dist, hr * 1.06, m * 0.012);
+  }
+
+  // ghost chain along the light -> centre line, mirrored past the centre
+  float gn = floor(u_ghosts + 0.5);
+  for (int i = 1; i <= 12; i++) {
+    float fi = float(i);
+    if (fi > gn) break;
+    float f = fi / gn * 2.2 - 0.2;
+    vec2 G = L + (C - L) * 2.0 * f;
+    int h = i - (i / 6) * 6;
+    vec3 hue = h == 0 ? vec3(120.0, 220.0, 160.0) : h == 1 ? vec3(255.0, 160.0, 120.0) : h == 2 ? vec3(160.0, 140.0, 255.0)
+             : h == 3 ? vec3(255.0, 220.0, 140.0) : h == 4 ? vec3(120.0, 180.0, 255.0) : vec3(240.0, 140.0, 200.0);
+    hue /= 255.0;
+    float r = m * (0.02 + 0.05 * abs(sin(fi * 2.4))) * (0.6 + 0.8 * abs(f - 0.5));
+    if (r < 0.5) continue;
+    if (i - (i / 3) * 3 == 0) { // hexagonal aperture ghost, rotated by i radians
+      vec2 q = px - G;
+      float seg = TAU / 6.0;
+      float ang = mod(atan(q.y, q.x) - fi, seg) - seg * 0.5;
+      float sd = length(q) * cos(ang) - r * cos(seg * 0.5);
+      add += hue * 0.14 * I * clamp(0.5 - sd, 0.0, 1.0);
+    } else {
+      add += glow(px, G, r, hue, 0.16 * I);
+    }
+  }
+
+  outColor = vec4(clamp(base + add, 0.0, 1.0), 1.0);
+}`
+
+const canvas = document.getElementById('canvas')
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG, mipmaps: true })
+
+// Manual light position (drag), smoothed so it glides.
+const light = { x: 0.7, y: 0.3 }
 const manual = { x: 0.7, y: 0.3, active: false }
 canvas.addEventListener('pointerdown', (e) => {
   manual.active = true
@@ -57,188 +235,32 @@ window.addEventListener('pointermove', (e) => {
     manual.active = true
   }
 })
-
 // Double-click hands the light back to brightest-point tracking.
 canvas.addEventListener('dblclick', () => { manual.active = false })
 let lastAuto = params.auto
 
-function findLight() {
-  try {
-    src.draw(tctx, tiny.width, tiny.height, { mirror: params.mirror })
-    const d = tctx.getImageData(0, 0, tiny.width, tiny.height).data
-    let best = -1
-    let bx = 0
-    let by = 0
-    for (let y = 0; y < tiny.height; y++) {
-      for (let x = 0; x < tiny.width; x++) {
-        const i = (y * tiny.width + x) * 4
-        const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
-        if (l > best) {
-          best = l
-          bx = x
-          by = y
-        }
-      }
-    }
-    const lum = best / 255
-    return { x: (bx + 0.5) / tiny.width, y: (by + 0.5) / tiny.height, lum }
-  } catch {
-    return null
-  }
-}
-
-// One additive glow blob.
-function glow(x, y, r, rgb, a) {
-  if (r < 0.5 || a <= 0.003) return
-  const g = ctx.createRadialGradient(x, y, 0, x, y, r)
-  g.addColorStop(0, `rgba(${rgb},${a})`)
-  g.addColorStop(1, `rgba(${rgb},0)`)
-  ctx.fillStyle = g
-  ctx.beginPath()
-  ctx.arc(x, y, r, 0, Math.PI * 2)
-  ctx.fill()
-}
-
-function poly(x, y, r, sides, rgb, a, rot) {
-  if (r < 0.5 || a <= 0.003) return
-  ctx.fillStyle = `rgba(${rgb},${a})`
-  ctx.beginPath()
-  for (let i = 0; i < sides; i++) {
-    const ang = rot + (i / sides) * Math.PI * 2
-    const px = x + Math.cos(ang) * r
-    const py = y + Math.sin(ang) * r
-    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)
-  }
-  ctx.closePath()
-  ctx.fill()
-}
-
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) {
-    requestAnimationFrame(frame)
-    return
-  }
-
-  // Base image.
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.globalAlpha = 1
-  src.draw(ctx, W, H, { mirror: params.mirror })
-
-  // Where's the light?
-  let target = null
   // switching tracking back on also drops a pinned (clicked) light
   if (params.auto && !lastAuto) manual.active = false
   lastAuto = params.auto
-  if (!params.auto || manual.active) {
-    target = { x: manual.x, y: manual.y, lum: 1 }
-  } else {
-    target = findLight()
+  const useAuto = params.auto && !manual.active
+  if (!useAuto) {
+    light.x += (manual.x - light.x) * 0.12
+    light.y += (manual.y - light.y) * 0.12
   }
-  if (target) {
-    light.x += (target.x - light.x) * 0.12
-    light.y += (target.y - light.y) * 0.12
-    light.s += (target.lum - light.s) * 0.1
-  }
-
-  // Below threshold the flare fades out rather than popping.
-  const over = clamp((light.s - params.threshold) / (1 - params.threshold), 0, 1)
-  const I = params.intensity * (params.auto && !manual.active ? over : 1)
-  if (I <= 0.01) {
-    requestAnimationFrame(frame)
-    return
-  }
-
-  const lx = light.x * W
-  const ly = light.y * H
-  const cx = W / 2
-  const cy = H / 2
-  const m = Math.min(W, H)
-  const flicker = 1 + 0.06 * Math.sin(t * 13.7) + 0.04 * Math.sin(t * 7.1)
-
-  ctx.globalCompositeOperation = 'lighter'
-
-  // Hot core + chromatic fringe.
-  glow(lx, ly, m * 0.05 * flicker, '255,255,255', 0.9 * I)
-  glow(lx, ly, m * 0.16 * flicker, '255,235,200', 0.45 * I)
-
-  // Radial starburst: fine spikes radiating in every direction from the light
-  // (the diaphragm diffraction star), so the default flare reads radial.
-  if (params.burst > 0.01) {
-    const n = Math.round(params.spikes)
-    const len = m * (0.22 + 0.55 * params.burst) * flicker
-    ctx.save()
-    ctx.translate(lx, ly)
-    ctx.globalCompositeOperation = 'lighter'
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + i * 0.0
-      const long = i % 2 === 0 ? 1 : 0.5 // alternating long/short rays
-      const ll = len * long * (0.7 + 0.6 * Math.abs(Math.sin(i * 1.3 + t)))
-      const g = ctx.createLinearGradient(0, 0, Math.cos(a) * ll, Math.sin(a) * ll)
-      g.addColorStop(0, `rgba(255,240,210,${0.5 * I * params.burst})`)
-      g.addColorStop(0.5, `rgba(255,210,170,${0.12 * I * params.burst})`)
-      g.addColorStop(1, 'rgba(255,200,160,0)')
-      ctx.strokeStyle = g
-      ctx.lineWidth = Math.max(1, m * 0.004 * long)
-      ctx.beginPath()
-      ctx.moveTo(0, 0)
-      ctx.lineTo(Math.cos(a) * ll, Math.sin(a) * ll)
-      ctx.stroke()
-    }
-    ctx.restore()
-    ctx.globalCompositeOperation = 'source-over'
-  }
-  if (params.chroma > 0.01) {
-    glow(lx - m * 0.01, ly, m * 0.2, '255,80,60', 0.12 * I * params.chroma)
-    glow(lx + m * 0.01, ly, m * 0.23, '80,120,255', 0.12 * I * params.chroma)
-  }
-
-  // Anamorphic streak: a long thin horizontal cyan blur.
-  if (params.streak > 0.01) {
-    const sw = W * 0.9 * params.streak
-    const g = ctx.createLinearGradient(lx - sw, ly, lx + sw, ly)
-    g.addColorStop(0, 'rgba(80,160,255,0)')
-    g.addColorStop(0.5, `rgba(150,210,255,${0.5 * I})`)
-    g.addColorStop(1, 'rgba(80,160,255,0)')
-    ctx.fillStyle = g
-    const sh = m * 0.006 * (1 + params.streak)
-    ctx.fillRect(lx - sw, ly - sh, sw * 2, sh * 2)
-    glow(lx, ly, m * 0.02, '200,235,255', 0.8 * I)
-  }
-
-  // Halo ring around the frame centre side of the light.
-  if (params.halo > 0.01) {
-    const hr = m * 0.28
-    ctx.strokeStyle = `rgba(255,190,140,${0.22 * I * params.halo})`
-    ctx.lineWidth = m * 0.02
-    ctx.beginPath()
-    ctx.arc(lx, ly, hr, 0, Math.PI * 2)
-    ctx.stroke()
-    ctx.strokeStyle = `rgba(140,180,255,${0.14 * I * params.halo})`
-    ctx.lineWidth = m * 0.012
-    ctx.beginPath()
-    ctx.arc(lx, ly, hr * 1.06, 0, Math.PI * 2)
-    ctx.stroke()
-  }
-
-  // Ghost chain along the light→centre line, mirrored past centre.
-  const gn = Math.round(params.ghosts)
-  for (let i = 1; i <= gn; i++) {
-    const f = (i / gn) * 2.2 - 0.2 // spacing along the axis, past the centre
-    const gx = lx + (cx - lx) * 2 * f
-    const gy = ly + (cy - ly) * 2 * f
-    const hue = [ '120,220,160', '255,160,120', '160,140,255', '255,220,140', '120,180,255', '240,140,200' ][i % 6]
-    const r = m * (0.02 + 0.05 * Math.abs(Math.sin(i * 2.4))) * (0.6 + 0.8 * Math.abs(f - 0.5))
-    if (i % 3 === 0) poly(gx, gy, r, 6, hue, 0.14 * I, i)
-    else glow(gx, gy, r, hue, 0.16 * I)
-  }
-
-  ctx.globalCompositeOperation = 'source-over'
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    u.i('u_auto', useAuto ? 1 : 0)
+    u.v2('u_manual', +light.x.toFixed(5), +light.y.toFixed(5))
+    u.f('u_intensity', params.intensity)
+    u.f('u_burst', params.burst)
+    u.f('u_spikes', params.spikes)
+    u.f('u_streak', params.streak)
+    u.f('u_ghosts', params.ghosts)
+    u.f('u_halo', params.halo)
+    u.f('u_chroma', params.chroma)
+    u.f('u_thresh', params.threshold)
+  })
   requestAnimationFrame(frame)
 }
-
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)
