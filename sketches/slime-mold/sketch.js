@@ -6,6 +6,12 @@
  * rules a living, stringy, ever-reconfiguring vein network emerges — irregular,
  * organic, and never settling into a repeating pattern. Click to drop food that
  * the colony reaches toward and swarms.
+ *
+ * Performance: the agents, deposit and diffusion stay on the CPU (the agents
+ * sense the trail, so it has to live there), on a grid capped at 600 cells on
+ * the long side. Everything that scales with the screen — colouring the trail,
+ * upscaling it, the bloom blur and the oat flakes — runs in WebGL2: the trail
+ * is uploaded once a frame as an R32F texture.
  */
 import { createRuntime } from '../_lib/runtime.js'
 
@@ -40,9 +46,10 @@ rt.mapInput('audio.pulse', 'speed', 0.5)
 rt.mapInput('audio.volume', 'deposit', 0.4)
 
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
+const CAPTURE = new URLSearchParams(location.search).get('capture') === '1'
+const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: CAPTURE, antialias: false, alpha: false })
 
-let W, H, trail, tmp, img, sim, sctx
+let W, H, trail, tmp
 let agents = null // Float32Array packed [x, y, heading] * N
 let nAgents = 0
 let srcX = 0, srcY = 0 // the inoculation point the colony grows out from
@@ -58,9 +65,7 @@ function build() {
   H = ar >= 1 ? Math.round(long / ar) : long
   trail = new Float32Array(W * H)
   tmp = new Float32Array(W * H)
-  sim = document.createElement('canvas'); sim.width = W; sim.height = H
-  sctx = sim.getContext('2d')
-  img = sctx.createImageData(W, H)
+  buildTargets()
   seedAgents()
 }
 function seedAgents() {
@@ -97,7 +102,8 @@ canvas.addEventListener('pointerdown', (e) => {
 })
 
 // A single rolled-oat flake — a pale, ridged oval with a central groove — drawn
-// where you dropped food, shrinking as the colony consumes it.
+// where you dropped food, shrinking as the colony consumes it. Drawn once into a
+// sprite at a reference size; the frame loop only places, rotates and scales it.
 function drawOat(cctx, x, y, r, ang, life) {
   cctx.save()
   cctx.translate(x, y)
@@ -123,6 +129,13 @@ function drawOat(cctx, x, y, r, ang, life) {
   }
   cctx.restore()
 }
+// Sprite: the full-life oat at OAT_REF px radius, centred, with room for the
+// shadow offset (which is in pixels, so it is scaled with the sprite: close enough).
+const OAT_REF = 64
+const OAT_HALF = Math.ceil(OAT_REF * 1.12 + 4)
+const oatSprite = document.createElement('canvas')
+oatSprite.width = oatSprite.height = OAT_HALF * 2
+drawOat(oatSprite.getContext('2d'), OAT_HALF, OAT_HALF, OAT_REF, 0, 1)
 
 // Bounded (non-wrapping) field: clamp sample coordinates so the trail doesn't
 // wrap around the dish edges.
@@ -139,42 +152,47 @@ function step() {
   const sp = params.speed
   const dep = params.deposit * 0.6
   const wig = params.wiggle
+  // cos/sin(h ± SA) by angle addition: two trig calls per sensor set, not six.
+  const cSA = Math.cos(SA), sSA = Math.sin(SA)
+  const r2 = reach * reach
+  const tr = trail, ag = agents, w = W, hh = H, rng = rt.rng
   for (let i = 0; i < nAgents; i++) {
     const o = i * 3
-    let x = agents[o], y = agents[o + 1], h = agents[o + 2]
+    let x = ag[o], y = ag[o + 1], h = ag[o + 2]
     // How raw is the ground here? 1 at the untouched advancing edge, →0 inside an
     // established vein. This is what separates the two behaviours: at the front
     // the fan spreads and pushes out; behind it, agents lock onto veins.
-    const here = trail[(y | 0) * W + (x | 0)]
+    const here = tr[(y | 0) * w + (x | 0)]
     const front = Math.max(0, 1 - here * 1.3)
-    const c = sample(x + Math.cos(h) * SD, y + Math.sin(h) * SD)
-    const l = sample(x + Math.cos(h - SA) * SD, y + Math.sin(h - SA) * SD)
-    const r = sample(x + Math.cos(h + SA) * SD, y + Math.sin(h + SA) * SD)
+    const ch = Math.cos(h), sh = Math.sin(h)
+    const c = sample(x + ch * SD, y + sh * SD)
+    const l = sample(x + (ch * cSA + sh * sSA) * SD, y + (sh * cSA - ch * sSA) * SD)
+    const r = sample(x + (ch * cSA - sh * sSA) * SD, y + (sh * cSA + ch * sSA) * SD)
     // Chemotaxis, damped at the front so agents there DON'T all funnel onto the
     // first thread (which is what collapses a fan into a few radial spokes) —
     // they stay a broad advancing sheet, and consolidate into veins only once the
     // ground behind them has thickened.
     const chemo = TA * (1 - front * 0.7)
     if (c > l && c > r) { /* straight on */ }
-    else if (c < l && c < r) h += (rt.rng() < 0.5 ? -1 : 1) * chemo // valley → pick a side
+    else if (c < l && c < r) h += (rng() < 0.5 ? -1 : 1) * chemo // valley → pick a side
     else if (l < r) h += chemo
     else if (r < l) h -= chemo
     // Wander, widened at the front so the just-reached margin splays sideways and
     // fills its arc as a fine mesh instead of running as straight fingers.
-    h += (rt.rng() - 0.5) * wig * (1 + front * 3)
+    h += (rng() - 0.5) * wig * (1 + front * 3)
     x += Math.cos(h) * sp
     y += Math.sin(h) * sp
     // Never leave the dish (reflect off the rim).
     if (x < 1) { x = 1; h = Math.PI - h }
-    else if (x >= W - 1) { x = W - 2; h = Math.PI - h }
+    else if (x >= w - 1) { x = w - 2; h = Math.PI - h }
     if (y < 1) { y = 1; h = -h }
-    else if (y >= H - 1) { y = H - 2; h = -h }
-    agents[o] = x; agents[o + 1] = y; agents[o + 2] = h
+    else if (y >= hh - 1) { y = hh - 2; h = -h }
+    ag[o] = x; ag[o + 1] = y; ag[o + 2] = h
     // Only lay trail inside the colonised radius. Agents beyond it still roam
     // (staying evenly spread, ready), but no web forms there until the advancing
     // margin reaches them — so the fan grows dense from the bottom out.
     const ddx = x - srcX, ddy = y - srcY
-    if (ddx * ddx + ddy * ddy <= reach * reach) trail[(y | 0) * W + (x | 0)] += dep
+    if (ddx * ddx + ddy * ddy <= r2) tr[(y | 0) * w + (x | 0)] += dep
   }
 }
 
@@ -201,87 +219,259 @@ const CAP = 6 // protoplasm density ceiling — keeps sharpening from running aw
 function diffuse() {
   const dk = 1 - params.decay
   const sh = params.sharpen
+  const src = trail, dst = tmp, w = W
   for (let y = 0; y < H; y++) {
-    const y0 = ((y - 1 + H) % H) * W, y1 = y * W, y2 = ((y + 1) % H) * W
-    for (let x = 0; x < W; x++) {
-      const x0 = (x - 1 + W) % W, x2 = (x + 1) % W
+    // the blur wraps at the edges (as it always has); only the neighbour rows /
+    // the first and last column need the wrap, so the inner loop has no modulo
+    const y0 = ((y - 1 + H) % H) * w, y1 = y * w, y2 = ((y + 1) % H) * w
+    for (let x = 0; x < w; x++) {
+      const x0 = x === 0 ? w - 1 : x - 1, x2 = x === w - 1 ? 0 : x + 1
       // Gaussian 3x3 (1 2 1 / 2 4 2 / 1 2 1) — far more isotropic than a flat box
       // blur, so a point source no longer spreads into an axis-aligned cross.
-      const s = trail[y0 + x0] + 2 * trail[y0 + x] + trail[y0 + x2] +
-        2 * trail[y1 + x0] + 4 * trail[y1 + x] + 2 * trail[y1 + x2] +
-        trail[y2 + x0] + 2 * trail[y2 + x] + trail[y2 + x2]
-      const blur = s / 16
-      const c = trail[y1 + x]
+      const c = src[y1 + x]
+      const s = src[y0 + x0] + 2 * src[y0 + x] + src[y0 + x2] +
+        2 * src[y1 + x0] + 4 * c + 2 * src[y1 + x2] +
+        src[y2 + x0] + 2 * src[y2 + x] + src[y2 + x2]
+      const blur = s * 0.0625
       // Unsharp mask: add back a fraction of the high-frequency detail (c − blur)
       // so ridges gain and hollows lose — but scale it by how much protoplasm is
       // actually here (min(1, c·2)) so the empty agar stays smooth instead of
       // sparkling. This is what carves the thick-trunk / fine-twig hierarchy.
-      const v = blur + sh * (c - blur) * Math.min(1, c)
-      tmp[y1 + x] = Math.max(0, Math.min(CAP, v * dk))
+      const v = (blur + sh * (c - blur) * (c < 1 ? c : 1)) * dk
+      dst[y1 + x] = v < 0 ? 0 : v > CAP ? CAP : v
     }
   }
-  trail.set(tmp)
+  trail = dst; tmp = src
 }
 
-function hsl(h, s, l) {
-  const k = (n) => (n + h / 30) % 12
-  const a = s * Math.min(l, 1 - l)
-  const f = (n) => Math.round((l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))) * 255)
-  return [f(0), f(8), f(4)]
-}
-const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+// ---- WebGL2 display: colour → bloom blur → upscale + composite → oats ------
+
+const VERT = `#version 300 es
+in vec2 p;
+out vec2 vUv;
+void main() { vUv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }`
+
+// The colouring, exactly as the old per-pixel JS loop did it, at grid size.
+const FRAG_COLOR = `#version 300 es
+precision highp float;
+uniform sampler2D u_trail;
+uniform float u_tint, u_glis;
+out vec4 o;
 // The dark, faintly warm agar the plasmodium grows on (as in the macro shots):
 // near-black so the plasmodium reads as glowing gold veins, greenish at the fine
 // foraging mesh and paling to a wet cream sheen along the thick transport tubes.
-const DISH = [10, 13, 9]
+const vec3 DISH = vec3(10.0, 13.0, 9.0) / 255.0;
+vec3 hsl(float h, float s, float l) {
+  vec3 k = mod(vec3(0.0, 8.0, 4.0) + h / 30.0, 12.0);
+  float a = s * min(l, 1.0 - l);
+  return l - a * max(vec3(-1.0), min(k - 3.0, min(9.0 - k, vec3(1.0))));
+}
+void main() {
+  // the grid is stored top row first; flip so the canvas shows it upright
+  ivec2 sz = textureSize(u_trail, 0);
+  ivec2 ip = ivec2(int(gl_FragCoord.x), sz.y - 1 - int(gl_FragCoord.y));
+  float v = min(1.0, texelFetch(u_trail, ip, 0).r * 0.26);
+  if (v < 0.006) { o = vec4(DISH, 1.0); return; }
+  // Colour by vein weight: the faint frontier mesh runs green (~95°), thick
+  // trunks swing to gold (~46°). Lightness climbs with weight; a steep core
+  // term paints the wet, near-white sheen down the middle of the biggest tubes
+  // only, so fine twigs stay dim and dark and the hierarchy reads.
+  float mixv = smoothstep(0.1, 0.7, v);
+  float hDeg = (88.0 - 44.0 * mixv) + u_tint;
+  float sat = 0.98 - 0.34 * v;
+  float light = 0.06 + 0.5 * pow(v, 0.7);
+  vec3 c = hsl(hDeg, sat, light);
+  float gloss = pow(v, 5.0) * u_glis;
+  c += (vec3(252.0, 247.0, 205.0) / 255.0 - c) * gloss;
+  // frontier mesh stays translucent over the agar; trunks go opaque
+  float a = min(1.0, 0.1 + v * 2.6);
+  o = vec4(mix(DISH, c, a), 1.0);
+}`
+
+// Separable Gaussian (the bloom's blur(σ) from the old canvas filter), at grid size.
+const FRAG_BLUR = `#version 300 es
+precision highp float;
+uniform sampler2D u_src;
+uniform vec2 u_dir;   // one texel along the blur axis
+uniform float u_sigma;
+in vec2 vUv;
+out vec4 o;
+void main() {
+  int r = int(min(ceil(u_sigma * 3.0), 24.0));
+  float k = -0.5 / (u_sigma * u_sigma);
+  vec3 acc = texture(u_src, vUv).rgb;
+  float wsum = 1.0;
+  for (int i = 1; i <= 24; i++) {
+    if (i > r) break;
+    float w = exp(float(i * i) * k);
+    acc += w * (texture(u_src, vUv + u_dir * float(i)).rgb + texture(u_src, vUv - u_dir * float(i)).rgb);
+    wsum += 2.0 * w;
+  }
+  o = vec4(acc / wsum, 1.0);
+}`
+
+// Upscale (bilinear, like drawImage with smoothing) + additive bloom ('lighter').
+const FRAG_OUT = `#version 300 es
+precision highp float;
+uniform sampler2D u_col, u_glow;
+uniform float u_bloom;
+in vec2 vUv;
+out vec4 o;
+void main() {
+  vec3 c = texture(u_col, vUv).rgb;
+  if (u_bloom > 0.001) c += u_bloom * texture(u_glow, vUv).rgb;
+  o = vec4(min(c, vec3(1.0)), 1.0);
+}`
+
+// An oat sprite quad: unit corners → rotated, scaled, placed in canvas pixels.
+const VERT_OAT = `#version 300 es
+in vec2 p;
+uniform vec2 u_center, u_canvas;
+uniform float u_half, u_ang;
+out vec2 vUv;
+void main() {
+  vUv = p * 0.5 + 0.5;
+  float c = cos(u_ang), s = sin(u_ang);
+  vec2 q = p * u_half;
+  vec2 px = u_center + vec2(q.x * c - q.y * s, q.x * s + q.y * c);
+  gl_Position = vec4(px / u_canvas * 2.0 - 1.0, 0.0, 1.0) * vec4(1.0, -1.0, 1.0, 1.0);
+}`
+const FRAG_OAT = `#version 300 es
+precision highp float;
+uniform sampler2D u_tex;
+uniform float u_alpha;
+in vec2 vUv;
+out vec4 o;
+void main() { o = texture(u_tex, vUv) * u_alpha; }`
+
+function compile(type, src) {
+  const sh = gl.createShader(type)
+  gl.shaderSource(sh, src)
+  gl.compileShader(sh)
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh))
+  return sh
+}
+function program(vs, fs) {
+  const p = gl.createProgram()
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs))
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs))
+  gl.bindAttribLocation(p, 0, 'p')
+  gl.linkProgram(p)
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p))
+  const u = {}
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS)
+  for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(p, i).name; u[name] = gl.getUniformLocation(p, name) }
+  return { p, u }
+}
+const progColor = program(VERT, FRAG_COLOR)
+const progBlur = program(VERT, FRAG_BLUR)
+const progOut = program(VERT, FRAG_OUT)
+const progOat = program(VERT_OAT, FRAG_OAT)
+
+const quad = gl.createBuffer()
+gl.bindBuffer(gl.ARRAY_BUFFER, quad)
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
+gl.enableVertexAttribArray(0)
+gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0)
+
+function makeTex(filter) {
+  const t = gl.createTexture()
+  gl.bindTexture(gl.TEXTURE_2D, t)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter === gl.LINEAR_MIPMAP_LINEAR ? gl.LINEAR : filter)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  return t
+}
+const trailTex = makeTex(gl.NEAREST)
+// colour, half-blurred, blurred — RGBA8 render targets at grid size
+const targets = [0, 1, 2].map(() => ({ tex: makeTex(gl.LINEAR), fb: gl.createFramebuffer() }))
+const oatTex = makeTex(gl.LINEAR_MIPMAP_LINEAR)
+gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, oatSprite)
+gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
+gl.generateMipmap(gl.TEXTURE_2D)
+
+function buildTargets() {
+  gl.bindTexture(gl.TEXTURE_2D, trailTex)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, W, H, 0, gl.RED, gl.FLOAT, null)
+  for (const t of targets) {
+    gl.bindTexture(gl.TEXTURE_2D, t.tex)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb)
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.tex, 0)
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+}
+
+function pass(target, prog) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fb : null)
+  if (target) gl.viewport(0, 0, W, H)
+  else gl.viewport(0, 0, canvas.width, canvas.height)
+  gl.useProgram(prog.p)
+}
+function bindTex(unit, tex) {
+  gl.activeTexture(gl.TEXTURE0 + unit)
+  gl.bindTexture(gl.TEXTURE_2D, tex)
+}
+
 function render() {
-  const tint = (params.hue - 0.5) * 40 // <0 warmer/gold · >0 cooler/green
-  const glis = params.glisten
-  const d = img.data
-  for (let i = 0; i < W * H; i++) {
-    const v = Math.min(1, trail[i] * 0.26)
-    const j = i * 4
-    if (v < 0.006) { d[j] = DISH[0]; d[j + 1] = DISH[1]; d[j + 2] = DISH[2]; d[j + 3] = 255; continue }
-    // Colour by vein weight: the faint frontier mesh runs green (~95°), thick
-    // trunks swing to gold (~46°). Lightness climbs with weight; a steep core
-    // term paints the wet, near-white sheen down the middle of the biggest tubes
-    // only, so fine twigs stay dim and dark and the hierarchy reads.
-    const mix = smooth(0.1, 0.7, v)
-    const hDeg = (88 - 44 * mix) + tint
-    const sat = 0.98 - 0.34 * v
-    const light = 0.06 + 0.5 * Math.pow(v, 0.7)
-    let [r, g, b] = hsl(hDeg, sat, light)
-    const gloss = Math.pow(v, 5) * glis
-    r += (252 - r) * gloss; g += (247 - g) * gloss; b += (205 - b) * gloss
-    // frontier mesh stays translucent over the agar; trunks go opaque
-    const a = Math.min(1, 0.1 + v * 2.6)
-    d[j] = Math.round(DISH[0] * (1 - a) + r * a)
-    d[j + 1] = Math.round(DISH[1] * (1 - a) + g * a)
-    d[j + 2] = Math.round(DISH[2] * (1 - a) + b * a)
-    d[j + 3] = 255
-  }
-  sctx.putImageData(img, 0, 0)
-  ctx.imageSmoothingEnabled = true
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.drawImage(sim, 0, 0, canvas.width, canvas.height)
+  gl.disable(gl.BLEND)
+  bindTex(0, trailTex)
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4)
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, W, H, gl.RED, gl.FLOAT, trail)
+  const [col, half, glow] = targets
+  pass(col, progColor)
+  gl.uniform1i(progColor.u.u_trail, 0)
+  gl.uniform1f(progColor.u.u_tint, (params.hue - 0.5) * 40) // <0 warmer/gold · >0 cooler/green
+  gl.uniform1f(progColor.u.u_glis, params.glisten)
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
   // Bloom: a blurred, additive re-draw so the bright veins bleed a soft glow
-  // into the agar — the luminous wet look of a lit plasmodium.
-  if (params.bloom > 0.001) {
-    ctx.save()
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.globalAlpha = params.bloom
-    try { ctx.filter = `blur(${Math.max(2, Math.max(canvas.width, canvas.height) * 0.004)}px)` } catch { /* older browsers: plain additive */ }
-    ctx.drawImage(sim, 0, 0, canvas.width, canvas.height)
-    ctx.filter = 'none'
-    ctx.restore()
+  // into the agar — the luminous wet look of a lit plasmodium. Same σ as the
+  // old canvas blur() (in canvas px), converted to grid texels.
+  const bloom = params.bloom
+  if (bloom > 0.001) {
+    const sigma = Math.max(0.5, Math.max(2, Math.max(canvas.width, canvas.height) * 0.004) * W / canvas.width)
+    pass(half, progBlur)
+    bindTex(0, col.tex)
+    gl.uniform1i(progBlur.u.u_src, 0)
+    gl.uniform1f(progBlur.u.u_sigma, sigma)
+    gl.uniform2f(progBlur.u.u_dir, 1 / W, 0)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+    pass(glow, progBlur)
+    bindTex(0, half.tex)
+    gl.uniform2f(progBlur.u.u_dir, 0, 1 / H)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
   }
+  pass(null, progOut)
+  bindTex(0, col.tex)
+  bindTex(1, glow.tex)
+  gl.uniform1i(progOut.u.u_col, 0)
+  gl.uniform1i(progOut.u.u_glow, 1)
+  gl.uniform1f(progOut.u.u_bloom, bloom)
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
   // the food: a single oat flake at each drop point, being eaten over time
-  const kx = canvas.width / W, ky = canvas.height / H
-  const oatR = Math.min(canvas.width, canvas.height) * 0.03
-  for (const f of foods) {
-    const life = Math.max(0, 1 - (performance.now() - f.born) / 14000)
-    if (life <= 0) continue
-    drawOat(ctx, f.x * kx, f.y * ky, oatR, f.ang ?? 0, life)
+  if (foods.length) {
+    const kx = canvas.width / W, ky = canvas.height / H
+    const oatR = Math.min(canvas.width, canvas.height) * 0.03
+    gl.enable(gl.BLEND)
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+    gl.useProgram(progOat.p)
+    bindTex(0, oatTex)
+    gl.uniform1i(progOat.u.u_tex, 0)
+    gl.uniform2f(progOat.u.u_canvas, canvas.width, canvas.height)
+    gl.uniform1f(progOat.u.u_alpha, 1)
+    const now = performance.now()
+    for (const f of foods) {
+      const life = Math.max(0, 1 - (now - f.born) / 14000)
+      if (life <= 0) continue
+      const scale = (oatR * (0.7 + life * 0.3)) / OAT_REF
+      gl.uniform2f(progOat.u.u_center, f.x * kx, f.y * ky)
+      gl.uniform1f(progOat.u.u_half, OAT_HALF * scale)
+      gl.uniform1f(progOat.u.u_ang, f.ang ?? 0)
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+    }
+    gl.disable(gl.BLEND)
   }
 }
 

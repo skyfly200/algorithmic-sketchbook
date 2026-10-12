@@ -102,8 +102,7 @@ Read-through of all 181 sketches plus a headless run of each with every param at
 min / max / each option (no console or shader errors anywhere). Clear bugs were fixed
 in the same branch; these were left because they need a design call or a bigger change.
 
-- **Dead or misleading options.** blur: "Fast" and "Smooth" render the same as Native
-  (the shader only branches on Bokeh). edge-detect "Direction hue" is one
+- **Dead or misleading options.** edge-detect "Direction hue" is one
   flat colour with the Laplacian kernel. light-show: the 'leaves' gobo is the breakup gobo.
 - **Sliders that only apply on resize / respray.** luminol (pattern, density), egg-speckle
   (tint shift; "Renew rate" never clears the speck layer), worm-bin (worm length), star-field
@@ -116,9 +115,7 @@ in the same branch; these were left because they need a design call or a bigger 
   shades the ground (it doesn't displace the grid); bright-waves-logo clip radii exceed the art square.
 - **8-bit trail residue.** Low-alpha black fades never reach black: laser-traces (Afterglow
   >= 0.96), flow-field, matrix-rain, neon-fluid, oscilloscope. Needs a shared fade helper.
-- **Perf (CPU per-pixel or per-item gradients every frame).** mud-cracks, dither (three
-  Float32Arrays + getImageData per frame), cymatics (up to 60k fillRects), ferrofluid,
-  slime-mold / sand-dunes `hsl()` per pixel, cable-knit, fibonacci-spiral and embers (a radial
+- **Perf (CPU per-pixel or per-item gradients every frame).** fibonacci-spiral and embers (a radial
   gradient per item), rubens-tube Table mode, fog and laser-traces (full-res `ctx.filter`
   blur), kuwahara (fixed 17x17 loop at any radius), reishi-spores (static growths redrawn),
   self-similar-fractals (up to 531k fills on a zoom step, no culling).
