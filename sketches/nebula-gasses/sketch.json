@@ -2,6 +2,6 @@
   "title": "Nebula Gasses",
   "description": "Billowing clouds of interstellar gas bloom over a live source — layered drifting noise tinted across a nebula palette and stacked additively so overlaps glow, with twinkling stars. Density, hue, drift, glow and stars are all mappable.",
   "tags": ["filter", "space", "atmosphere", "camera", "audio-reactive"],
-  "tech": ["canvas2d"],
+  "tech": ["webgl", "shader"],
   "created": "2026-07-21"
 }
