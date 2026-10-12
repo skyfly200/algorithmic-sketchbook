@@ -18,7 +18,7 @@ const params = rt.params({
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })
 // beats can nudge the rate — a kick can drop it to a chunky stutter
-rt.mapInput('audio.pulse', 'fps', 0)
+rt.mapInput('audio.pulse', 'fps', -0.2) // a kick drops the rate (amount 0 did nothing)
 
 const src = createSource()
 const held = document.createElement('canvas') // the currently-shown sampled frame

@@ -23,7 +23,7 @@ const params = rt.params({
   pattern: { value: 0.8, min: 0, max: 1.4, step: 0.02, label: 'Pattern strength' },
   hue: { value: 0, min: -60, max: 60, step: 1, label: 'Hue shift' },
 })
-rt.mapInput('audio.mid', 'shimmer', 1.5)
+rt.mapInput('audio.mid', 'shimmer', 0.4) // a fraction of the range (1.5 pinned it at max)
 rt.mapInput('audio.pulse', 'iridescence', 0.5)
 
 const canvas = document.getElementById('canvas')
@@ -216,7 +216,7 @@ function render(t) {
   ctx.drawImage(baseC, 0, 0)
   // the travelling glint: a small alpha field, evaluated per frame, reveals the
   // baked bright-edge layer
-  const sh = params.shimmer * t
+  const sh = rt.phase('shimmer', params.shimmer)
   const irid = params.iridescence
   const pulse = rt.beat.state.pulse
   let any = false

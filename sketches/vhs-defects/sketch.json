@@ -8,8 +8,6 @@
     "analog",
     "audio-reactive"
   ],
-  "tech": [
-    "canvas2d"
-  ],
+  "tech": ["webgl", "glsl"],
   "created": "2026-07-17"
 }

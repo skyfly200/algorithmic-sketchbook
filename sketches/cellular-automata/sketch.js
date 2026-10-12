@@ -44,7 +44,9 @@ function seed() {
   cur = new Uint8Array(cols * rows)
   next = new Uint8Array(cols * rows)
   if (mode === 'rule') {
-    cur[cols >> 1] = 1 // single seed cell, top row
+    // single seed cell on the bottom row: step() scrolls up and grows the
+    // next generation from the bottom row, so a top-row seed would be lost
+    cur[(rows - 1) * cols + (cols >> 1)] = 1
   } else if (mode === 'cyclic') {
     for (let i = 0; i < cur.length; i++) cur[i] = (rt.rng() * nStates) | 0
   } else {
@@ -52,8 +54,10 @@ function seed() {
   }
 }
 
+let builtCell = 0
 function rebuild() {
-  const cs = Math.round(params.cell) * rt.pixelRatio
+  builtCell = Math.round(params.cell)
+  const cs = builtCell * rt.pixelRatio
   cols = Math.max(8, Math.floor(W / cs))
   rows = Math.max(8, Math.floor(H / cs))
   grid.width = cols
@@ -152,7 +156,8 @@ function frame(now) {
   rt.tick(now)
   const dt = lastNow ? Math.min(0.1, (now - lastNow) / 1000) : 0.016
   lastNow = now
-  if (params.mode !== mode || Math.round(params.rule) !== ruleN || (params.mode === 'cyclic' && Math.round(params.states) !== nStates)) seed()
+  if (Math.round(params.cell) !== builtCell) rebuild()
+  else if (params.mode !== mode || Math.round(params.rule) !== ruleN || (params.mode === 'cyclic' && Math.round(params.states) !== nStates)) seed()
 
   acc += dt * params.rate
   let n = Math.min(8, Math.floor(acc))

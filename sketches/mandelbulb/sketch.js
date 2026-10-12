@@ -151,8 +151,8 @@ const uRes = U('u_res'), uPower = U('u_power'), uIters = U('u_iters'), uHue = U(
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l] }
-function cameraAt(t) {
-  const ct = t * params.spin
+function cameraAt() {
+  const ct = rt.phase('spin', params.spin) // spin is modulated: integrate it
   const ro = [Math.sin(ct) * params.dist, 0.3 * params.dist, Math.cos(ct) * params.dist]
   const ww = norm([-ro[0], -ro[1], -ro[2]])
   const uu = norm(cross(ww, [0, 1, 0]))
@@ -177,7 +177,7 @@ function resize() {
 const taauOpts = new URLSearchParams(location.search) // ?alpha=0.15 &history=0 &kernel=3 (tuning / comparison)
 function frame(now) {
   rt.tick(now)
-  const cam = cameraAt(now * 0.001)
+  const cam = cameraAt()
   const scale = RENDER_SCALE[params.render]
   if (scale && !taauTried) { taauTried = true; taau = createTAAU(gl); if (taau) resize() }
   gl.useProgram(program)

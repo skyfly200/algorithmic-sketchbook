@@ -81,7 +81,7 @@ function frame(now) {
   const on = boost > 0.01
   gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
     // radii were set at quarter resolution in the 2D version, so scale them up
-    const r1 = (2 + params.radius * 8) * 4
+    const r1 = (2 + params.radius * 8) * 4 * rt.pixelRatio // device px, like r2
     const r2 = params.radius * 24 * rt.pixelRatio
     u.f('u_dim', params.dim)
     u.f('u_crush', 1 + params.threshold * 3)

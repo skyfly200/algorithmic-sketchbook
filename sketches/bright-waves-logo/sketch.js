@@ -123,7 +123,7 @@ function frame(now) {
   ctx.save()
   ctx.globalAlpha = params.opacity
   ctx.translate(w / 2, h / 2)
-  ctx.rotate(((now * 0.001 * params.spin) % 360) * (Math.PI / 180))
+  ctx.rotate((rt.phase('spin', params.spin) % 360) * (Math.PI / 180))
   ctx.scale(s, s)
   ctx.translate(-CX, -CX)
 

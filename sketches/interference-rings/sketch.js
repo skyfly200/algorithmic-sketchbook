@@ -55,7 +55,7 @@ void main() {
       phase += dot(d, d) * u_freq * u_ratio;
     }
   }
-  phase -= u_time * u_drift;
+  phase -= u_drift; // ∫ drift dt (set in JS)
 
   float rings = sin(phase);
   // Anti-alias the (very high frequency) rings so they resolve to gray far out
@@ -108,7 +108,7 @@ function frame(now) {
   gl.uniform1f(u.u_ratio, params.ratio)
   gl.uniform1f(u.u_spread, params.spread)
   gl.uniform1f(u.u_zoom, params.zoom)
-  gl.uniform1f(u.u_drift, params.drift)
+  gl.uniform1f(u.u_drift, rt.phase('drift', params.drift)) // integrated: drift is modulated
   gl.uniform1f(u.u_binary, params.binary ? 1 : 0)
   gl.uniform1f(u.u_soft, params.softness)
   gl.uniform1f(u.u_hue, params.hue)

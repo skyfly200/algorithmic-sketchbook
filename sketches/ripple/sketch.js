@@ -56,6 +56,7 @@ uniform vec2 u_c;
 uniform float u_freq;
 uniform float u_amp;
 uniform float u_speed;
+uniform float u_speedT; // ∫ speed dt (set in JS): dragging Speed doesn't jump
 uniform float u_decay;
 uniform float u_width;
 uniform float u_shade;
@@ -65,12 +66,12 @@ void main() {
   vec2 p = (v_uv - u_c) * asp;
   float r = length(p);
   vec2 dir = p / (r + 1e-4);
-  float phase = r * u_freq * 6.2832 - u_time * u_speed;
+  float phase = r * u_freq * 6.2832 - u_speedT;
   float env;
   if (u_mode == 0) {
     env = exp(-r * u_decay);
   } else {
-    float R = fract(u_time * u_speed * 0.08) * 1.6;
+    float R = fract(u_speedT * 0.08) * 1.6;
     float x = (r - R) / u_width;
     env = exp(-x * x) * (1.0 - R / 1.7);
   }
@@ -94,6 +95,7 @@ function frame(now) {
     u.f('u_freq', params.frequency)
     u.f('u_amp', params.amplitude * kick)
     u.f('u_speed', params.speed)
+    u.f('u_speedT', rt.phase('speed', params.speed))
     u.f('u_decay', params.decay)
     u.f('u_width', params.width)
     u.f('u_shade', params.shade)

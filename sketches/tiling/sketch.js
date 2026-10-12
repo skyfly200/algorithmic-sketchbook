@@ -33,16 +33,27 @@ function resize() {
   tw = Math.max(2, Math.min(360, Math.round(W / Math.max(1, params.cols))))
   th = Math.max(2, Math.min(360, Math.round(H / Math.max(1, params.rows))))
   for (const h of hist) { h.width = tw; h.height = th }
+  live.width = tw; live.height = th
 }
-function pushFrame(t) {
+// The live picture is redrawn every frame; the history keeps HIST snapshots of
+// it spaced so they span the furthest tile's delay (a frame-per-frame ring
+// only covered ~0.8 s, so with the defaults half the tiles showed one frame).
+const live = document.createElement('canvas')
+const lctx = live.getContext('2d')
+let lastPush = -Infinity, histStep = 0
+function pushFrame(t, span) {
+  src.draw(lctx, tw, th, { mirror: params.mirror })
+  histStep = Math.max(1 / 60, span / (HIST - 1))
+  if (t - lastPush < histStep) return
+  lastPush = t
   let c = hist.length >= HIST ? hist.shift() : Object.assign(document.createElement('canvas'), { width: tw, height: th })
   if (c.width !== tw || c.height !== th) { c.width = tw; c.height = th }
-  const cx = c.getContext('2d')
-  src.draw(cx, tw, th, { mirror: params.mirror })
+  c.getContext('2d').drawImage(live, 0, 0)
   c._t = t
   hist.push(c)
 }
-function frameAt(t) {
+function frameAt(t, now) {
+  if (now - t < histStep * 0.5) return live
   // nearest frame in history to time t
   let best = hist[hist.length - 1], bd = Infinity
   for (const h of hist) { const dd = Math.abs(h._t - t); if (dd < bd) { bd = dd; best = h } }
@@ -55,8 +66,13 @@ function frame(now) {
   src.update(t)
   if (!src.ready) { requestAnimationFrame(frame); return }
   const cols = Math.round(params.cols), rows = Math.round(params.rows)
-  if (tw > W / cols + 2 || th > H / rows + 2) resize()
-  pushFrame(t)
+  // tile buffers follow the grid both ways (they used to only shrink)
+  const wantW = Math.max(2, Math.min(360, Math.round(W / cols)))
+  const wantH = Math.max(2, Math.min(360, Math.round(H / rows)))
+  if (Math.abs(tw - wantW) > 2 || Math.abs(th - wantH) > 2) resize()
+  const cxi0 = (cols - 1) / 2, cyi0 = (rows - 1) / 2
+  const maxRank = params.radial ? Math.hypot(cxi0, cyi0) : cols * rows - 1
+  pushFrame(t, maxRank * params.timeStep)
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H)
   const cw = W / cols, ch = H / rows
@@ -64,7 +80,7 @@ function frame(now) {
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const rank = params.radial ? Math.hypot(c - cxi, r - cyi) : (r * cols + c)
-      const past = frameAt(t - rank * params.timeStep)
+      const past = frameAt(t - rank * params.timeStep, t)
       const hue = rank * params.hueStep
       ctx.save()
       const x0 = c * cw, y0 = r * ch

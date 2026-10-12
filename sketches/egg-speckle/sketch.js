@@ -20,7 +20,7 @@ const params = rt.params({
   hue: { value: 0, min: -60, max: 60, step: 1, label: 'Tint shift' },
 })
 // Music: beats fling a burst of speckles, loudness drives the density.
-rt.mapInput('audio.volume', 'density', 1.2)
+rt.mapInput('audio.volume', 'density', 0.3) // a fraction of the range (1.2 pinned it at max)
 
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')

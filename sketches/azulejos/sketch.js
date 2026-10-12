@@ -26,7 +26,7 @@ const VERT = `#version 300 es
 in vec2 position; void main(){ gl_Position = vec4(position,0.,1.); }`
 const FRAG = `#version 300 es
 precision highp float;
-uniform vec2 u_res; uniform float u_time, u_tiles, u_petals, u_orn, u_grout, u_sheen, u_spin;
+uniform vec2 u_res; uniform float u_time, u_tiles, u_petals, u_orn, u_grout, u_sheen, u_spin, u_spinT; // u_spinT = ∫ spin dt
 uniform int u_pal;
 out vec4 o;
 
@@ -71,7 +71,7 @@ void main(){
   vec2 cell = fract(p) - 0.5;
   vec2 id = floor(p);
   float checker = mod(id.x + id.y, 2.0);            // alternate motif drift
-  float phase = u_time*u_spin*(checker>0.5? 1.0 : -1.0);
+  float phase = u_spinT*(checker>0.5? 1.0 : -1.0);
   float m = motif(cell, phase);
 
   // grout: darker groove + bevel between tiles
@@ -113,11 +113,11 @@ const prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT
 const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
 const pos = gl.getAttribLocation(prog, 'position'); gl.enableVertexAttribArray(pos); gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0)
 const U = (n) => gl.getUniformLocation(prog, n)
-const u = { res: U('u_res'), time: U('u_time'), tiles: U('u_tiles'), petals: U('u_petals'), orn: U('u_orn'), grout: U('u_grout'), sheen: U('u_sheen'), spin: U('u_spin'), pal: U('u_pal') }
+const u = { res: U('u_res'), time: U('u_time'), tiles: U('u_tiles'), petals: U('u_petals'), orn: U('u_orn'), grout: U('u_grout'), sheen: U('u_sheen'), spin: U('u_spin'), spinT: U('u_spinT'), pal: U('u_pal') }
 function resize() { canvas.width = window.innerWidth * rt.pixelRatio; canvas.height = window.innerHeight * rt.pixelRatio; gl.viewport(0, 0, canvas.width, canvas.height) }
 function frame(now) {
   rt.tick(now)
-  gl.uniform2f(u.res, canvas.width, canvas.height); gl.uniform1f(u.time, now * 0.001)
+  gl.uniform2f(u.res, canvas.width, canvas.height); gl.uniform1f(u.time, now * 0.001); gl.uniform1f(u.spinT, rt.phase('spin', params.spin))
   gl.uniform1f(u.tiles, Math.round(params.tiles)); gl.uniform1f(u.petals, Math.round(params.petals))
   gl.uniform1f(u.orn, params.ornament); gl.uniform1f(u.grout, params.grout); gl.uniform1f(u.sheen, params.sheen); gl.uniform1f(u.spin, params.spin)
   gl.uniform1i(u.pal, Math.max(0, PALS.indexOf(params.palette)))

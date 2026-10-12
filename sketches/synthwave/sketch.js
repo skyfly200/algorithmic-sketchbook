@@ -26,6 +26,7 @@ in vec2 position; void main(){ gl_Position=vec4(position,0.,1.); }`
 const FRAG = `#version 300 es
 precision highp float;
 uniform vec2 u_res; uniform float u_time,u_seed,u_pulse;
+uniform float u_speedT; // ∫ speed dt (set in JS)
 uniform float u_speed,u_gridGlow,u_hills,u_sun,u_hueSky,u_hueGrid,u_scan;
 out vec4 o;
 vec3 hsl(float h,float s,float l){ vec3 r=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.); float c=(1.-abs(2.*l-1.))*s; return l+c*(r-.5); }
@@ -65,7 +66,7 @@ void main(){
     // ground plane: perspective grid
     float z=horizon/(horizon-p.y); // depth
     float wx=p.x*z*8.0;
-    float wz=z*6.0 - u_time*u_speed*4.0;
+    float wz=z*6.0 - u_speedT*4.0;
     float h=hill(wx,wz);
     // grid lines
     float gx=abs(fract(wx*0.5)-0.5);
@@ -84,12 +85,12 @@ function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShade
 const prog=gl.createProgram();gl.attachShader(prog,sh(gl.VERTEX_SHADER,VERT));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FRAG));gl.linkProgram(prog);gl.useProgram(prog)
 const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW)
 const loc=gl.getAttribLocation(prog,'position');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0)
-const U={};for(const n of ['u_res','u_time','u_seed','u_pulse','u_speed','u_gridGlow','u_hills','u_sun','u_hueSky','u_hueGrid','u_scan'])U[n]=gl.getUniformLocation(prog,n)
+const U={};for(const n of ['u_res','u_time','u_seed','u_pulse','u_speed','u_speedT','u_gridGlow','u_hills','u_sun','u_hueSky','u_hueGrid','u_scan'])U[n]=gl.getUniformLocation(prog,n)
 const seed=rt.random(0,100)
 function resize(){canvas.width=window.innerWidth*rt.pixelRatio;canvas.height=window.innerHeight*rt.pixelRatio;gl.viewport(0,0,canvas.width,canvas.height)}
 function frame(now){rt.tick(now)
   gl.uniform2f(U.u_res,canvas.width,canvas.height);gl.uniform1f(U.u_time,now*0.001);gl.uniform1f(U.u_seed,seed);gl.uniform1f(U.u_pulse,rt.beat.state.pulse)
-  gl.uniform1f(U.u_speed,params.speed);gl.uniform1f(U.u_gridGlow,params.gridGlow);gl.uniform1f(U.u_hills,params.hills);gl.uniform1f(U.u_sun,params.sun)
+  gl.uniform1f(U.u_speed,params.speed);gl.uniform1f(U.u_speedT,rt.phase('speed',params.speed));gl.uniform1f(U.u_gridGlow,params.gridGlow);gl.uniform1f(U.u_hills,params.hills);gl.uniform1f(U.u_sun,params.sun)
   gl.uniform1f(U.u_hueSky,params.hueSky);gl.uniform1f(U.u_hueGrid,params.hueGrid);gl.uniform1f(U.u_scan,params.scan)
   gl.drawArrays(gl.TRIANGLES,0,3);requestAnimationFrame(frame)}
 window.addEventListener('resize',resize);resize();requestAnimationFrame(frame)

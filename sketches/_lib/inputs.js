@@ -100,7 +100,7 @@ export function createLeapInput() {
 }
 
 export function createArtnetInput() {
-  const state = { ch: new Float32Array(512) }
+  const state = { ch: new Float32Array(512), at: -Infinity } // at: last frame (performance.now)
   let started = false
   function start() {
     if (started) return
@@ -118,6 +118,7 @@ export function createArtnetInput() {
       try {
         const { data } = JSON.parse(e.data)
         for (let i = 0; i < data.length && i < 512; i++) state.ch[i] = data[i] / 255
+        state.at = performance.now()
       } catch {
         /* malformed frame */
       }

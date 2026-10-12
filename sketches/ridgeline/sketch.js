@@ -177,7 +177,7 @@ function setCommon(prog, t, lines, cols) {
   set1('u_peak', dy * 3.4 * params.amplitude) // how far the tallest spike rises
   set1('u_inv2s2', 1 / (2 * sigma * sigma))
   set1('u_freq', 2.5 + params.detail * 15)
-  set1('u_scroll', t * params.speed)
+  set1('u_scroll', rt.phase('scroll', params.speed))
   set1('u_wander', params.wander)
   set1('u_detail', params.detail)
   set1('u_seed', seedOff)

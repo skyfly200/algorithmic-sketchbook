@@ -265,7 +265,7 @@ function frame(now) {
   bg.addColorStop(0, '#15101d'); bg.addColorStop(0.5, '#0b0812'); bg.addColorStop(1, '#050308')
   ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H)
 
-  const gSpin = t * params.spin * 0.6
+  const gSpin = rt.phase('spin', params.spin * 0.6)
   const gs = Math.sin(gSpin), gc = Math.cos(gSpin)
   const tilt = -0.34, ts = Math.sin(tilt), tc = Math.cos(tilt)
   const focal = 9

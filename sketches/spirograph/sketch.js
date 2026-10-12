@@ -46,7 +46,8 @@ let theta = 0
 let period = 0
 let prev = null
 let lastR = 0
-let lastr = 0
+let lastr = 0 // gear in use (steps on after each closed rosette)
+let setGear = 0 // the Gear param it was restarted from, for change detection
 let px = 0 // pen offset baked at restart
 let pxEff = 0 // effective pen offset, slowly drifting so the figure evolves
 let penPhase = 0 // accumulates the evolve drift
@@ -54,7 +55,9 @@ let hueBase = 0
 
 function restart() {
   lastR = Math.round(params.ring)
-  lastr = Math.max(1, Math.round(params.gear))
+  setGear = Math.round(params.gear)
+  // the gear has to fit inside the ring (r < R), or the curve collapses
+  lastr = Math.max(1, Math.min(setGear, lastR - 1))
   px = params.pen
   pxEff = px
   theta = 0
@@ -82,7 +85,7 @@ function frame(now) {
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
   lastNow = now
 
-  if (Math.round(params.ring) !== lastR || Math.round(params.gear) !== lastr || params.pen !== px) restart()
+  if (Math.round(params.ring) !== lastR || Math.round(params.gear) !== setGear || params.pen !== px) restart()
 
   // Fade the accumulation buffer a touch so old rosettes dim over time.
   if (params.fade > 0) {

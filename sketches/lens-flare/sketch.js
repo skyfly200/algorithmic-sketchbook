@@ -58,6 +58,10 @@ window.addEventListener('pointermove', (e) => {
   }
 })
 
+// Double-click hands the light back to brightest-point tracking.
+canvas.addEventListener('dblclick', () => { manual.active = false })
+let lastAuto = params.auto
+
 function findLight() {
   try {
     src.draw(tctx, tiny.width, tiny.height, { mirror: params.mirror })
@@ -125,6 +129,9 @@ function frame(now) {
 
   // Where's the light?
   let target = null
+  // switching tracking back on also drops a pinned (clicked) light
+  if (params.auto && !lastAuto) manual.active = false
+  lastAuto = params.auto
   if (!params.auto || manual.active) {
     target = { x: manual.x, y: manual.y, lum: 1 }
   } else {

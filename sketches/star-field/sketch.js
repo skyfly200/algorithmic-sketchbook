@@ -96,7 +96,7 @@ function frame(now) {
   const fov = Math.min(W, H) * 0.5 / params.spread
   // depth speed (units of z per second): a slow drift, plus warp
   const vz = (params.speed + warp * 3) * 0.2
-  const rot = now * 0.001 * params.twist
+  const rot = rt.phase('twist', params.twist) // ∫ twist dt: dragging doesn't jump
   const cosR = Math.cos(rot), sinR = Math.sin(rot)
 
   ctx.globalCompositeOperation = 'lighter'

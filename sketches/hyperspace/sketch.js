@@ -198,7 +198,8 @@ function updateSpace(now) {
       rot(tmp, 1, 3, ayw)
       rot(tmp, 2, 3, azw)
       // 4D → 3D perspective: divide by distance along w.
-      const f = persp / (persp + tmp[3] + 3.4)
+      // (clamped: a vertex at or behind the w-camera would blow up or flip)
+      const f = persp / Math.max(1, persp + tmp[3] + 3.4)
       proj.push([tmp[0] * f * 1.6, tmp[1] * f * 1.6, tmp[2] * f * 1.6])
       glow.push(Math.max(0.05, Math.min(1.25, f * 1.15)))
     }

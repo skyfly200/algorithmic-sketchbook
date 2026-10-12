@@ -1,6 +1,6 @@
 {
   "title": "Oscilloscope",
-  "description": "A phosphor CRT scope tracing Lissajous XY figures, a scrolling waveform or a spiral, with glowing green persistence, a graticule and beam intensity that swells with the signal.",
+  "description": "A phosphor CRT scope tracing Lissajous XY figures, a scrolling waveform, a spiral or a 2D wave field, with glowing green persistence, a graticule and beam intensity that swells with the signal.",
   "tags": [
     "generative",
     "retro",

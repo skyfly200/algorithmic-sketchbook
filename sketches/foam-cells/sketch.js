@@ -247,7 +247,10 @@ function frame(now) {
   // Pop oversized bubbles; each pop scatters a few small ones.
   for (let i = bubbles.length - 1; i >= 0; i--) {
     const b = bubbles[i]
-    const popChance = params.popRate * dt * (b.r > maxR ? 6 : b.r / maxR * 0.4)
+    // oversized bubbles always burst eventually, even at Pop rate 0, or they'd
+    // grow until one fills the screen
+    const popChance = b.r > maxR * 1.3 ? Math.max(params.popRate, 0.2) * dt * 6
+      : params.popRate * dt * (b.r > maxR ? 6 : b.r / maxR * 0.4)
     if (Math.random() < popChance) {
       bubbles.splice(i, 1)
       const kids = 2 + Math.floor(Math.random() * 3)

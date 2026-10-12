@@ -43,6 +43,7 @@ const FRAG = `#version 300 es
 precision highp float;
 uniform vec2 u_res;
 uniform float u_time, u_r0, u_m1, u_a1, u_m2, u_a2, u_m3, u_a3, u_nodes, u_speed, u_spin, u_outline, u_hue, u_glow, u_mode;
+uniform float u_speedT, u_spinT; // ∫ speed dt, ∫ spin dt (set in JS)
 out vec4 outColor;
 const float PI = 3.14159265;
 
@@ -54,15 +55,15 @@ vec3 hsv(float h, float s, float v) {
 void main() {
   // aspect-correct, y-normalised coordinates centred on the frame
   vec2 p = (2.0 * gl_FragCoord.xy - u_res) / u_res.y;
-  float sp = u_spin * u_time;
+  float sp = u_spinT;
   p = mat2(cos(sp), -sin(sp), sin(sp), cos(sp)) * p;
   float r = length(p);
   float a = atan(p.y, p.x);
 
   // up to three standing-wave rim modes breathing at slightly different rates
-  float o1 = sin(u_speed * u_time);
-  float o2 = sin(u_speed * 1.37 * u_time + 1.7);
-  float o3 = sin(u_speed * 0.83 * u_time + 3.1);
+  float o1 = sin(u_speedT);
+  float o2 = sin(u_speedT * 1.37 + 1.7);
+  float o3 = sin(u_speedT * 0.83 + 3.1);
   float Rb = u_r0 + u_a1 * o1 * cos(u_m1 * a) + u_a2 * o2 * cos(u_m2 * a) + u_a3 * o3 * cos(u_m3 * a);
   Rb = max(0.03, Rb);
 
@@ -128,7 +129,7 @@ gl.enableVertexAttribArray(position)
 gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
 const u = {}
-for (const name of ['u_res', 'u_time', 'u_r0', 'u_m1', 'u_a1', 'u_m2', 'u_a2', 'u_m3', 'u_a3', 'u_nodes', 'u_speed', 'u_spin', 'u_outline', 'u_hue', 'u_glow', 'u_mode'])
+for (const name of ['u_res', 'u_time', 'u_r0', 'u_m1', 'u_a1', 'u_m2', 'u_a2', 'u_m3', 'u_a3', 'u_nodes', 'u_speed', 'u_spin', 'u_speedT', 'u_spinT', 'u_outline', 'u_hue', 'u_glow', 'u_mode'])
   u[name] = gl.getUniformLocation(program, name)
 
 function resize() {
@@ -151,6 +152,8 @@ function frame(now) {
   gl.uniform1f(u.u_nodes, params.radialNodes)
   gl.uniform1f(u.u_speed, params.speed)
   gl.uniform1f(u.u_spin, params.spin)
+  gl.uniform1f(u.u_speedT, rt.phase('speed', params.speed))
+  gl.uniform1f(u.u_spinT, rt.phase('spin', params.spin))
   gl.uniform1f(u.u_outline, params.outline)
   gl.uniform1f(u.u_hue, params.hue)
   gl.uniform1f(u.u_glow, params.glow)

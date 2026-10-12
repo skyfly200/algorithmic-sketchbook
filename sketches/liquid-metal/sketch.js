@@ -105,7 +105,7 @@ function frame(now) {
     u.v3('u_hi', ...hi)
     u.f('u_bands', params.bands)
     u.f('u_flow', params.flow)
-    u.f('u_ph', now * 0.001 * params.speed)
+    u.f('u_ph', rt.phase('speed', params.speed)) // ∫ speed dt: dragging doesn't jump
     u.f('u_spec', params.specular)
     u.f('u_con', params.contrast)
     u.v2('u_buf', Math.max(2, Math.round(gf.width * s)), Math.max(2, Math.round(gf.height * s)))

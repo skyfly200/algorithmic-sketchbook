@@ -83,6 +83,7 @@ void main() { gl_Position = vec4(position, 0.0, 1.0); }`
 const FRAG = `#version 300 es
 precision highp float;
 uniform vec2 u_res;
+uniform float u_flowT; // ∫ flow dt: flow is modulated, so a clock × flow product would jump
 uniform float u_time, u_mode, u_freq, u_warp, u_fork, u_curve, u_width, u_crisp, u_orient, u_flow, u_tex, u_inner;
 uniform vec3 u_coat, u_mark, u_mark2, u_belly;
 out vec4 outColor;
@@ -103,7 +104,7 @@ vec4 voro(vec2 x) {
   for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
     vec2 g = vec2(float(i), float(j));
     vec2 o = h22(n + g);
-    o = 0.5 + 0.5 * sin(u_time * 0.2 * u_flow + 6.2831853 * o);
+    o = 0.5 + 0.5 * sin(u_flowT * 0.2 + 6.2831853 * o);
     vec2 r = g + o - f;
     float d = dot(r, r);
     if (d < f1) { f2 = f1; f1 = d; mr = r; idc = n + g; }
@@ -125,9 +126,9 @@ void main() {
     // ---- STRIPES ----
     vec2 q = R * uvO;
     q.x += u_curve * (q.y * q.y - 0.3);
-    float wv1 = fbm(q * 2.5 + vec2(0.0, u_time * u_flow * 0.5));
+    float wv1 = fbm(q * 2.5 + vec2(0.0, u_flowT * 0.5));
     float ph = q.x * u_freq + (wv1 - 0.5) * u_warp * 5.0;
-    float disl = fbm(q * 1.7 + 20.0 + u_time * u_flow * 0.2);
+    float disl = fbm(q * 1.7 + 20.0 + u_flowT * 0.2);
     ph += 3.14159265 * u_fork * smoothstep(0.42, 0.58, disl);
     float wv = 0.5 + 0.5 * sin(ph);
     float e = u_crisp + fwidth(wv) * 1.2;
@@ -136,7 +137,7 @@ void main() {
   } else {
     // ---- CELL-BASED: spots / rosettes / giraffe ----
     vec2 cq = R * uvO * (u_freq * 0.16);
-    cq += (vec2(fbm(cq * 1.3 + u_time * 0.1 * u_flow), fbm(cq * 1.3 + 9.0)) - 0.5) * u_warp * 1.1;
+    cq += (vec2(fbm(cq * 1.3 + u_flowT * 0.1), fbm(cq * 1.3 + 9.0)) - 0.5) * u_warp * 1.1;
     vec4 vd = voro(cq);
     vec2 mr = vd.xy; float cr = vd.z, ed = vd.w;
     float d = length(mr);
@@ -205,7 +206,7 @@ gl.enableVertexAttribArray(position)
 gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
 const u = {}
-for (const name of ['u_res', 'u_time', 'u_mode', 'u_freq', 'u_warp', 'u_fork', 'u_curve', 'u_width', 'u_crisp', 'u_orient', 'u_flow', 'u_tex', 'u_inner', 'u_coat', 'u_mark', 'u_mark2', 'u_belly'])
+for (const name of ['u_res', 'u_time', 'u_flowT', 'u_mode', 'u_freq', 'u_warp', 'u_fork', 'u_curve', 'u_width', 'u_crisp', 'u_orient', 'u_flow', 'u_tex', 'u_inner', 'u_coat', 'u_mark', 'u_mark2', 'u_belly'])
   u[name] = gl.getUniformLocation(program, name)
 
 function hexRgb(h) {
@@ -234,6 +235,7 @@ function frame(now) {
   gl.uniform1f(u.u_crisp, params.crisp)
   gl.uniform1f(u.u_orient, params.orient)
   gl.uniform1f(u.u_flow, params.flow)
+  gl.uniform1f(u.u_flowT, rt.phase('flow', params.flow))
   gl.uniform1f(u.u_tex, params.texture)
   gl.uniform1f(u.u_inner, params.inner ? 1 : 0)
   gl.uniform3fv(u.u_coat, hexRgb(params.coat))

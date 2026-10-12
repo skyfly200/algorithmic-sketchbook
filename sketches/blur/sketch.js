@@ -2,7 +2,8 @@
 // motion blur, a radial zoom blur streaking out from a centre, and a spin blur
 // smearing around it. Motion/zoom/spin average many offset/scaled/rotated taps
 // of the picture; the centre is mappable so the zoom/spin origin can be driven
-// live. A fragment shader: the Gaussian and bokeh blurs read the source's mip
+// live. The Gaussian has four algorithms (native disc, fast downsample, smooth
+// mip pyramid, bokeh). A fragment shader: they all read the source's mip
 // chain, so a large radius costs the same as a small one, and the whole filter
 // can run inside a Patch filter chain.
 import { createRuntime } from '../_lib/runtime.js'
@@ -71,10 +72,48 @@ vec3 discBlur(float r, bool bokeh) {
   return acc / wsum;
 }
 
+// Fast: a dozen taps from a much smaller mip level (the picture downsampled about
+// r times), so it costs a third of Native and reads slightly softer and blockier.
+vec3 fastBlur(float r) {
+  vec2 px = 1.0 / u_res;
+  const int N = 12;
+  float lod = max(0.0, log2(r * 1.1));
+  vec3 acc = vec3(0.0);
+  for (int i = 0; i < N; i++) {
+    float f = (float(i) + 0.5) / float(N);
+    float a = float(i) * GOLDEN;
+    acc += textureLod(u_tex, v_uv + vec2(cos(a), sin(a)) * 1.2 * r * sqrt(f) * px, lod).rgb;
+  }
+  return acc / float(N);
+}
+
+// Smooth: a Kawase-style pyramid. Three neighbouring mip levels, each read with four
+// diagonal half-texel taps (a tent), blended with the middle level weighted most.
+// No disc of taps, so there is no ring pattern at any radius: the smoothest falloff.
+vec3 pyramidBlur(float r) {
+  vec2 px = 1.0 / u_res;
+  float L = max(1.0, log2(r) + 0.3);
+  vec3 acc = vec3(0.0);
+  float wsum = 0.0;
+  for (int k = 0; k < 3; k++) {
+    float lod = L - 1.0 + float(k);
+    float w = k == 1 ? 2.0 : 1.0;
+    vec2 o = exp2(lod) * 0.75 * px;
+    vec3 s = textureLod(u_tex, v_uv + vec2(o.x, o.y), lod).rgb + textureLod(u_tex, v_uv + vec2(-o.x, o.y), lod).rgb
+           + textureLod(u_tex, v_uv + vec2(o.x, -o.y), lod).rgb + textureLod(u_tex, v_uv - o, lod).rgb;
+    acc += s * 0.25 * w;
+    wsum += w;
+  }
+  return acc / wsum;
+}
+
 void main() {
   vec3 col;
   if (u_mode == 0 || u_amt < 0.002) {
-    col = u_r < 0.5 ? texture(u_tex, v_uv).rgb : discBlur(u_r, u_algo == 3);
+    if (u_r < 0.5) col = texture(u_tex, v_uv).rgb;
+    else if (u_algo == 1) col = fastBlur(u_r);
+    else if (u_algo == 2) col = pyramidBlur(u_r);
+    else col = discBlur(u_r, u_algo == 3);
   } else {
     vec3 acc = vec3(0.0);
     float aspect = u_res.x / u_res.y;

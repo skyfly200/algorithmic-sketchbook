@@ -56,6 +56,7 @@ uniform float u_zoom;
 uniform float u_rot;
 uniform float u_rep;
 uniform float u_tspeed;
+uniform float u_tspeedT; // ∫ rate dt (set in JS): dragging the rate doesn't jump
 uniform bool u_seam;
 
 float wrap(float x) {
@@ -77,7 +78,7 @@ void main() {
     float rad = v_uv.y * 0.5 / u_zoom;
     uv = u_c + vec2(cos(ang), sin(ang)) * rad / asp;
   } else if (u_mode == 2) {                // tunnel
-    float depth = 0.12 / (r * u_zoom + 1e-3) + u_time * u_tspeed;
+    float depth = 0.12 / (r * u_zoom + 1e-3) + u_tspeedT;
     uv = vec2(wrap(a * u_rep), fract(depth));
     fog = smoothstep(0.0, 0.2, r * u_zoom);
   } else {                                 // little planet (stereographic)
@@ -97,9 +98,10 @@ function frame(now) {
     u.i('u_mode', idx(MODES, params.mode))
     u.v2('u_c', params.centerX, 1 - params.centerY)
     u.f('u_zoom', params.zoom)
-    u.f('u_rot', params.rotation + params.spin * now * 0.001)
+    u.f('u_rot', params.rotation + rt.phase('spin', params.spin))
     u.f('u_rep', Math.round(params.repeat))
     u.f('u_tspeed', params.tunnelSpeed)
+    u.f('u_tspeedT', rt.phase('tunnel', params.tunnelSpeed))
     u.i('u_seam', params.seamless ? 1 : 0)
   })
   requestAnimationFrame(frame)

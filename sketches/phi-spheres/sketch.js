@@ -81,7 +81,11 @@ function addSphere() {
 
 function removeSphere() {
   const sphere = spheres.pop()
-  if (sphere) group.remove(sphere)
+  if (!sphere) return
+  group.remove(sphere)
+  // Animate In/Out adds and removes spheres continuously: free their GPU buffers
+  sphere.geometry.dispose()
+  sphere.material.dispose()
 }
 
 function ensureFull() {

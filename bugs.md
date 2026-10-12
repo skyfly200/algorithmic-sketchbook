@@ -96,3 +96,31 @@ but has not been looked at on real hardware or in the real UI.
 - The repo tracks both `CLAUDE.md` and `claude.md` as separate files. Only `CLAUDE.md` was edited
   (new sections on filter helpers, demo scenes and Patch scheduling), so the two now differ.
   Decide which is canonical and sync or remove the other.
+
+## Effects review (2026-10-09): found, not fixed yet
+Read-through of all 181 sketches plus a headless run of each with every param at its
+min / max / each option (no console or shader errors anywhere). Clear bugs were fixed
+in the same branch; these were left because they need a design call or a bigger change.
+
+- **Dead or misleading options.** edge-detect "Direction hue" is one
+  flat colour with the Laplacian kernel. light-show: the 'leaves' gobo is the breakup gobo.
+- **Sliders that only apply on resize / respray.** luminol (pattern, density), egg-speckle
+  (tint shift; "Renew rate" never clears the speck layer), worm-bin (worm length), star-field
+  (count changes under 0.08 are ignored), moss (colonies), droplet-bounce (lowering Droplets).
+- **Beat-only behaviour with no fallback.** rubens-tube audio drive, washboard-road "grade
+  on beat". strobe and lightning now fall back to their rate clock when no beats arrive.
+- **Geometry.** pattern-tessellator's trellis pips miss the line crossings; soap-film's 'star'
+  frame is a cog and the film edge pin assumes a circle; marbling's single comb tine is off
+  centre; lava-lamp blobs are stretched to the window aspect; synthwave "Hill height" only
+  shades the ground (it doesn't displace the grid); bright-waves-logo clip radii exceed the art square.
+- **8-bit trail residue.** Low-alpha black fades never reach black: laser-traces (Afterglow
+  >= 0.96), flow-field, matrix-rain, neon-fluid, oscilloscope. Needs a shared fade helper.
+- **Perf (CPU per-pixel or per-item gradients every frame).** fibonacci-spiral and embers (a radial
+  gradient per item), rubens-tube Table mode, fog and laser-traces (full-res `ctx.filter`
+  blur), kuwahara (fixed 17x17 loop at any radius), reishi-spores (static growths redrawn),
+  self-similar-fractals (up to 531k fills on a zoom step, no culling).
+  Memory: delay and motion-extraction allocate 46 / 30 full-res canvases whatever the delay.
+  channel-offset re-renders 7x a second at glitch 0 (`u_t7`).
+- **Seeds.** `Math.random` instead of `rt.rng` (so `?seed` doesn't reproduce): camera-lens
+  dirt, condensation, beat-rings, disco-ball, dither, motion-extraction, neon-fluid,
+  phi-spheres. grass-field sets `u_seed` but never reads it.

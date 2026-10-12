@@ -138,7 +138,7 @@ function frame(now) {
 
   const name = activePattern()
   const k = params.complexity
-  const rot = now * 0.0006 * params.spin
+  const rot = rt.phase('spin', 0.6 * params.spin) // ∫ spin dt: dragging doesn't jump
   const scale = R * params.size * (1 + sizePulse * 0.12 + rt.beat.state.pulse * 0.06)
   const jit = params.jitter * rt.pixelRatio * 1.4
   const cosR = Math.cos(rot), sinR = Math.sin(rot)

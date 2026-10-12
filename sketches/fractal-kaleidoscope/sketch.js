@@ -47,7 +47,7 @@ void main() {
   vec2 uv = (gl_FragCoord.xy * 2.0 - u_res) / u_res.y;
   vec2 uv0 = uv;
   vec3 finalColor = vec3(0.0);
-  float T = u_time * u_speed + u_hue;
+  float T = u_speed + u_hue; // u_speed = ∫ speed dt (set in JS)
   int N = int(u_layers);
   for (int i = 0; i < 8; i++) {
     if (i >= N) break;
@@ -96,11 +96,11 @@ function frame(now) {
   gl.uniform1f(uTime, now * 0.001)
   gl.uniform1f(uLayers, params.layers)
   gl.uniform1f(uZoom, params.zoom)
-  gl.uniform1f(uSpeed, params.speed)
+  gl.uniform1f(uSpeed, rt.phase('speed', params.speed)) // integrated: speed is modulated
   gl.uniform1f(uWarp, params.warp)
   gl.uniform1f(uGlow, params.glow)
   gl.uniform1f(uContrast, params.contrast)
-  gl.uniform1f(uHue, params.hue * 6.28318)
+  gl.uniform1f(uHue, params.hue) // palette() already scales by 2π: 0..1 = one turn
   gl.drawArrays(gl.TRIANGLES, 0, 3)
   requestAnimationFrame(frame)
 }

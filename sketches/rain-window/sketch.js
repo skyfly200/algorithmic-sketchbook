@@ -143,7 +143,7 @@ function step() {
   // Coalescence among all drops (not just sliding sweepers): any two beads
   // that touch merge into one, area-conserving — the bigger keeps the spot.
   for (let i = 0; i < drops.length; i++) {
-    const a = drops[i]
+    let a = drops[i]
     for (let j = i + 1; j < drops.length; j++) {
       const b = drops[j]
       const dx = b.x - a.x
@@ -156,9 +156,9 @@ function step() {
         big.r = Math.sqrt(area)
         big.sliding = big.sliding || small.sliding
         big.vy = Math.max(big.vy, small.vy)
-        if (small === a) {
-          drops[i] = big === a ? a : b
-        }
+        // the merged drop takes slot i and keeps merging as `a`
+        drops[i] = big
+        a = big
         drops.splice(j, 1)
         j--
       }

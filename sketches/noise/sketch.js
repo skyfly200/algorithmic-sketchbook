@@ -33,7 +33,8 @@ float hash(vec3 p){ p=fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*
 float vnoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
   return mix(mix(mix(hash(i+vec3(0,0,0)),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
              mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z); }
-float fbm(vec3 p){ float a=0.5,s=0.0,n=0.0; for(int i=0;i<8;i++){ if(i>=u_oct)break; float v=vnoise(p);
+float fbm(vec3 p){ if(u_type==3) return vnoise(p);   // value: one smooth octave
+  float a=0.5,s=0.0,n=0.0; for(int i=0;i<8;i++){ if(i>=u_oct)break; float v=vnoise(p);
   if(u_type==1) v=1.0-abs(v*2.0-1.0);          // ridged
   else if(u_type==2) v=abs(v*2.0-1.0);          // turbulence
   s+=a*v; n+=a; p*=2.02; a*=0.5; } return s/n; }
@@ -43,14 +44,18 @@ vec3 palette(float t){
   if(u_pal==3) return mix(vec3(0.0,0.03,0.12), vec3(0.6,0.9,1.0), t);          // cool
   return 0.5+0.5*cos(6.2831*(t+vec3(0.0,0.33,0.67)));                          // spectral
 }
+// the selected noise; white noise is per pixel (k decorrelates RGB channels)
+float field(vec3 p, float k){
+  return u_type==4 ? hash(floor(vec3(gl_FragCoord.xy + k*101.0, u_time*30.0))) : fbm(p);
+}
 void main(){
   vec2 uv=(gl_FragCoord.xy - 0.5*u_res)/u_res.y;
   vec3 p=vec3(uv*u_scale, u_time*0.15);
   if(u_warp>0.001){ vec3 q=vec3(fbm(p+1.7), fbm(p+8.3), 0.0); p.xy += q.xy*u_warp; }
-  float base = (u_type==4)? hash(floor(vec3(gl_FragCoord.xy, u_time*30.0))) : fbm(p);
+  float base = field(p, 0.0);
   base = clamp((base-0.5)*u_contrast+0.5, 0.0, 1.0);
   vec3 col;
-  if(u_pal==1){ col=vec3(fbm(p), fbm(p+3.1), fbm(p+6.2)); col=clamp((col-0.5)*u_contrast+0.5,0.0,1.0); }
+  if(u_pal==1){ col=vec3(field(p, 0.0), field(p+3.1, 1.0), field(p+6.2, 2.0)); col=clamp((col-0.5)*u_contrast+0.5,0.0,1.0); }
   else if(u_pal==0){ float h=u_hue/360.0; vec3 tint=0.5+0.5*cos(6.2831*(h+vec3(0.0,0.06,0.12))); col=mix(tint*0.12, tint, base); }
   else col=palette(base);
   o=vec4(col,1.0);

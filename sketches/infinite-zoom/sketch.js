@@ -39,6 +39,7 @@ const FRAG = `#version 300 es
 precision highp float;
 uniform vec2 u_res;
 uniform float u_time, u_density, u_twist, u_variation, u_braces, u_windows, u_hue, u_cycle, u_style;
+uniform float u_cycleT; // ∫ cycle dt (set in JS): dragging Colour cycle doesn't jump
 out vec4 outColor;
 #define PI 3.14159265
 #define TAU 6.28318531
@@ -122,7 +123,7 @@ void main() {
 
   // --- panels & windows behind the structure ---
   float ch = hash(lvl * 57.0 + cellI * 13.0);
-  vec3 base = palette(lvl * 0.09 + u_time * u_cycle * 0.05);
+  vec3 base = palette(lvl * 0.09 + u_cycleT * 0.05);
   vec3 panel = base * (0.06 + 0.05 * ch); // dark facade, slight per-cell tint
   // A lit opening in ~half the cells.
   float lit = u_windows * step(0.45, ch);
@@ -162,7 +163,7 @@ gl.enableVertexAttribArray(position)
 gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
 const u = {}
-for (const name of ['u_res', 'u_time', 'u_density', 'u_twist', 'u_variation', 'u_braces', 'u_windows', 'u_hue', 'u_cycle', 'u_style'])
+for (const name of ['u_res', 'u_time', 'u_density', 'u_twist', 'u_variation', 'u_braces', 'u_windows', 'u_hue', 'u_cycle', 'u_cycleT', 'u_style'])
   u[name] = gl.getUniformLocation(program, name)
 
 // Accumulate the (speed-scaled) zoom phase so speed can change smoothly.
@@ -190,6 +191,7 @@ function frame(now) {
   gl.uniform1f(u.u_windows, params.windows ? 1 : 0)
   gl.uniform1f(u.u_hue, params.hue)
   gl.uniform1f(u.u_cycle, params.cycle)
+  gl.uniform1f(u.u_cycleT, rt.phase('cycle', params.cycle))
   gl.uniform1f(u.u_style, Math.max(0, STRUCTURES.indexOf(params.structure)))
   gl.drawArrays(gl.TRIANGLES, 0, 3)
   requestAnimationFrame(frame)

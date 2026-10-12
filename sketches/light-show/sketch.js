@@ -389,7 +389,7 @@ renderer.setAnimationLoop((now) => {
   const spotAngle = 0.08 + params.beamWidth * 0.28
   const wR = Math.tan(spotAngle) * BEAM_LEN * 0.96 * params.aperture
   for (const f of fixtures) {
-    const ph = t * params.speed * f.rate + f.phase
+    const ph = rt.phase('speed', params.speed) * f.rate + f.phase
     f.pan.rotation.y = Math.sin(ph * 0.9) * 1.4 * f.panAmp * params.spread
     f.tilt.rotation.x = Math.sin(ph * 0.63 + 1.2) * 0.75 * f.tiltAmp * params.spread
     f.tilt.rotation.z = Math.cos(ph * 0.71) * 0.55 * f.tiltAmp * params.spread
@@ -419,7 +419,7 @@ renderer.setAnimationLoop((now) => {
     f.spot.angle = spotAngle
     // focus: knife-edge pool in focus, wide soft penumbra out of focus
     f.spot.penumbra = 0.15 + (1 - params.focus) * 0.7
-    const goboRot = t * params.goboSpin * f.goboRate
+    const goboRot = rt.phase('goboSpin', params.goboSpin) * f.goboRate
     f.goboTex.rotation = goboRot
     // spin the cone shafts with the projected pattern
     f.coneTex.offset.x = -goboRot / (Math.PI * 2)

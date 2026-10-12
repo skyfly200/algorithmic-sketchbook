@@ -67,9 +67,10 @@ renderer.setAnimationLoop((now) => {
   rt.tick(now)
   const t = now * 0.001
   const scale = 1 + params.pulse * 0.35
+  const spin = rt.phase('spin', params.spin) // ∫ spin dt: dragging Spin doesn't jump
   knots.forEach((knot, i) => {
-    knot.rotation.x = t * params.spin * (0.7 + i * 0.3)
-    knot.rotation.y = t * params.spin
+    knot.rotation.x = spin * (0.7 + i * 0.3)
+    knot.rotation.y = spin
     knot.scale.setScalar(scale)
     knot.material.emissiveIntensity = params.glow
   })

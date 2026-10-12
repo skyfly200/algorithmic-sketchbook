@@ -87,17 +87,25 @@ function buildPanel() {
   if (sc < 1) { gw = Math.round(gw * sc); gh = Math.round(gh * sc) }
   genW = gw; genH = gh
   panel.width = gw; panel.height = gh
-  const seed = Math.floor(rt.random(0, 90000))
+  // The rock itself (seed + beds) is rolled once, so a look change or a resize
+  // re-bakes the same rock instead of swapping in a different one.
+  if (!rock) {
+    rock = { seed: Math.floor(rt.random(0, 90000)), beds: [] }
+    for (let i = 0; i < 70; i++) {
+      const th = rt.random(0.45, 2.0)
+      const base = PALETTE[(rt.rng() * PALETTE.length) | 0]
+      const v = rt.random(-9, 9)
+      const ledge = rt.rng() < 0.32 ? rt.random(0.5, 1) : 0
+      rock.beds.push({ th, base, v, ledge })
+    }
+  }
+  const seed = rock.seed
 
   // irregular stack of beds: random thickness, random palette pick, some hard
   // beds flagged as ledges.
   const bands = []
   let cAcc = 0
-  for (let i = 0; i < 70; i++) {
-    const th = rt.random(0.45, 2.0)
-    const base = PALETTE[(rt.rng() * PALETTE.length) | 0]
-    const v = rt.random(-9, 9)
-    const ledge = rt.rng() < 0.32 ? rt.random(0.5, 1) : 0
+  for (const { th, base, v, ledge } of rock.beds) {
     bands.push({ c0: cAcc, c1: cAcc + th, col: [base[0] + v, base[1] + v * 0.8, base[2] + v * 0.6], ledge })
     cAcc += th
   }
@@ -258,11 +266,13 @@ function buildPanel() {
   pctx.putImageData(img, 0, 0)
 }
 
+let rock = null
 function resize() {
   PR = rt.pixelRatio
   W = canvas.width = Math.floor(window.innerWidth * PR)
   H = canvas.height = Math.floor(window.innerHeight * PR)
   buildPanel()
+  sig = paramSig() // the panel is current: no second bake right after load
 }
 
 let last = 0, camX = 0, camY = 0

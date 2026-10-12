@@ -38,8 +38,10 @@ let spoutX = 0.5
 let spoutDir = 1
 
 // 0 = empty; else 1..255 encodes the grain's colour byte (never 0).
+let builtCell = 0
 function rebuild() {
-  const cs = Math.max(2, Math.round(params.cell) * rt.pixelRatio)
+  builtCell = Math.round(params.cell)
+  const cs = Math.max(2, builtCell * rt.pixelRatio)
   cols = Math.max(16, Math.floor(W / cs))
   rows = Math.max(16, Math.floor(H / cs))
   sand = new Uint8Array(cols * rows)
@@ -184,7 +186,8 @@ function frame(now) {
   rt.tick(now)
   const dt = lastNow ? Math.min(0.05, (now - lastNow) / 1000) : 0.016
   lastNow = now
-  if (params.container !== wallSig) buildWalls()
+  if (Math.round(params.cell) !== builtCell) rebuild() // grain size: a new grid
+  else if (params.container !== wallSig) buildWalls()
 
   huePhase = (huePhase + params.hueRate * dt * 0.15) % 1
   const byte = 1 + ((huePhase * 254) | 0)

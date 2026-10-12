@@ -61,7 +61,12 @@ function strike(x) {
   bolts.push({ bolt: makeBolt(x0, 0, x0 + rt.random(-W * 0.15, W * 0.15), H, 2), life: 1 })
   flashLevel = Math.max(flashLevel, params.flash)
 }
-rt.onBeat(({ energy }) => { if (params.onBeat && rt.rng() < 0.5 + energy * 0.3) strike() })
+let lastBeat = -Infinity
+rt.onBeat(({ energy }) => {
+  if (!params.onBeat) return
+  lastBeat = performance.now() * 0.001
+  if (rt.rng() < 0.5 + energy * 0.3) strike()
+})
 canvas.addEventListener('pointerdown', (e) => strike(e.clientX * rt.pixelRatio))
 
 let last = 0
@@ -83,9 +88,11 @@ function frame(now) {
   const dt = Math.min(0.05, t - last || 0.016)
   last = t
 
-  // random ambient strikes at the set rate
+  // random ambient strikes at the set rate; with Strike on beat they pause
+  // only while beats are actually arriving (no mic = no beats = empty sky)
+  const beatLive = params.onBeat && t - lastBeat < 2
   acc += dt * params.rate
-  if (!params.onBeat && acc > 1) { acc = 0; if (rt.rng() < 0.5) strike() }
+  if (!beatLive && acc > 1) { acc = 0; if (rt.rng() < 0.5) strike() }
 
   // sky: dark stormy gradient, brightened by the flash
   const g = ctx.createLinearGradient(0, 0, 0, H)
