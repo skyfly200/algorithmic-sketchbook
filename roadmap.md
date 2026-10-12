@@ -163,12 +163,13 @@ concentric-rings (quick wins), then `rt.detail` everywhere, then the glpipe port
    filters' looks on a real GPU (the blurs approximate the old canvas blurs with mip-chain taps; warp samples
    backwards, so Pinch / Bulge are approximate inverses; feedback's kaleidoscope mirror now folds into its
    own loop).
-   Still not chainable, all Canvas2D: **strobe** and **fps-limiter** (hold a frame apart from what they
-   show, so they need a third history slot), **delay**, **tiling**, **rolling-shutter**, **motion-extraction**
-   (a ring of past frames, which at full size is heavy: 30 frames is ~100 MB at 720p), and the baked-noise
-   ones **fog**, **shaky-film**, **light-leaves**, **nebula-gasses**, **rain-window**, **lens-flare**, which
-   need a GPU port first and then fit the existing texture sharing. Others (painterly, wind, ink-bleed,
-   vhs-defects) are multipass glpipe filters.
+   **fog**, **shaky-film**, **light-leaves**, **nebula-gasses**, **rain-window** and **lens-flare** were ported to
+   shaders with baked / per-frame uploaded textures and now chain (lens-flare finds the brightest point from the mip
+   chain in the shader, so it favours large bright regions over small highlights). Still not chainable, all Canvas2D:
+   **strobe** and **fps-limiter** (hold a frame apart from what they show, so they need a third history slot),
+   **delay**, **tiling**, **rolling-shutter**, **motion-extraction** (a ring of past frames; delay and
+   motion-extraction now keep only the frames the current delay needs, `sketches/_lib/framering.js`). Others
+   (painterly, wind, ink-bleed, vhs-defects) are multipass glpipe filters.
 
 Temporary verification scripts for the chain work (random chain fuzzer, chained vs unchained diff,
 before/after screenshots) live in `scripts/scratch/`; see its README. Delete the folder once a real
