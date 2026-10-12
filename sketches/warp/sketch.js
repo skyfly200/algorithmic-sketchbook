@@ -40,6 +40,7 @@ uniform int u_pattern;
 uniform float u_amt;
 uniform float u_fq;
 uniform float u_speed;
+uniform float u_speedT; // ∫ rate dt (set in JS): dragging the rate doesn't jump
 uniform float u_zoom; // 1 = no crop-to-fill overscan
 
 out vec4 outColor;
@@ -69,7 +70,7 @@ vec2 warp(vec2 p, float ph) {
 void main() {
   vec2 p = vec2(v_uv.x, 1.0 - v_uv.y);
   p = 0.5 + (p - 0.5) / u_zoom;
-  vec2 s = warp(p, u_time * u_speed);
+  vec2 s = warp(p, u_speedT);
   if (s.x < 0.0 || s.x > 1.0 || s.y < 0.0 || s.y > 1.0) { outColor = vec4(0.02, 0.024, 0.04, 1.0); return; }
   outColor = vec4(texture(u_tex, vec2(s.x, 1.0 - s.y)).rgb, 1.0);
 }`
@@ -104,6 +105,7 @@ function frame(now) {
     u.f('u_amt', params.amount)
     u.f('u_fq', params.frequency)
     u.f('u_speed', params.speed)
+    u.f('u_speedT', rt.phase('speed', params.speed))
     u.f('u_zoom', params.fill ? params.fillZoom : 1)
   })
   requestAnimationFrame(frame)

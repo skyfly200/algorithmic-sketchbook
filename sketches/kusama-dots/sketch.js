@@ -69,7 +69,9 @@ function frame(now) {
   const rows = Math.ceil(H / cell) + 2
   const cx = W / 2, cy = H / 2
   const breathe = 1 + Math.sin(t * 0.6) * 0.06 * params.breathe + rt.beat.state.pulse * 0.04
-  const rot = t * params.spin
+  // ∫ rate dt, so dragging Spin / Wave speed doesn't jump the pattern
+  const rot = rt.phase('spin', params.spin)
+  const waveT = rt.phase('wave', params.waveSpeed * 3)
   const cosR = Math.cos(rot), sinR = Math.sin(rot)
 
   // For "Nets", paint the mesh colour over the whole field, then punch dots as
@@ -91,7 +93,7 @@ function frame(now) {
       // size: noise-driven variation + radial wave rolling out from centre
       const nv = hash(i * 1.7 + j * 5.3)
       const dist = Math.hypot(x - cx, y - cy) / Math.max(W, H)
-      const wave = Math.sin(dist * 22 - t * params.waveSpeed * 3)
+      const wave = Math.sin(dist * 22 - waveT)
       let s = params.dotScale * (1 - params.variation * 0.6 + nv * params.variation * 0.9)
       s *= 1 + wave * 0.35 * params.waves
       let r = s * cell * 0.5

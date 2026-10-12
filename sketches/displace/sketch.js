@@ -53,6 +53,7 @@ uniform int u_map;
 uniform float u_amount;
 uniform float u_scale;
 uniform float u_speed;
+uniform float u_speedT; // ∫ rate dt (set in JS): dragging the rate doesn't jump
 uniform float u_angle;
 uniform float u_blur;
 uniform float u_chroma;
@@ -65,7 +66,7 @@ vec3 mapTex(vec2 uv) {
 
 vec2 disp(vec2 uv) {
   float aspect = u_res.x / u_res.y;
-  float t = u_time * u_speed;
+  float t = u_speedT;
   if (u_map == 0) {
     float l = dot(mapTex(uv), LUMA);
     return vec2(cos(u_angle), sin(u_angle)) * (l - 0.5) * 2.0;
@@ -98,6 +99,7 @@ function frame(now) {
     u.f('u_amount', params.amount)
     u.f('u_scale', params.scale)
     u.f('u_speed', params.speed)
+    u.f('u_speedT', rt.phase('speed', params.speed))
     u.f('u_angle', (params.angle * Math.PI) / 180)
     u.f('u_blur', params.mapBlur * rt.pixelRatio)
     u.f('u_chroma', params.chroma)

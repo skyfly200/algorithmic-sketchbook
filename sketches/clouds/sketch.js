@@ -113,7 +113,7 @@ function frame(now) {
   // auto-evolve the type by cross-blending toward the next one
   const typeIdx = Math.max(0, TYPES.indexOf(params.type))
   const nextIdx = (typeIdx + 1) % TYPES.length
-  const blend = params.evolve > 0.01 ? (0.5 + 0.5 * Math.sin(t * 0.05 * params.evolve)) * params.evolve : 0
+  const blend = params.evolve > 0.01 ? (0.5 + 0.5 * Math.sin(rt.phase('evolve', 0.05 * params.evolve))) * params.evolve : 0
   const defA = TYPE_DEF[TYPES[typeIdx]], defB = TYPE_DEF[TYPES[nextIdx]]
   const cover = params.cover
 

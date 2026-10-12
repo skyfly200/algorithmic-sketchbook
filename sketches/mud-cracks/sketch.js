@@ -156,7 +156,7 @@ function frame(now) {
 
   // global dryness with an optional slow wet↔dry cycle
   let dry = params.dryness
-  if (params.autoDry > 0.01) dry = Math.max(0, Math.min(1, dry + Math.sin(t * params.autoDry * 0.3) * 0.4))
+  if (params.autoDry > 0.01) dry = Math.max(0, Math.min(1, dry + Math.sin(rt.phase('autoDry', params.autoDry * 0.3)) * 0.4))
   wet.amt = Math.max(0, wet.amt - 0.008) // slower, smoother re-dry after a splash
 
   const hue = params.hue

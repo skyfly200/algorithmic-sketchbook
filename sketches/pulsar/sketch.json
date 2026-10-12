@@ -1,6 +1,6 @@
 {
   "title": "Pulsar",
-  "description": "A spinning neutron star with its magnetic axis askew: twin radio beams sweep like a lighthouse, dipole field lines whirl, and each time a beam crosses the line of sight the flash lands on a scrolling pulse trace. Beats fire starquake glitches that spin the star up.",
+  "description": "A spinning neutron star with its magnetic axis askew: twin radio beams sweep like a lighthouse, dipole field lines whirl, and each time a beam crosses the line of sight it flashes, which the optional pulse trace (off by default) records as a scrolling strip chart. Beats fire starquake glitches that spin the star up.",
   "tags": [
     "space",
     "physics",

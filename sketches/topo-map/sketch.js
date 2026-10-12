@@ -42,6 +42,7 @@ uniform float u_interval;
 uniform float u_weight;
 uniform float u_zoom;
 uniform float u_drift;
+uniform float u_driftT; // ∫ drift dt (set in JS): dragging Drift doesn't jump
 uniform float u_sea;
 uniform float u_relief;
 uniform float u_hue;
@@ -93,7 +94,7 @@ float contour(float h, float step0, float k) {
 
 void main() {
   vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / min(u_resolution.x, u_resolution.y);
-  float t = u_time * u_drift * 0.12;
+  float t = u_driftT * 0.12;
   vec2 p = uv * 3.0 / u_zoom + u_pan + vec2(u_seed * 0.13, u_seed * 0.29);
 
   float h = elev(p, t);
@@ -175,7 +176,7 @@ gl.enableVertexAttribArray(position)
 gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
 const U = {}
-for (const n of ['u_resolution', 'u_time', 'u_seed', 'u_pan', 'u_pulse', 'u_style', 'u_interval', 'u_weight', 'u_zoom', 'u_drift', 'u_sea', 'u_relief', 'u_hue']) {
+for (const n of ['u_resolution', 'u_time', 'u_seed', 'u_pan', 'u_pulse', 'u_style', 'u_interval', 'u_weight', 'u_zoom', 'u_drift', 'u_driftT', 'u_sea', 'u_relief', 'u_hue']) {
   U[n] = gl.getUniformLocation(program, n)
 }
 const seed = rt.random(0, 100)
@@ -213,6 +214,7 @@ function frame(now) {
   gl.uniform1f(U.u_weight, params.weight)
   gl.uniform1f(U.u_zoom, params.zoom)
   gl.uniform1f(U.u_drift, params.drift)
+  gl.uniform1f(U.u_driftT, rt.phase('drift', params.drift))
   gl.uniform1f(U.u_sea, params.sea)
   gl.uniform1f(U.u_relief, params.relief)
   gl.uniform1f(U.u_hue, params.hue)

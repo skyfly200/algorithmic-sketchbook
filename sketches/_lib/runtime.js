@@ -797,6 +797,11 @@ export function createRuntime() {
       if (!preview) enableMotion()
     },
     motion,
+    // Art-Net DMX input: { ch (0..1 per channel), at (time of the last frame) }
+    artnet: artnet.state,
+    // the live input mappings (defaults + the user's) and the unmodulated values
+    get mappings() { return mappings },
+    get values() { return { ...base } },
 
     params(def) {
       const view = {}

@@ -222,8 +222,9 @@ renderer.setAnimationLoop((now) => {
 
   const n = Math.round(params.depth)
   const sat = 0.9
-  const spinX = t * 0.4 * params.spin
-  const spinY = t * 0.57 * params.spin
+  const spinT = rt.phase('spin', params.spin) // ∫ spin dt: dragging Spin doesn't jump
+  const spinX = spinT * 0.4
+  const spinY = spinT * 0.57
   for (let i = 0; i < MAX_COPIES; i++) {
     const c = copies[i]
     const on = i < n

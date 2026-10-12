@@ -90,7 +90,7 @@ function frame(now) {
   const t = now * 0.001
   gf.render({ mirror: params.mirror, time: t }, (u) => {
     const W = gf.width, H = gf.height
-    const ang = ((params.angle + t * params.spin * 40) * Math.PI) / 180
+    const ang = ((params.angle + rt.phase('spin', params.spin * 40)) * Math.PI) / 180
     const shift = params.split * Math.min(W, H)
     const bal = params.balance
     u.v2('u_shift', Math.cos(ang) * shift, Math.sin(ang) * shift)
@@ -99,7 +99,7 @@ function frame(now) {
     u.f('u_extW', clamp(0.45 + 0.55 * bal, 0.25, 1)) // extraordinary (sheared) ray
     u.f('u_inter', params.interference)
     u.f('u_bands', params.bands)
-    u.f('u_phase', t * params.drift)
+    u.f('u_phase', rt.phase('drift', params.drift))
   })
   requestAnimationFrame(frame)
 }

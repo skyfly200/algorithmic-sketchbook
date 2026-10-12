@@ -39,7 +39,7 @@ function frame(now) {
   // phyllotaxis fills the whole viewport regardless of seed count / aspect
   const c = params.spacing * 0.55 * Math.hypot(W, H) / Math.sqrt(params.seeds)
   const ang = (params.angle * Math.PI) / 180
-  const spin = t * params.spin
+  const spin = rt.phase('spin', params.spin) // ∫ spin dt: dragging Spin doesn't jump
   const pulse = rt.beat.state.pulse
   ctx.globalCompositeOperation = 'lighter'
   for (let i = 0; i < n; i++) {

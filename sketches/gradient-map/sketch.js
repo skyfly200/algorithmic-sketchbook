@@ -51,6 +51,7 @@ uniform float u_contrast;
 uniform float u_shift;
 uniform float u_bands;
 uniform float u_cycle;
+uniform float u_cycleT; // ∫ rate dt (set in JS): dragging the rate doesn't jump
 uniform float u_mix;
 uniform bool u_invert;
 out vec4 outColor;
@@ -69,7 +70,7 @@ void main() {
   l = (l - 0.5) * u_contrast + 0.5 + u_shift;
   if (u_invert) l = 1.0 - l;
   if (u_bands > 0.5) l = floor(clamp(l, 0.0, 0.999) * u_bands) / (u_bands - 1.0 + 1e-4);
-  l += u_cycle * u_time * 0.2;
+  l += u_cycleT * 0.2;
   // cycling wraps around the ramp; otherwise clamp
   l = (u_cycle > 0.001) ? fract(l) : clamp(l, 0.0, 1.0);
   outColor = vec4(mix(base, ramp(l), u_mix), 1.0);
@@ -97,6 +98,7 @@ function frame(now) {
     u.f('u_shift', params.shift)
     u.f('u_bands', Math.round(params.bands))
     u.f('u_cycle', params.cycle)
+    u.f('u_cycleT', rt.phase('cycle', params.cycle))
     u.f('u_mix', params.mix)
     u.i('u_invert', params.invert ? 1 : 0)
   })

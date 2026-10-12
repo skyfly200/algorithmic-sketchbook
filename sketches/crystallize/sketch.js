@@ -54,6 +54,7 @@ uniform float u_edge;
 uniform float u_ew;
 uniform float u_shade;
 uniform float u_drift;
+uniform float u_driftT; // ∫ rate dt (set in JS): dragging the rate doesn't jump
 uniform float u_bevel;
 
 void main() {
@@ -66,7 +67,7 @@ void main() {
     for (int i = -1; i <= 1; i++) {
       vec2 id = ip + vec2(float(i), float(j));
       vec2 h = hash22(id);
-      vec2 o = 0.5 + (h - 0.5) * u_jit + wob * vec2(sin(u_time * u_drift + h.x * 6.283), cos(u_time * u_drift + h.y * 6.283));
+      vec2 o = 0.5 + (h - 0.5) * u_jit + wob * vec2(sin(u_driftT + h.x * 6.283), cos(u_driftT + h.y * 6.283));
       vec2 s = (id + o) * u_cell;
       float d = length(px - s);
       if (d < d1) { d2 = d1; d1 = d; site = s; bestId = id; }
@@ -101,6 +102,7 @@ function frame(now) {
     u.f('u_ew', params.edgeWidth * rt.pixelRatio)
     u.f('u_shade', params.shade)
     u.f('u_drift', params.drift)
+    u.f('u_driftT', rt.phase('drift', params.drift))
     u.f('u_bevel', params.bevel)
   })
   requestAnimationFrame(frame)

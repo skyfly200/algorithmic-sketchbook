@@ -38,7 +38,7 @@ void main() { gl_Position = vec4(position, 0.0, 1.0); }`
 const FRAG = `#version 300 es
 precision highp float;
 uniform vec2 u_res;
-uniform float u_domT, u_playT; // ∫ 0.22(0.3+play) dt, ∫ play dt (play is modulated)
+uniform float u_domT, u_playT, u_flowT; // u_flowT = ∫ flow dt // ∫ 0.22(0.3+play) dt, ∫ play dt (play is modulated)
 uniform float u_time, u_scale, u_depth, u_play, u_sat, u_milk, u_sparkle, u_tilt, u_flow, u_hue, u_pulse;
 out vec4 outColor;
 
@@ -79,7 +79,7 @@ void main() {
 
   // organic patches: domain-warp the lattice so cells flow like opal veils
   vec2 w = uv * u_scale;
-  vec2 wq = vec2(fbm(w * 0.6 + t * 0.05 * u_flow), fbm(w * 0.6 + 7.3 - t * 0.06 * u_flow));
+  vec2 wq = vec2(fbm(w * 0.6 + u_flowT * 0.05), fbm(w * 0.6 + 7.3 - u_flowT * 0.06));
   w += (wq - 0.5) * 1.6 * u_flow;
 
   vec3 v = voro(w);
@@ -145,7 +145,7 @@ gl.enableVertexAttribArray(position)
 gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
 const u = {}
-for (const name of ['u_res', 'u_time', 'u_domT', 'u_playT', 'u_scale', 'u_depth', 'u_play', 'u_sat', 'u_milk', 'u_sparkle', 'u_tilt', 'u_flow', 'u_hue', 'u_pulse'])
+for (const name of ['u_res', 'u_time', 'u_domT', 'u_playT', 'u_flowT', 'u_scale', 'u_depth', 'u_play', 'u_sat', 'u_milk', 'u_sparkle', 'u_tilt', 'u_flow', 'u_hue', 'u_pulse'])
   u[name] = gl.getUniformLocation(program, name)
 
 function resize() {
@@ -168,6 +168,7 @@ function frame(now) {
   gl.uniform1f(u.u_sparkle, params.sparkle)
   gl.uniform1f(u.u_tilt, params.tilt)
   gl.uniform1f(u.u_flow, params.flow)
+  gl.uniform1f(u.u_flowT, rt.phase('flow', params.flow))
   gl.uniform1f(u.u_hue, params.hue)
   gl.uniform1f(u.u_pulse, rt.beat.state.pulse || 0)
   gl.drawArrays(gl.TRIANGLES, 0, 3)

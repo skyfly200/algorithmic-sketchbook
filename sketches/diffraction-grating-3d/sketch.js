@@ -207,8 +207,9 @@ renderer.setAnimationLoop((now) => {
   uniforms.u_flash.value = params.flash
 
   const t = now * 0.001
-  mesh.rotation.y = t * params.spin
-  mesh.rotation.x = Math.sin(t * params.spin * 0.6) * 0.35
+  const spin = rt.phase('spin', params.spin) // ∫ spin dt: dragging Spin doesn't jump
+  mesh.rotation.y = spin
+  mesh.rotation.x = Math.sin(spin * 0.6) * 0.35
   // A key light that slowly circles so the sheen is always sweeping.
   uniforms.u_lightDir.value.set(Math.cos(t * 0.3) * 0.6, 0.7, Math.sin(t * 0.3) * 0.6).normalize()
 

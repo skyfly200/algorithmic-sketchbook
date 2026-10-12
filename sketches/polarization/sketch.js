@@ -81,7 +81,7 @@ const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG })
 function frame(now) {
   rt.tick(now)
   gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
-    const a = ((params.analyzer + now * 0.001 * params.spin * 60) % 180 + 180) % 180
+    const a = ((params.analyzer + rt.phase('spin', params.spin * 60)) % 180 + 180) % 180
     const s = Math.min(1, 700 / Math.max(gf.width, gf.height))
     u.f('u_ret', params.retardation)
     u.f('u_analyzer', (a * Math.PI) / 180)

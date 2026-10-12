@@ -137,7 +137,7 @@ function frame(now) {
     u.f('u_sat', 1 + params.chroma * 0.3)
     u.f('u_bleed', (params.chroma * 4 * rt.pixelRatio) / Math.max(1, gf.width))
     u.f('u_pr', rt.pixelRatio)
-    u.f('u_humY', params.roll > 0.01 ? (t * 40 * params.roll) % H : -1000)
+    u.f('u_humY', params.roll > 0.01 ? rt.phase('hum', 40 * params.roll) % H : -1000)
     u.f('u_humA', params.roll > 0.01 ? roll * 0.12 : 0)
     u.f('u_curve', params.curve)
   })

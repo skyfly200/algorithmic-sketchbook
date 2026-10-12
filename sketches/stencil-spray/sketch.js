@@ -406,7 +406,7 @@ function frame(now) {
   const span = Math.max(W, H) * params.size * 1.05
   ctx.save()
   ctx.translate(W / 2, H / 2)
-  ctx.rotate(params.spin * now * 0.001)
+  ctx.rotate(rt.phase('spin', params.spin)) // ∫ spin dt: dragging doesn't jump
   ctx.imageSmoothingEnabled = true
   ctx.drawImage(field, -span / 2, -span / 2, span, span)
   ctx.restore()

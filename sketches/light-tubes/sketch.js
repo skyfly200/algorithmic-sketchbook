@@ -102,6 +102,7 @@ function frame(now) {
   ctx.globalCompositeOperation = 'lighter'
   const glow = params.glow * (1 + surge)
   const base = 6 * PR * params.thickness
+  const pulseT = rt.phase('pulse', params.pulse * 0.4)
   for (const tb of tubes) {
     const hue = params.hue + tb.off * params.spread
     // flicker: mostly steady with occasional dips, per-tube timing
@@ -122,7 +123,7 @@ function frame(now) {
     strokePath(tb, base * 0.6)
     // travelling hot pulse
     if (params.pulse > 0.01 && !tb.arc) {
-      const u = (t * params.pulse * 0.4 + tb.phase * 0.13) % 1
+      const u = (pulseT + tb.phase * 0.13) % 1
       const px = tb.x1 + (tb.x2 - tb.x1) * u, py = tb.y1 + (tb.y2 - tb.y1) * u
       const pr = base * 2.4
       const rg = ctx.createRadialGradient(px, py, 0, px, py, pr)

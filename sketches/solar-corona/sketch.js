@@ -198,7 +198,7 @@ function frame(now) {
   last = now
   const newR = Math.min(W, H) * 0.28 * params.sunSize
   if (Math.abs(newR - R) > 1) { R = newR; buildGran() }
-  const rot = t * params.spin
+  const rot = rt.phase('spin', params.spin)
 
   // advance each region's longitude with differential rotation (equator fastest),
   // then cache its projected position for the frame.

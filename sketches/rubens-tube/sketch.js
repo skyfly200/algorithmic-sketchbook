@@ -71,7 +71,7 @@ function frame(now) {
   const t = now * 0.001
   const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016)
   last = now
-  const phase = t * params.drift * 3
+  const phase = rt.phase('drift', params.drift * 3)
 
   ctx.globalCompositeOperation = 'source-over'
   ctx.fillStyle = '#06070c'

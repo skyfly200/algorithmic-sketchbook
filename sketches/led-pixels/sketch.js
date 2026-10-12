@@ -32,6 +32,29 @@ rt.mapInput('artnet.ch4', 'spread', 1)
 rt.mapInput('audio.level', 'level', 1)
 rt.mapInput('audio.pulse', 'brightness', 0.25)
 
+// Desk takeover. A mapping only adds fader × range to the param's base, and
+// the panel's bases sit high (Dimmer 1, Speed 1, ...), so a fader could only
+// push up and ch1 could never dim the rig. While Art-Net frames arrive, each
+// desk-mapped param's base drops to the bottom of its range so its fader
+// sweeps the whole range; the panel values come back when the desk goes quiet.
+const DESK = { brightness: 'artnet.ch1', hue: 'artnet.ch2', speed: 'artnet.ch3', spread: 'artnet.ch4' }
+const DESK_LOW = { brightness: 0, hue: 0, speed: 0, spread: 0.1 }
+let deskSaved = null
+function deskTakeover(now) {
+  const live = now - rt.artnet.at < 3000
+  if (live && !deskSaved) {
+    const driven = Object.keys(DESK).filter((k) => rt.mappings.some((m) => m.param === k && m.source === DESK[k] && m.amount > 0))
+    if (!driven.length) return
+    const base = rt.values
+    deskSaved = {}
+    for (const k of driven) deskSaved[k] = base[k]
+    rt.setParams(Object.fromEntries(driven.map((k) => [k, DESK_LOW[k]])))
+  } else if (!live && deskSaved) {
+    rt.setParams(deskSaved)
+    deskSaved = null
+  }
+}
+
 let W = 0
 let H = 0
 const core = document.createElement('canvas') // crisp LED cores, bloomed up later
@@ -155,6 +178,7 @@ function frame(now) {
   const dt = Math.min(0.05, t - last || 0.016)
   last = t
 
+  deskTakeover(performance.now())
   const key = `${params.layout}|${Math.round(params.count)}|${W}x${H}`
   if (layoutDirty || key !== builtFor) {
     buildLayout()

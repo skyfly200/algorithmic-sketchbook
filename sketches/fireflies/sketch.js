@@ -96,10 +96,11 @@ function frame(now) {
   globalPhase += dt * rate
   // Coupling breathes: base Sync modulated by a slow sine so the chorus falls
   // in and out of unison over time (Phase drift controls how deep it breathes).
-  const breathe = 0.5 + 0.5 * Math.sin(t * params.driftRate * 0.5)
+  const driftPh = rt.phase('drift', params.driftRate * 0.5)
+  const breathe = 0.5 + 0.5 * Math.sin(driftPh)
   const sync = params.sync * (1 - params.phaseDrift) + params.sync * params.phaseDrift * breathe
   // Chaos also breathes (offset phase) so disorder swells and subsides.
-  const chaosNow = params.chaos * (0.4 + 0.6 * (0.5 + 0.5 * Math.sin(t * params.driftRate * 0.5 + 2.1)))
+  const chaosNow = params.chaos * (0.4 + 0.6 * (0.5 + 0.5 * Math.sin(driftPh + 2.1)))
 
   ctx.globalCompositeOperation = 'lighter'
   for (const f of flies) {

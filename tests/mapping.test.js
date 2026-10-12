@@ -130,16 +130,17 @@ describe('sketch default mappings: amounts and timing', () => {
     },
   )
 
-  // t × param jumps the phase by t × Δparam whenever a mapped param moves (many
-  // cycles after a few minutes); integrate with rt.phase(key, rate) instead
-  it.each(mappings.map((m) => [`${m.slug}: ${m.param}`, m]))(
-    '%s is not used as a rate multiplied by the clock',
-    (_, { src, param }) => {
-      const clock = String.raw`\b(?:t|time|u_time)\b`
-      const p = String.raw`\bparams\.${param}\b`
-      expect(src).not.toMatch(new RegExp(`${clock}\\s*\\*[^;,)\\n]{0,24}${p}`))
-      expect(src).not.toMatch(new RegExp(`${p}[^;,(\\n]{0,24}\\*\\s*${clock}`))
-      expect(src).not.toMatch(new RegExp(`\\bu_time\\s*\\*[^;,)\\n]{0,12}\\bu_${param}\\b`))
-    },
-  )
+  // t × param jumps the phase by t × Δparam whenever the param moves, from a
+  // mapping or a dragged slider (many cycles after a few minutes); integrate
+  // with rt.phase(key, rate) instead
+  it.each(sketches.map((x) => [x.slug, x]))('%s never multiplies a param by the clock', (_, { src }) => {
+    const clock = String.raw`\b(?:t|now|time|u_time)\b`
+    const param = String.raw`(?:\bparams\.\w+|\bu_(?!res\b|time\b)[a-z]\w*)`
+    const hits = src.split('\n').filter((line) =>
+      new RegExp(`${clock}\\s*\\*[^;,)]{0,24}${param}`).test(line) ||
+      new RegExp(`${param}[^;,(]{0,24}\\*\\s*${clock}`).test(line))
+    // a vignette factor named t (u_vig * 0.85 * t) is not the clock
+      .filter((line) => !/u_vig|u_curve \* 0\.4\)/.test(line))
+    expect(hits).toEqual([])
+  })
 })

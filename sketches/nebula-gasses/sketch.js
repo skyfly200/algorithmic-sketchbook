@@ -117,7 +117,7 @@ function frame(now) {
 
   const pulse = rt.beat.state.pulse
   const d = Math.min(1, params.density * (1 + pulse * 0.25))
-  const v = t * 26 * params.drift
+  const v = rt.phase('drift', 26 * params.drift)
   const spread = params.spread * 90
   const light = params.glow * (0.6 + pulse * 0.4)
 

@@ -109,7 +109,7 @@ function frame(now) {
     u.f('u_sat', params.saturation)
     u.f('u_sheen', params.sheen)
     u.f('u_dr', params.drift)
-    u.f('u_ph', t * params.drift)
+    u.f('u_ph', rt.phase('drift', params.drift))
     u.f('u_ph2', t * 0.5)
     u.f('u_scale', scale)
     u.f('u_lod', Math.max(0, Math.log2(scale)))
