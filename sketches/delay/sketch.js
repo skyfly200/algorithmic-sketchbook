@@ -8,6 +8,7 @@
  */
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createFrameRing } from '../_lib/framering.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -28,23 +29,16 @@ const ctx = canvas.getContext('2d')
 const src = createSource()
 
 // Ring buffer of past *outputs* (not inputs) — that's what makes it a true
-// feedback delay: each echo already contains the echoes before it.
-const MAX = 46
-let ring = []
-let head = 0
+// feedback delay: each echo already contains the echoes before it. It holds only
+// as many frames as the current delay needs (not the slider's max), under a memory cap.
+const ring = createFrameRing()
 
 let W = 0
 let H = 0
 function resize() {
   W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
   H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  ring = Array.from({ length: MAX }, () => {
-    const c = document.createElement('canvas')
-    c.width = W
-    c.height = H
-    return c
-  })
-  head = 0
+  ring.resize(W, H)
 }
 
 function frame(now) {
@@ -56,8 +50,9 @@ function frame(now) {
     return
   }
 
-  const d = Math.min(MAX - 1, Math.max(1, Math.round(params.delay)))
-  const past = ring[(head - d + MAX) % MAX]
+  const d = Math.max(1, Math.round(params.delay))
+  ring.need(d)
+  const past = ring.get(d)
 
   // Compose: dry signal + transformed, tinted echo of the past output.
   ctx.globalCompositeOperation = 'source-over'
@@ -81,7 +76,7 @@ function frame(now) {
     ctx.translate(W / 2, H / 2)
     ctx.scale(z, z)
     ctx.rotate(rot)
-    ctx.drawImage(past, -W / 2, -H / 2)
+    ctx.drawImage(past, -W / 2, -H / 2, W, H)
     ctx.restore()
     ctx.filter = 'none'
   }
@@ -89,10 +84,7 @@ function frame(now) {
   ctx.globalCompositeOperation = 'source-over'
 
   // Record this output into the ring for future echoes.
-  const slot = ring[head].getContext('2d')
-  slot.clearRect(0, 0, W, H)
-  slot.drawImage(canvas, 0, 0)
-  head = (head + 1) % MAX
+  ring.push((c, w, h) => c.drawImage(canvas, 0, 0, w, h))
 
   requestAnimationFrame(frame)
 }
