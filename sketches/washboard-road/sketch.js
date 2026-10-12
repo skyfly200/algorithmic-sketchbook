@@ -4,11 +4,22 @@
 // ripples that march along the road. The lane starts smooth and ruts up until the
 // ripples saturate. A grader blade sweeps across on a beat (or on a timer) and
 // scrapes it flat again, and the whole cycle repeats.
+//
+// The 1D road profile (512 cells) is cheap and stays in JS; it is uploaded as a
+// tiny float texture each frame and the per-pixel shading (cross warp, slope
+// lighting, wheel tracks, graded sheen) runs on the GPU: one pass into a small
+// buffer at the same resolution the old Canvas2D path used, a blit that scales
+// it up to the canvas, and the grader blade drawn at full resolution.
 import { createRuntime } from '../_lib/runtime.js'
+import { createGLPipe } from '../_lib/glpipe.js'
 
 const rt = createRuntime()
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
+// Made here first with antialias off: the buffer is blitted onto the canvas, which a
+// multisampled drawing buffer would refuse. glpipe then gets this same context.
+canvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: new URLSearchParams(location.search).get('capture') === '1' })
+const pipe = createGLPipe({ rt, src: null, canvas })
+const gl = pipe.gl
 
 const params = rt.params({
   speed: { value: 1, min: 0.3, max: 2.5, step: 0.05, label: 'Traffic speed' },
@@ -33,12 +44,9 @@ let road = new Float32Array(N)     // ripple height per cell (+ = a raised crest
 const CLAMP = 1.4                  // saturation cap on the ripple amplitude
 let scrollPos = 0                  // how far the road has slid past (cells)
 
-// The corrugation is shaded per pixel into a small buffer (so the cross-axis
-// warp is cheap), then scaled up to fill the whole view.
-const field = document.createElement('canvas')
-const fctx = field.getContext('2d')
-let fw = 0, fh = 0, fimg = null
-const shadeLUT = new Uint8ClampedArray(128 * 3) // dirt colour by slope
+// The corrugation is shaded per pixel into a small buffer (so it keeps the soft
+// look of the original), then scaled up to fill the whole view.
+let fw = 0, fh = 0, fieldT = null
 
 // A grader blade sweeps across and scrapes the road flat behind it. -1 = idle,
 // otherwise a 0..1 position along the road; grade[i] tracks how flat each cell is.
@@ -110,46 +118,91 @@ let lastNow = performance.now()
 
 function resize() {
   PR = rt.pixelRatio
-  W = canvas.width = Math.floor(window.innerWidth * PR)
-  H = canvas.height = Math.floor(window.innerHeight * PR)
+  W = pipe.width; H = pipe.height // glpipe sized the canvas (its listener runs first)
   // shade the corrugation into a capped-resolution buffer, then upscale to fill
   fw = Math.min(W, Math.round(520 * (0.5 + 0.5 * rt.detail)))
   fh = Math.max(2, Math.round(fw * H / W))
-  field.width = fw; field.height = fh
-  fimg = fctx.createImageData(fw, fh)
+  pipe.release(fieldT)
+  fieldT = pipe.target({ width: fw, height: fh })
   if (!road.some((v) => v !== 0)) seedRoad()
 }
 
-// dirt colour ramp by slope (windward lit → lee shaded), rebuilt when hue moves
-let lutHue = -1
-function buildShadeLUT() {
-  lutHue = params.hue
-  for (let i = 0; i < 128; i++) {
-    const slope = (i / 127) * 2 - 1
-    const l = Math.max(19, Math.min(58, 33 + slope * 15))
-    const rgb = hslToRgb(params.hue, 38 - slope * 6, l)
-    shadeLUT[i * 3] = rgb[0]; shadeLUT[i * 3 + 1] = rgb[1]; shadeLUT[i * 3 + 2] = rgb[2]
-  }
-}
-function hslToRgb(h, s, l) {
-  h /= 360; s /= 100; l /= 100
-  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h * 6) % 2) - 1)), m = l - c / 2
-  let r = 0, g = 0, b = 0
-  const seg = Math.floor(h * 6) % 6
-  if (seg === 0) { r = c; g = x } else if (seg === 1) { r = x; g = c } else if (seg === 2) { g = c; b = x }
-  else if (seg === 3) { g = x; b = c } else if (seg === 4) { r = x; b = c } else { r = c; b = x }
-  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)]
+// road profile + graded sheen per cell, as an N x 1 RG32F texture (texelFetch)
+const roadTex = { tex: gl.createTexture() }
+const roadBuf = new Float32Array(N * 2)
+gl.bindTexture(gl.TEXTURE_2D, roadTex.tex)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, N, 1, 0, gl.RG, gl.FLOAT, roadBuf)
+function uploadRoad() {
+  for (let i = 0; i < N; i++) { roadBuf[i * 2] = road[i]; roadBuf[i * 2 + 1] = graded[i] }
+  gl.bindTexture(gl.TEXTURE_2D, roadTex.tex)
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, N, 1, gl.RG, gl.FLOAT, roadBuf)
 }
 
-const sampleRoad = (fx) => {
-  const i = ((fx % N) + N) % N
-  const i0 = Math.floor(i), f = i - i0
-  return road[i0] * (1 - f) + road[(i0 + 1) % N] * f
+const HEAD = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform vec2 u_res;
+out vec4 outColor;
+`
+// Shade the road into the fw x fh buffer: the same maths as the old per-pixel loop.
+const SHADE = HEAD + `
+uniform sampler2D u_road;      // N x 1: r = ripple height, g = graded sheen
+uniform float u_scroll, u_cellsPerPx, u_xVar, u_tph, u_tracks, u_hue;
+const float N = ${N}.0;
+vec2 cellAt(float i) { return texelFetch(u_road, ivec2(int(i), 0), 0).rg; }
+float sampleRoad(float fx) {
+  float i = mod(fx, N);
+  float i0 = floor(i), f = i - i0;
+  return mix(cellAt(i0).r, cellAt(mod(i0 + 1.0, N)).r, f);
 }
-const sampleGraded = (fx) => {
-  const i = ((fx % N) + N) % N
-  return graded[Math.floor(i)]
+vec3 hsl(float h, float s, float l) {
+  vec3 k = mod(vec3(0.0, 8.0, 4.0) + h * 12.0, 12.0);
+  float a = s * min(l, 1.0 - l);
+  return l - a * clamp(min(k - 3.0, 9.0 - k), -1.0, 1.0);
 }
+void main() {
+  float px = floor(gl_FragCoord.x), py = u_res.y - 1.0 - floor(gl_FragCoord.y); // top-down, like the canvas
+  float fw = u_res.x;
+  float nx = px / fw;
+  // cross-axis warp: two spatial waves + a slow drift bend the ripple lines
+  float warp = u_xVar > 0.001
+    ? u_xVar * (sin(nx * 9.42 + py * 0.02 + u_tph) + 0.5 * sin(nx * 19.5 - u_tph * 0.7)) * 2.2
+    : 0.0;
+  float cell = u_scroll + py * u_cellsPerPx + warp;
+  float h0 = sampleRoad(cell), h1 = sampleRoad(cell + 0.6);
+  float slope = clamp((h1 - h0) * 2.4, -1.0, 1.0);
+  // dirt colour by slope (windward lit, lee shaded)
+  float l = clamp(33.0 + slope * 15.0, 19.0, 58.0);
+  vec3 c = hsl(u_hue / 360.0, (38.0 - slope * 6.0) / 100.0, l / 100.0);
+  // compacted wheel tracks bite darker where tyres run
+  if (u_tracks > 0.5) {
+    float wa = fw * 0.3, wb = fw * 0.7, ww = fw * 0.14;
+    float tr = min(1.0, (max(0.0, ww - abs(px - wa)) + max(0.0, ww - abs(px - wb))) / ww);
+    c *= 1.0 - tr * 0.28;
+  }
+  // fresh-graded cells flash a pale scraped sheen
+  float gr = cellAt(floor(mod(cell, N))).g;
+  if (gr > 0.02) c = mix(c, vec3(220.0, 210.0, 190.0) / 255.0, gr * 0.35);
+  outColor = vec4(c, 1.0);
+}`
+// The grader blade, drawn in a scissor box over the scaled-up buffer and blended
+// (premultiplied): a bright 6 px bar with the grey 5 px blade over its lower half.
+const BLADE = HEAD + `
+uniform float u_blade, u_pr;   // blade y in canvas px (top-down)
+void main() {
+  float d = (u_res.y - gl_FragCoord.y) - u_blade;
+  float a1 = 0.9 * clamp(min(d + 3.0 * u_pr, 3.0 * u_pr - d) + 0.5, 0.0, 1.0);
+  float a2 = 0.9 * clamp(min(d, 5.0 * u_pr - d) + 0.5, 0.0, 1.0);
+  vec3 c1 = vec3(255.0, 240.0, 210.0) / 255.0, c2 = vec3(120.0, 130.0, 140.0) / 255.0;
+  outColor = vec4(c2 * a2 + c1 * a1 * (1.0 - a2), a2 + a1 * (1.0 - a2));
+}`
+const shadeP = pipe.program(SHADE)
+const bladeP = pipe.program(BLADE)
 
 function frame(now) {
   rt.tick(now)
@@ -182,55 +235,39 @@ function frame(now) {
   // --- render: straight-down view filling the whole frame. Travel runs
   //     top→bottom; ripples are the transverse bands, warped across the width so
   //     the washboard also varies in x instead of reading as perfect stripes. ---
-  if (params.hue !== lutHue) buildShadeLUT()
-  const cellsPerPx = N / fh * 0.35     // vertical zoom in the buffer
-  const xv = params.xVar
-  const tph = now * 0.00018
-  const data = fimg.data
-  const wheelA = fw * 0.3, wheelB = fw * 0.7, wheelW = fw * 0.14
-  for (let py = 0; py < fh; py++) {
-    const cellBase = scrollPos + py * cellsPerPx
-    const row = py * fw
-    for (let px = 0; px < fw; px++) {
-      const nx = px / fw
-      // cross-axis warp: two spatial waves + a slow drift bend the ripple lines
-      const warp = xv > 0.001
-        ? xv * (Math.sin(nx * 9.42 + py * 0.02 + tph) + 0.5 * Math.sin(nx * 19.5 - tph * 0.7)) * 2.2
-        : 0
-      const cell = cellBase + warp
-      const h0 = sampleRoad(cell), h1 = sampleRoad(cell + 0.6)
-      let slope = (h1 - h0) * 2.4
-      slope = slope < -1 ? -1 : slope > 1 ? 1 : slope
-      const li = (((slope + 1) * 0.5) * 127) | 0
-      let r = shadeLUT[li * 3], g = shadeLUT[li * 3 + 1], b = shadeLUT[li * 3 + 2]
-      // compacted wheel tracks bite darker where tyres run
-      if (params.tracks) {
-        const tr = Math.min(1, (Math.max(0, wheelW - Math.abs(px - wheelA)) + Math.max(0, wheelW - Math.abs(px - wheelB))) / wheelW)
-        if (tr > 0) { const k = 1 - tr * 0.28; r *= k; g *= k; b *= k }
-      }
-      // fresh-graded cells flash a pale scraped sheen
-      const gr = sampleGraded(cell)
-      if (gr > 0.02) { const a = gr * 0.35; r += (220 - r) * a; g += (210 - g) * a; b += (190 - b) * a }
-      const o = (row + px) * 4
-      data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = 255
-    }
-  }
-  fctx.putImageData(fimg, 0, 0)
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.imageSmoothingEnabled = true
-  ctx.drawImage(field, 0, 0, W, H)
+  uploadRoad()
+  const tph = (now * 0.00018) % (20 * Math.PI) // 20π keeps both warp waves continuous
+  pipe.run(shadeP, { u_road: roadTex }, fieldT, (u) => {
+    u.f('u_scroll', scrollPos % N) // the road loops every N cells
+    u.f('u_cellsPerPx', N / fh * 0.35) // vertical zoom in the buffer
+    u.f('u_xVar', params.xVar)
+    u.f('u_tph', tph)
+    u.f('u_tracks', params.tracks ? 1 : 0)
+    u.f('u_hue', params.hue)
+  })
+  // scale the buffer up to the canvas: a filtered blit, no shader pass
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fieldT.fbo)
+  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null)
+  gl.blitFramebuffer(0, 0, fw, fh, 0, 0, W, H, gl.COLOR_BUFFER_BIT, gl.LINEAR)
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null)
 
   // the grader blade: a bright bar sweeping down the whole road
   if (grader >= 0) {
     const by = (((grader * N - scrollPos) / (N / H * 0.35)) % H + H) % H
-    ctx.fillStyle = 'rgba(255,240,210,0.9)'; ctx.fillRect(0, by - 3 * PR, W, 6 * PR)
-    ctx.fillStyle = 'rgba(120,130,140,0.9)'; ctx.fillRect(0, by, W, 5 * PR)
+    const y0 = Math.max(0, Math.floor(H - by - 5 * PR - 1)), y1 = Math.min(H, Math.ceil(H - by + 3 * PR + 1))
+    if (y1 > y0) {
+      gl.enable(gl.SCISSOR_TEST)
+      gl.scissor(0, y0, W, y1 - y0)
+      gl.enable(gl.BLEND)
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+      pipe.run(bladeP, {}, null, (u) => { u.f('u_blade', by); u.f('u_pr', PR) })
+      gl.disable(gl.BLEND)
+      gl.disable(gl.SCISSOR_TEST)
+    }
   }
 
   requestAnimationFrame(frame)
 }
-
-function hsl(h, s, l) { return `hsl(${h}, ${s}%, ${l}%)` }
 
 window.addEventListener('resize', resize)
 resize()
