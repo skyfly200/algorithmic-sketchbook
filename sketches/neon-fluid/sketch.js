@@ -4,8 +4,16 @@
  * scrolling fractal potential gives an incompressible, fluid-like velocity
  * field (it swirls instead of piling up); additive blending plus a bloom pass
  * make the streaks read as neon. Drag to stir the fluid; beats pulse the flow.
+ *
+ * Everything runs on the GPU (sketches/_lib/glpipe.js): particle positions live
+ * in a texture (one texel per particle, 16-bit fixed point so it works with or
+ * without float targets) that a shader pass advances through the curl field;
+ * the particles are then splatted as additive points into a persistent trail
+ * texture (float when available, so the fade reaches true black), and the
+ * display adds a separable Gaussian bloom of the trails, never fed back.
  */
 import { createRuntime } from '../_lib/runtime.js'
+import { createGLPipe } from '../_lib/glpipe.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -22,78 +30,176 @@ rt.mapInput('audio.volume', 'flow', 0.6)
 rt.mapInput('audio.pulse', 'swirl', 0.5)
 
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-// Persistent trail buffer — particles accumulate here and fade over time. The
-// display canvas composites this plus a bloom pass, so bloom never feeds back.
-const trailC = document.createElement('canvas')
-const trailCtx = trailC.getContext('2d')
-const glowC = document.createElement('canvas')
-const glowCtx = glowC.getContext('2d')
+const pipe = createGLPipe({ rt, src: null, canvas })
+const gl = pipe.gl
+const seedOff = rt.rng() * 100
+const seedPos = rt.rng() * 100
+const seedHue = rt.rng() * 100
 
-// --- value-noise fractal for the flow potential -----------------------------
-const seedOff = rt.rng() * 1000
-function hash(x, y) {
-  const s = Math.sin(x * 127.1 + y * 311.7 + seedOff) * 43758.5453
-  return s - Math.floor(s)
+// --- shaders -------------------------------------------------------------------
+// Particle state: texel k = particle k, x in RG and y in BA as 16-bit fractions of
+// the canvas size (y down, like the old canvas coordinates).
+const PACK16 = `
+float unpack16(vec2 c) { return (floor(c.x * 255.0 + 0.5) * 256.0 + floor(c.y * 255.0 + 0.5)) / 65536.0; }
+vec2 pack16(float t) { float n = floor(clamp(t, 0.0, 0.99999) * 65536.0); float hi = floor(n / 256.0); return vec2(hi, n - hi * 256.0) / 255.0; }
+vec2 decPos(vec4 c) { return vec2(unpack16(c.rg), unpack16(c.ba)); }
+vec4 encPos(vec2 p) { return vec4(pack16(p.x), pack16(p.y)); }
+float hash1(float n, float s) { return fract(sin(n * 0.1031 + s) * 43758.5453); }
+`
+const STATE_W = 256
+const pSeed = pipe.program(`#version 300 es
+precision highp float;
+uniform float u_seed;
+out vec4 o;
+${PACK16}
+void main() {
+  float k = floor(gl_FragCoord.y) * ${STATE_W}.0 + floor(gl_FragCoord.x);
+  o = encPos(vec2(hash1(k, u_seed), hash1(k + 7919.0, u_seed * 1.37 + 3.1)));
+}`)
+// Curl of a scrolling 4-octave value-noise potential → divergence-free velocity,
+// normalised to a constant speed; plus the pointer stir; wrap at the edges.
+const pStep = pipe.program(`#version 300 es
+precision highp float;
+uniform sampler2D u_state;
+uniform vec2 u_size;      // canvas px
+uniform float u_sc, u_spd, u_curl, u_scroll, u_seed;
+uniform vec4 u_mouse;     // x, y (px), vx, vy (px / frame)
+uniform float u_stir, u_stirR;
+out vec4 o;
+${PACK16}
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7)) + u_seed) * 43758.5453); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = p - i, u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
 }
-function vnoise(x, y) {
-  const ix = Math.floor(x)
-  const iy = Math.floor(y)
-  const fx = x - ix
-  const fy = y - iy
-  const ux = fx * fx * (3 - 2 * fx)
-  const uy = fy * fy * (3 - 2 * fy)
-  const a = hash(ix, iy)
-  const b = hash(ix + 1, iy)
-  const c = hash(ix, iy + 1)
-  const d = hash(ix + 1, iy + 1)
-  return a * (1 - ux) * (1 - uy) + b * ux * (1 - uy) + c * (1 - ux) * uy + d * ux * uy
+float fbm(vec2 p) {
+  float s = 0.0, a = 0.5, f = 1.0, n = 0.0;
+  for (int i = 0; i < 4; i++) { s += a * vnoise(p * f); n += a; a *= 0.5; f *= 2.0; }
+  return s / n;
 }
-function fbm(x, y) {
-  let sum = 0
-  let amp = 0.5
-  let f = 1
-  let norm = 0
-  for (let i = 0; i < 4; i++) {
-    sum += amp * vnoise(x * f, y * f)
-    norm += amp
-    amp *= 0.5
-    f *= 2
+void main() {
+  vec2 x = decPos(texelFetch(u_state, ivec2(gl_FragCoord.xy), 0)) * u_size;
+  vec2 p = vec2(x.x * u_sc, x.y * u_sc + u_scroll);
+  const float e = 1.2;
+  vec2 v = vec2(fbm(p + vec2(0, e)) - fbm(p - vec2(0, e)), -(fbm(p + vec2(e, 0)) - fbm(p - vec2(e, 0)))) * u_curl;
+  v *= u_spd / (length(v) + 1e-4);
+  if (u_stir > 0.5) {
+    float d = length(x - u_mouse.xy);
+    if (d < u_stirR) v += u_mouse.zw * (1.0 - d / u_stirR) * 1.6;
   }
-  return sum / norm
-}
-
-let W = 0
-let H = 0
-let PR = 1
-let ps = null // particle state: x,y arrays
-let hueA = null
-let N = 0
-let tScroll = 0
-
-function alloc() {
-  N = Math.floor((5200 * params.density) * (0.5 + rt.detail))
-  ps = { x: new Float32Array(N), y: new Float32Array(N), h: new Float32Array(N) }
-  for (let i = 0; i < N; i++) {
-    ps.x[i] = Math.random() * W
-    ps.y[i] = Math.random() * H
-    ps.h[i] = Math.random()
+  o = encPos(fract((x + v) / u_size));
+}`)
+const pFade = pipe.program(`#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_trail;
+uniform float u_keep;
+out vec4 o;
+void main() { o = vec4(min(texture(u_trail, v_uv).rgb, 1.0) * u_keep, 1.0); }`)
+// Bloom: half-resolution separable Gaussian with sigma = 3.5 px x pixelRatio
+// (what the old canvas blur(3.5px) did), on the clamped trails.
+const pBlur = pipe.program(`#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_in;
+uniform vec2 u_dir;    // one texel of the input along the blur axis (uv)
+uniform float u_sigma; // in output texels
+out vec4 o;
+void main() {
+  vec3 s = vec3(0.0); float ws = 0.0;
+  int r = min(24, int(ceil(u_sigma * 3.0)));
+  for (int k = -r; k <= r; k++) {
+    float w = exp(-0.5 * float(k * k) / (u_sigma * u_sigma));
+    s += min(texture(u_in, v_uv + u_dir * float(k)).rgb, 1.0) * w; ws += w;
   }
+  o = vec4(s / ws, 1.0);
+}`)
+const pShow = pipe.program(`#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_trail, u_glow;
+uniform float u_amt;
+out vec4 o;
+void main() {
+  vec3 c = vec3(4.0, 4.0, 10.0) / 255.0 + min(texture(u_trail, v_uv).rgb, 1.0);
+  c = min(c, 1.0) + texture(u_glow, v_uv).rgb * u_amt;
+  o = vec4(min(c, 1.0), 1.0);
+}`)
+
+// Particle splat: one point per particle, read from the state texture by vertex id.
+// Each covers the canvas pixels a PR x PR square at its sub-pixel position would
+// (like the old antialiased fillRect), in hsl(hue + spread·k + 40·speed, 100%,
+// 52 + 24·speed %). Speed comes from the old and new positions.
+function compile(type, src) {
+  const s = gl.createShader(type)
+  gl.shaderSource(s, src)
+  gl.compileShader(s)
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s))
+  return s
 }
+const ptProg = gl.createProgram()
+gl.attachShader(ptProg, compile(gl.VERTEX_SHADER, `#version 300 es
+precision highp float;
+uniform sampler2D u_prev, u_next;
+uniform vec2 u_size;
+uniform float u_pr, u_spd, u_hue, u_spread, u_seed;
+out vec3 v_col; out vec2 v_pos;
+${PACK16}
+vec3 hsl(float h, float s, float l) {
+  vec3 k = clamp(abs(mod(h / 60.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+  return l + s * (k - 0.5) * (1.0 - abs(2.0 * l - 1.0));
+}
+void main() {
+  ivec2 t = ivec2(gl_VertexID % ${STATE_W}, gl_VertexID / ${STATE_W});
+  vec2 x = decPos(texelFetch(u_next, t, 0)) * u_size;
+  vec2 d = x - decPos(texelFetch(u_prev, t, 0)) * u_size;
+  d -= u_size * floor(d / u_size + 0.5); // across a wrap
+  float speed = length(d) / u_spd;
+  float h = mod(u_hue + hash1(float(gl_VertexID), u_seed) * u_spread + speed * 40.0, 360.0);
+  v_col = hsl(h, 1.0, min(1.0, (52.0 + speed * 24.0) / 100.0));
+  v_pos = x;
+  float sz = ceil(u_pr) + 1.0; // enough pixels for any sub-pixel offset
+  gl_PointSize = sz;
+  vec2 c = floor(x) + sz * 0.5;
+  gl_Position = vec4(c.x / u_size.x * 2.0 - 1.0, 1.0 - c.y / u_size.y * 2.0, 0.0, 1.0);
+}`))
+gl.attachShader(ptProg, compile(gl.FRAGMENT_SHADER, `#version 300 es
+precision highp float;
+in vec3 v_col; in vec2 v_pos;
+uniform vec2 u_size;
+uniform float u_pr;
+out vec4 o;
+void main() {
+  vec2 px = vec2(gl_FragCoord.x, u_size.y - gl_FragCoord.y) - 0.5; // this pixel's top-left, canvas coords
+  vec2 ov = max(vec2(0.0), min(px + 1.0, v_pos + u_pr) - max(px, v_pos));
+  float cov = ov.x * ov.y;
+  if (cov <= 0.0) discard;
+  o = vec4(v_col * cov, 1.0);
+}`))
+gl.linkProgram(ptProg)
+if (!gl.getProgramParameter(ptProg, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(ptProg))
+const ptLoc = {}
+const ptU = (n) => (n in ptLoc ? ptLoc[n] : (ptLoc[n] = gl.getUniformLocation(ptProg, n)))
+const ptVao = gl.createVertexArray()
+
+// --- state -----------------------------------------------------------------------
+const MAX_N = Math.floor(5200 * (0.5 + rt.detail)) // particles at density 1
+const STATE_H = Math.ceil(MAX_N / STATE_W)
+let state = [0, 1].map(() => pipe.target({ width: STATE_W, height: STATE_H, filter: 'NEAREST' }))
+let trail = []
+let glowA = null, glowB = null
+let W = 0, H = 0, PR = 1
 
 function resize() {
   PR = rt.pixelRatio
-  W = canvas.width = Math.floor(window.innerWidth * PR)
-  H = canvas.height = Math.floor(window.innerHeight * PR)
-  for (const c of [trailC, glowC]) {
-    c.width = W
-    c.height = H
-  }
-  trailCtx.fillStyle = '#000'
-  trailCtx.fillRect(0, 0, W, H)
-  ctx.fillStyle = '#04040a'
-  ctx.fillRect(0, 0, W, H)
-  alloc()
+  W = pipe.width
+  H = pipe.height
+  ;[...trail, glowA, glowB].forEach((t) => pipe.release(t))
+  trail = [0, 1].map(() => pipe.target({ width: W, height: H, float: true }))
+  glowA = pipe.target({ width: Math.ceil(W / 2), height: Math.ceil(H / 2), float: true })
+  glowB = pipe.target({ width: Math.ceil(W / 2), height: Math.ceil(H / 2), float: true })
+  // fresh particles, like the old resize (positions are fractions, so any size works)
+  pipe.run(pSeed, {}, state[0], (u) => u.f('u_seed', seedPos + rt.random(0, 10)))
 }
 
 // --- pointer stirring -------------------------------------------------------
@@ -114,105 +220,69 @@ canvas.addEventListener('pointerdown', (e) => {
 window.addEventListener('pointermove', setMouse)
 window.addEventListener('pointerup', () => (mouse.down = false))
 
-let lastDensity = -1
+let tScroll = 0
 function frame(now) {
   rt.tick(now)
-  if (params.density !== lastDensity) {
-    alloc()
-    lastDensity = params.density
-  }
-
-  // Fade the trail buffer toward black — this is the trail length.
-  trailCtx.globalCompositeOperation = 'source-over'
-  trailCtx.globalAlpha = 1
-  trailCtx.fillStyle = `rgba(0,0,0,${params.fade})`
-  trailCtx.fillRect(0, 0, W, H)
+  // particle count follows the density (and detail) the way the old allocator did
+  const N = Math.min(MAX_N, Math.floor((5200 * params.density) * (0.5 + rt.detail)))
 
   tScroll += 0.0016 * params.flow
   const sc = (0.0022 / PR) * params.scale // spatial frequency of the field
   const spd = 2.4 * PR * params.flow
-  const curlAmt = params.swirl
-  const eps = 1.2
-  const hueBase = params.hue
-  const spread = params.hueSpread
-
-  trailCtx.globalCompositeOperation = 'lighter'
   const mvx = mouse.vx
   const mvy = mouse.vy
   const stir = mouse.down || (mouse.active && (Math.abs(mvx) + Math.abs(mvy)) > 0.5)
-  const stirR = 150 * PR
   mouse.vx *= 0.8
   mouse.vy *= 0.8
 
-  for (let i = 0; i < N; i++) {
-    let x = ps.x[i]
-    let y = ps.y[i]
+  // advance the particles: state[0] → state[1]
+  pipe.run(pStep, { u_state: state[0] }, state[1], (u) => {
+    u.v2('u_size', W, H)
+    u.f('u_sc', sc)
+    u.f('u_spd', spd)
+    u.f('u_curl', params.swirl)
+    u.f('u_scroll', tScroll)
+    u.f('u_seed', seedOff)
+    u.v4('u_mouse', mouse.x, mouse.y, mvx, mvy)
+    u.f('u_stir', stir ? 1 : 0)
+    u.f('u_stirR', 150 * PR)
+  })
 
-    // Curl of the scrolling potential → divergence-free velocity.
-    const px = x * sc
-    const py = y * sc + tScroll
-    const n1 = fbm(px, py + eps)
-    const n2 = fbm(px, py - eps)
-    const n3 = fbm(px + eps, py)
-    const n4 = fbm(px - eps, py)
-    let vx = (n1 - n2) * curlAmt
-    let vy = -(n3 - n4) * curlAmt
-    const inv = spd / (Math.hypot(vx, vy) + 1e-4)
-    vx *= inv
-    vy *= inv
+  // fade the trail buffer toward black (this is the trail length), then add the particles
+  pipe.run(pFade, { u_trail: trail[0] }, trail[1], (u) => u.f('u_keep', 1 - params.fade))
+  trail = [trail[1], trail[0]]
+  const vao = gl.getParameter(gl.VERTEX_ARRAY_BINDING)
+  gl.useProgram(ptProg)
+  gl.bindFramebuffer(gl.FRAMEBUFFER, trail[0].fbo)
+  gl.viewport(0, 0, W, H)
+  gl.activeTexture(gl.TEXTURE0)
+  gl.bindTexture(gl.TEXTURE_2D, state[0].tex)
+  gl.uniform1i(ptU('u_prev'), 0)
+  gl.activeTexture(gl.TEXTURE1)
+  gl.bindTexture(gl.TEXTURE_2D, state[1].tex)
+  gl.uniform1i(ptU('u_next'), 1)
+  gl.uniform2f(ptU('u_size'), W, H)
+  gl.uniform1f(ptU('u_pr'), PR)
+  gl.uniform1f(ptU('u_spd'), spd)
+  gl.uniform1f(ptU('u_hue'), params.hue)
+  gl.uniform1f(ptU('u_spread'), params.hueSpread)
+  gl.uniform1f(ptU('u_seed'), seedHue)
+  gl.bindVertexArray(ptVao)
+  gl.enable(gl.BLEND)
+  gl.blendFunc(gl.ONE, gl.ONE)
+  gl.drawArrays(gl.POINTS, 0, N)
+  gl.disable(gl.BLEND)
+  gl.bindVertexArray(vao)
+  state = [state[1], state[0]]
 
-    // Pointer stir: push particles along the drag near the cursor.
-    if (stir) {
-      const dx = x - mouse.x
-      const dy = y - mouse.y
-      const d2 = dx * dx + dy * dy
-      if (d2 < stirR * stirR) {
-        const f = 1 - Math.sqrt(d2) / stirR
-        vx += mvx * f * 1.6
-        vy += mvy * f * 1.6
-      }
-    }
-
-    x += vx
-    y += vy
-
-    // Wrap around the edges and re-seed a fraction for freshness.
-    if (x < 0) x += W
-    else if (x >= W) x -= W
-    if (y < 0) y += H
-    else if (y >= H) y -= H
-
-    ps.x[i] = x
-    ps.y[i] = y
-
-    const speed = Math.hypot(vx, vy) / spd
-    const h = (hueBase + ps.h[i] * spread + speed * 40) % 360
-    const light = 52 + speed * 24
-    trailCtx.fillStyle = `hsl(${h}, 100%, ${light}%)`
-    trailCtx.fillRect(x, y, PR, PR)
+  // display: dark ground + trails + bloom (blurred trails, display only)
+  const glow = params.glow > 0.02
+  if (glow) {
+    const sigma = 1.75 * PR // 3.5 px x PR at half resolution
+    pipe.run(pBlur, { u_in: trail[0] }, glowA, (u) => { u.v2('u_dir', 2 / W, 0); u.f('u_sigma', sigma) })
+    pipe.run(pBlur, { u_in: glowA }, glowB, (u) => { u.v2('u_dir', 0, 1 / glowA.h); u.f('u_sigma', sigma) })
   }
-  trailCtx.globalCompositeOperation = 'source-over'
-
-  // Composite to the display: dark ground + the trail buffer + a bloom pass
-  // (blurred trail added on top). Bloom is display-only, never fed back.
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.globalAlpha = 1
-  ctx.fillStyle = '#04040a'
-  ctx.fillRect(0, 0, W, H)
-  ctx.globalCompositeOperation = 'lighter'
-  ctx.drawImage(trailC, 0, 0)
-  if (params.glow > 0.02) {
-    glowCtx.globalCompositeOperation = 'source-over'
-    glowCtx.globalAlpha = 1
-    glowCtx.clearRect(0, 0, W, H)
-    glowCtx.filter = `blur(${3.5 * PR}px)`
-    glowCtx.drawImage(trailC, 0, 0)
-    glowCtx.filter = 'none'
-    ctx.globalAlpha = params.glow
-    ctx.drawImage(glowC, 0, 0)
-    ctx.globalAlpha = 1
-  }
-  ctx.globalCompositeOperation = 'source-over'
+  pipe.run(pShow, { u_trail: trail[0], u_glow: glowB }, null, (u) => u.f('u_amt', glow ? params.glow : 0))
   requestAnimationFrame(frame)
 }
 
