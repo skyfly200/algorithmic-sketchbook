@@ -1,0 +1,7 @@
+{
+  "title": "Fractal Cube",
+  "description": "A Menger sponge ray-marched in real time: a cube with its centre and face-centres carved out, again and again in every remaining sub-cube, leaving an infinitely porous lattice. Written as a kaleidoscopic IFS (fold, sort, scale, offset), so beyond the classic sponge it can twist each recursion level and change the scale factor to grow cathedral-like and crystalline variants. Recursion depth, fold scale, twist, orbit speed, camera tilt / turn, distance, hue, palette spread and halo glow are live params; the pointer steers the camera, loudness nudges the orbit and beats flare the halo. Ambient occlusion comes from the distance field.",
+  "tags": ["shader", "fractal", "3d", "raymarching", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-10-15"
+}
