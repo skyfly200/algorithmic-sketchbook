@@ -14,6 +14,7 @@ const ORDER = [
   ['overview', 'mdi-book-open-page-variant-outline'],
   ['viewer', 'mdi-eye-outline'],
   ['inputs', 'mdi-tune-vertical'],
+  ['bridge', 'mdi-lan-connect'],
   ['scenes', 'mdi-movie-open-star-outline'],
   ['mixer', 'mdi-layers-triple-outline'],
   ['patch', 'mdi-vector-polyline'],
