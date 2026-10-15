@@ -31,8 +31,9 @@ be driven by any input without the sketch knowing the source.
 - `sketches/_lib/runtime.js` — `rt.params()`, `rt.mapInput()`, the mapping editor,
   scenes, and "learn" (map the next control you move).
 - `sketches/_lib/inputs.js` — providers: **MIDI** (Web MIDI), **Leap**, **Art-Net**
-  and the **remote** relay (phone control surface + OSC). `scripts/artnet-bridge.mjs`
-  and `scripts/remote-server.mjs` are the small local bridges browsers need for UDP.
+  and the **remote** relay (phone control surface + OSC). `bridge/` holds the small
+  local bridges browsers need for UDP; `npm run bridge:package` packages them with a
+  Node runtime and the built app as a per-OS download with an installer.
 - `sketches/_lib/beat.js` — audio analysis and beat detection.
 
 Left to do: more providers as needed (direct OSC without the relay), and exposing

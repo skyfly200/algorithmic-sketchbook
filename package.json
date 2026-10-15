@@ -14,6 +14,8 @@
     "artnet-bridge": "node scripts/artnet-bridge.mjs",
     "remote": "node scripts/remote-server.mjs",
     "remote:build": "vite build && node scripts/remote-server.mjs",
+    "bridge": "node bridge/main.mjs",
+    "bridge:package": "node scripts/package-bridge.mjs",
     "perf": "node scripts/perf-audit.mjs",
     "icons": "node scripts/gen-icons.mjs",
     "bench": "node scripts/bench.mjs"
@@ -32,6 +34,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
+    "esbuild": "^0.25.12",
     "vite": "^6.0.3",
     "vite-plugin-vuetify": "^2.0.4",
     "vitest": "^4.1.11"

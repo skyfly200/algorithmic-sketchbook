@@ -62,8 +62,9 @@ cymatics) also take the raw FFT directly for physically-driven standing waves.
 - **Leap Motion Controller** needs the Ultraleap tracking service running
   locally; the runtime connects to its websocket and exposes hand position and
   pinch/grab.
-- **Art-Net** brings DMX into the browser through a small local bridge —
-  run `npm run artnet-bridge` and channels arrive as `artnet.chN`. This is how a
+- **Art-Net** brings DMX into the browser through a small local bridge, the
+  *Sketchbook Bridge* (a download per OS with Start / Install launchers, or
+  `npm run artnet-bridge` from a checkout); channels arrive as `artnet.chN`. This is how a
   lighting desk can drive the visuals, or the visuals can be programmed from the
   same console as the rig.
 - **Accelerometer / tilt** works on phones and tablets after the one-time motion
