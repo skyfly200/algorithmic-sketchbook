@@ -49,7 +49,8 @@ import CurveEditor from '../components/CurveEditor.vue'
 import perfScores from '../registry/perf.json'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
-import { createMidiInput, createLeapInput, createArtnetInput } from '../../sketches/_lib/inputs.js'
+import { BRIDGE_DOWNLOAD_URL, BRIDGE_DOCS_ROUTE, needsBridge } from '../lib/bridge.js'
+import { createMidiInput, createLeapInput, createArtnetInput, createRemoteInput } from '../../sketches/_lib/inputs.js'
 import { mediaLibrary, mediaState, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, sharedCameraStream, flipSharedCamera, startSharedScreen, stopSharedScreen, sharedScreenOn, sharedScreenStream } from '../stores/media.js'
 import { pickFromGooglePhotos, setGooglePhotosClientId, googlePhotosConfigured } from '../lib/googlePhotos.js'
 // Source-filter sketches (built on _lib/source.js): they accept a mixer:frame
@@ -1188,20 +1189,28 @@ function outKind(node) {
 }
 
 // --- control input sources (mirror of the sketch runtime's resolver) -------
-const cin = { midi: createMidiInput(), leap: createLeapInput(), artnet: createArtnetInput() }
-const started = { midi: false, leap: false, artnet: false }
+const cin = { midi: createMidiInput(), leap: createLeapInput(), artnet: createArtnetInput(), remote: createRemoteInput() }
+const started = { midi: false, leap: false, artnet: false, remote: false }
 const mouseN = { x: 0.5, y: 0.5 }
 const touchN = { x: 0.5, y: 0.5, down: 0 }
 function ensureInput(src) {
   if (src.startsWith('midi.') && !started.midi) { started.midi = true; cin.midi.start() }
   else if (src.startsWith('leap.') && !started.leap) { started.leap = true; cin.leap.start() }
   else if (src.startsWith('artnet.') && !started.artnet) { started.artnet = true; cin.artnet.start() }
+  // the phone / OSC hub only exists on the bridge's own origin (http on this machine or the LAN)
+  else if (src.startsWith('remote.') && !started.remote && remoteLanHttp()) { started.remote = true; cin.remote.start() }
 }
+// Art-Net and phone / OSC arrive through the Sketchbook Bridge; the Input node says whether they can
+const artnetLive = ref(false)
+const onBridgeOrigin = remoteLanHttp()
+const artnetPoll = setInterval(() => { artnetLive.value = performance.now() - cin.artnet.state.at < 3000 }, 1000)
+onBeforeUnmount(() => clearInterval(artnetPoll))
 function sourceValue(src, now) {
   const s = src?.startsWith('beat.') ? 'audio.' + src.slice(5) : src
   if (!s) return 0
   if (s.startsWith('midi.cc')) return cin.midi.state.cc[parseInt(s.slice(7), 10)] ?? 0
   if (s.startsWith('artnet.ch')) return cin.artnet.state.ch[parseInt(s.slice(9), 10) - 1] ?? 0
+  if (s.startsWith('remote.')) return cin.remote.state[s.slice(7)] ?? 0
   const b = beat.state
   switch (s) {
     case 'audio.pulse': return b.pulse
@@ -4720,6 +4729,11 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
                 <input type="range" min="0" max="0.98" step="0.02" :value="m.smooth ?? 0" title="smoothing" @input="m.smooth = +$event.target.value; syncEffectMappings(n.id)" />
                 <button class="mini" title="Remove" @click="removeEffectMapping(n.id, mi)">×</button>
               </div>
+              <div v-if="effectControls.get(n.id).mappings.some((m) => needsBridge(m.source))" class="media-hint bridge-hint" @pointerdown.stop>
+                Art-Net and phone / OSC (remote.*) sources need the Sketchbook Bridge on this computer.
+                <a :href="BRIDGE_DOWNLOAD_URL" target="_blank" rel="noopener">Download</a> ·
+                <router-link :to="BRIDGE_DOCS_ROUTE" target="_blank">Setup guide</router-link>
+              </div>
             </div>
           </template>
 
@@ -4741,6 +4755,12 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
               </select>
             </label>
             <label class="chk"><input type="checkbox" v-model="n.params.invert" @change="persist" @pointerdown.stop /> invert</label>
+            <div v-if="needsBridge(n.params.source)" class="media-hint bridge-hint" @pointerdown.stop>
+              <template v-if="n.params.source.startsWith('artnet.')">{{ artnetLive ? 'Receiving Art-Net.' : 'No Art-Net yet: DMX reaches the browser through the Sketchbook Bridge running on this computer.' }}</template>
+              <template v-else>{{ onBridgeOrigin ? 'Phone / OSC controls arrive through the Sketchbook Bridge.' : 'Phone / OSC controls only work when the app is opened from the Sketchbook Bridge (http://localhost:7777), not this site.' }}</template>
+              <a :href="BRIDGE_DOWNLOAD_URL" target="_blank" rel="noopener">Download</a> ·
+              <router-link :to="BRIDGE_DOCS_ROUTE" target="_blank">Setup guide</router-link>
+            </div>
           </template>
           <template v-if="n.type === 'tracker'">
             <div class="media-hint">Tracks the brightest blob. Wire a video source into the port on the left, or turn the webcam on and it tracks that. Outputs x / y / size — drag them to any param jack.</div>
@@ -5205,6 +5225,7 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
 }
 .load-btn:hover { background: #1a1d28; }
 .media-hint { font: 10px system-ui, sans-serif; color: #9aa4c0; opacity: 0.8; }
+.bridge-hint a { color: #8ab4ff; }
 .text-in {
   width: 100%; background: #12141c; color: #e8ecf5; border: 1px solid #333;
   border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif;

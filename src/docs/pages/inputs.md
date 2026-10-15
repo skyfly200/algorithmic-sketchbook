@@ -27,7 +27,8 @@ and saved with [scenes](#/docs/scenes) and patches.
 | `time.sin` | A slow ~10-second oscillation — free automation with no hardware at all. |
 | `midi.ccN` · `midi.note` · `midi.velocity` | Any MIDI controller (via the Web MIDI API); every CC number resolves (`midi.cc74`, …). |
 | `leap.x` · `y` · `z` · `pinch` · `grab` | Leap Motion Controller — hand position and pinch/grab. |
-| `artnet.chN` | DMX channels received over the network (Art-Net protocol). |
+| `artnet.chN` | DMX channels received over the network (Art-Net protocol), through the [Sketchbook Bridge](#/docs/bridge). |
+| `remote.*` | The phone controller and OSC apps, through the [Sketchbook Bridge](#/docs/bridge). |
 
 All sources are normalised to roughly `0..1` (bipolar ones like tilt sit around
 `0.5` at rest), so a single *amount* behaves predictably across them.
@@ -62,11 +63,13 @@ cymatics) also take the raw FFT directly for physically-driven standing waves.
 - **Leap Motion Controller** needs the Ultraleap tracking service running
   locally; the runtime connects to its websocket and exposes hand position and
   pinch/grab.
-- **Art-Net** brings DMX into the browser through a small local bridge, the
-  *Sketchbook Bridge* (a download per OS with Start / Install launchers, or
-  `npm run artnet-bridge` from a checkout); channels arrive as `artnet.chN`. This is how a
+- **Art-Net** brings DMX into the browser through the
+  [Sketchbook Bridge](#/docs/bridge), a small download per OS with Start and
+  Install launchers; channels arrive as `artnet.chN`. This is how a
   lighting desk can drive the visuals, or the visuals can be programmed from the
   same console as the rig.
+- **Phone controller and OSC** come in through the same
+  [Sketchbook Bridge](#/docs/bridge) as `remote.*` sources.
 - **Accelerometer / tilt** works on phones and tablets after the one-time motion
   permission prompt; on a desktop it quietly falls back to mouse position so
   mappings still do something.
