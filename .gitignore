@@ -6,3 +6,7 @@ dist/
 
 # output of scripts/scratch (temporary)
 scripts/scratch/out/
+
+# bridge bundles (npm run bridge:package) and their Node download cache
+release/
+.cache/

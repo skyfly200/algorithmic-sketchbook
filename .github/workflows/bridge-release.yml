@@ -1,0 +1,37 @@
+# Builds the Sketchbook Bridge downloads (scripts/package-bridge.mjs) and attaches
+# them to a GitHub release. Runs on a `bridge-v*` tag, or by hand from the Actions
+# tab (then the zips are only kept as workflow artifacts).
+name: Bridge release
+
+on:
+  push:
+    tags: ['bridge-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run bridge:package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sketchbook-bridge
+          path: release/*.zip
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "Sketchbook Bridge ${GITHUB_REF_NAME#bridge-v}" --notes "Unzip, then run Start Bridge (or Install to start it at every login). See README.txt inside."
+          gh release upload "$GITHUB_REF_NAME" release/*.zip --clobber

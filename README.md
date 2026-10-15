@@ -135,6 +135,30 @@ Example sketches: `flow-field` (params + a default beat→speed mapping),
 `beat-rings` (beat callbacks), `motion-extraction` (webcam motion extraction
 with delay/blend/freeze params — works without a camera via its demo source).
 
+### The local bridge, packaged
+
+Browsers can't receive UDP, so Art-Net and OSC need a small local program. `bridge/`
+holds it: `bridge/artnet.mjs` (Art-Net → SSE on `:9321`), `bridge/remote.mjs` (the
+phone / OSC relay above, which also serves the app on `:7777`) and `bridge/main.mjs`,
+which runs both (`npm run build && npm run bridge`). `npm run artnet-bridge` and
+`npm run remote` still start each one alone.
+
+`npm run bridge:package` builds one zip per OS in `release/` (Windows x64, macOS
+arm64 / x64, Linux x64 / arm64) for people without Node or a checkout. Each holds the
+official Node.js runtime from nodejs.org (checksum-verified, left exactly as nodejs.org
+signed it), the bridge bundled into one `bridge.cjs`, the built app, and launchers:
+
+- **Start Bridge**: runs it in a window and opens the app.
+- **Install**: copies it to the user's folder (no admin rights) and starts it now and at
+  every login: a LaunchAgent on macOS, a hidden Startup-folder launcher plus a Settings >
+  Apps entry on Windows, a systemd user unit (or an XDG autostart entry) on Linux.
+- **Uninstall**: stops it and removes the login item and the installed copy.
+
+Neither the launchers nor the zips are code-signed, so Windows SmartScreen and macOS
+Gatekeeper warn on first open; each zip's `README.txt` says how to get past that. The
+`Bridge release` workflow (`.github/workflows/bridge-release.yml`) builds the zips on a
+`bridge-v*` tag and attaches them to a GitHub release.
+
 ## Adding an embedded sketch
 
 ```bash
