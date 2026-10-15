@@ -3,8 +3,13 @@
 // noise slide at different speeds with a height bias (fog pools low), the
 // scene dims into the murk with density, and beats send a slow extra surge
 // rolling through.
+//
+// One fragment shader: the two seeded fbm tiles are baked once into one small
+// texture (with a 1 px wrap border so they tile seamlessly), so it can also run
+// inside a Patch filter chain.
 import { createRuntime } from '../_lib/runtime.js'
 import { createSource } from '../_lib/source.js'
+import { createGLFilter } from '../_lib/glfilter.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -18,17 +23,10 @@ const params = rt.params({
 rt.mapInput('audio.low', 'density', 0.25)
 rt.mapInput('audio.pulse', 'drift', 0.5)
 
-const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-const src = createSource()
 
-// --- baked fog noise: two seeded fbm tiles, pre-blurred -------------------
+// --- baked fog noise: seeded, tileable fbm, softened with a wrapping blur ---
+const S = 256
 function bakeNoise(scale) {
-  const size = 256
-  const c = document.createElement('canvas')
-  c.width = c.height = size
-  const cc = c.getContext('2d')
-  const img = cc.createImageData(size, size)
   const P = new Uint8Array(512)
   const p = [...Array(256).keys()]
   for (let i = 255; i > 0; i--) {
@@ -49,105 +47,117 @@ function bakeNoise(scale) {
     const b = h(xi, yi + 1) + u * (h(xi + 1, yi + 1) - h(xi, yi + 1))
     return a + fade(yf) * (b - a)
   }
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const fx = (x / size) * scale
-      const fy = (y / size) * scale
-      let n = 0.55 * vn(fx, fy, scale) + 0.3 * vn(fx * 2, fy * 2, scale * 2) + 0.15 * vn(fx * 4, fy * 4, scale * 4)
-      n = Math.max(0, (n - 0.32) * 1.6) // lift the shapes out of the mid-gray
-      const i = (y * size + x) * 4
-      img.data[i] = img.data[i + 1] = img.data[i + 2] = 255
-      img.data[i + 3] = Math.min(255, n * 255)
+  const out = new Float32Array(S * S)
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const fx = (x / S) * scale
+      const fy = (y / S) * scale
+      const n = 0.55 * vn(fx, fy, scale) + 0.3 * vn(fx * 2, fy * 2, scale * 2) + 0.15 * vn(fx * 4, fy * 4, scale * 4)
+      out[y * S + x] = Math.min(1, Math.max(0, (n - 0.32) * 1.6)) // lift the shapes out of the mid-gray
     }
   }
-  cc.putImageData(img, 0, 0)
-  // soften the lattice
-  const c2 = document.createElement('canvas')
-  c2.width = c2.height = size
-  const cc2 = c2.getContext('2d')
-  cc2.filter = 'blur(2px)'
-  cc2.drawImage(c, 0, 0)
-  return c2
+  return blurWrap(out, 2)
 }
-const noiseA = bakeNoise(5)
-const noiseB = bakeNoise(9)
+// separable gaussian with wrap-around, so the tile stays seamless
+function blurWrap(a, sigma) {
+  const r = Math.ceil(sigma * 3)
+  const k = []
+  let ks = 0
+  for (let i = -r; i <= r; i++) { const w = Math.exp(-(i * i) / (2 * sigma * sigma)); k.push(w); ks += w }
+  const tmp = new Float32Array(S * S)
+  const out = new Float32Array(S * S)
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    let s = 0
+    for (let i = -r; i <= r; i++) s += a[y * S + ((x + i + S) % S)] * k[i + r]
+    tmp[y * S + x] = s / ks
+  }
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    let s = 0
+    for (let i = -r; i <= r; i++) s += tmp[((y + i + S) % S) * S + x] * k[i + r]
+    out[y * S + x] = s / ks
+  }
+  return out
+}
+// pack the tiles into channels of one (S+2)² texture with a 1 px wrap border
+function packTiles(tiles) {
+  const T = S + 2
+  const data = new Uint8Array(T * T * 4)
+  for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+    const si = ((y - 1 + S) % S) * S + ((x - 1 + S) % S)
+    const o = (y * T + x) * 4
+    for (let c = 0; c < 4; c++) data[o + c] = c < tiles.length ? Math.round(tiles[c][si] * 255) : 255
+  }
+  return data
+}
+const noiseData = packTiles([bakeNoise(5), bakeNoise(9)])
 
-// fog is composed at half resolution then drawn up with a blur
-const fogBuf = document.createElement('canvas')
-const fctx = fogBuf.getContext('2d')
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform sampler2D u_noise;  // r = tile A, g = tile B; 258² with a wrap border
+uniform vec2 u_res;
+uniform vec2 u_buf;         // fog buffer size (half resolution, as the 2D version)
+uniform vec3 u_l0;          // layer: offset x, offset y (buffer px), tile size
+uniform vec3 u_l1;
+uniform vec3 u_l2;
+uniform vec3 u_la;          // layer alphas
+uniform vec3 u_grad;        // ground-hug alpha at y = 0, 0.55, 1
+uniform vec3 u_murk;        // murk colour
+uniform float u_murkA;
+uniform vec3 u_cast;        // colour cast
+uniform float u_castA;
+out vec4 outColor;
 
-let W = 0
-let H = 0
-function resize() {
-  W = canvas.width = Math.floor(window.innerWidth * rt.pixelRatio)
-  H = canvas.height = Math.floor(window.innerHeight * rt.pixelRatio)
-  fogBuf.width = Math.max(2, W >> 1)
-  fogBuf.height = Math.max(2, H >> 1)
+vec4 tile(vec2 bp, vec3 l) {
+  vec2 q = fract((bp + l.xy) / l.z);
+  return texture(u_noise, (1.0 + q * 256.0) / 258.0);
 }
 
-// draw a noise tile across the buffer with wrap, at a drifting offset
-function layer(img, ox, oy, scale, alpha) {
-  const fw = fogBuf.width
-  const fh = fogBuf.height
-  const tile = Math.max(fw, fh) * scale
-  fctx.globalAlpha = alpha
-  const x0 = -(((ox % tile) + tile) % tile)
-  const y0 = -(((oy % tile) + tile) % tile)
-  for (let y = y0; y < fh; y += tile)
-    for (let x = x0; x < fw; x += tile) fctx.drawImage(img, x, y, tile, tile)
-}
+void main() {
+  vec3 col = texture(u_tex, v_uv).rgb;
+  // the scene recedes into the murk before the fog is laid on
+  col = mix(col, u_murk, u_murkA);
+  vec2 p = vec2(v_uv.x, 1.0 - v_uv.y);    // y down
+  vec2 bp = p * u_buf;
+  float a = u_la.x * tile(bp, u_l0).r + u_la.y * tile(bp, u_l1).g + u_la.z * tile(bp, u_l2).r;
+  float g = p.y < 0.55 ? mix(u_grad.x, u_grad.y, p.y / 0.55) : mix(u_grad.y, u_grad.z, (p.y - 0.55) / 0.45);
+  a = clamp(a, 0.0, 1.0) * g;
+  col = mix(col, vec3(1.0), a);
+  // gentle colour cast over the fogged scene
+  col = mix(col, u_cast, u_castA);
+  outColor = vec4(col, 1.0);
+}`
+
+const canvas = document.getElementById('canvas')
+const gf = createGLFilter({ rt, src: createSource(), canvas, frag: FRAG })
+gf.addTexture('u_noise', 1, { flipY: false }).upload(noiseData, S + 2, S + 2)
 
 function frame(now) {
   rt.tick(now)
-  const t = now * 0.001
-  src.update(t)
-  if (!src.ready) {
-    requestAnimationFrame(frame)
-    return
-  }
-
-  src.draw(ctx, W, H, { mirror: params.mirror })
-
-  const d = Math.min(1, params.density * (1 + rt.beat.state.pulse * 0.3))
-  const fw = fogBuf.width
-  const fh = fogBuf.height
-
-  // the scene recedes into the murk before the fog is laid on
-  ctx.fillStyle = `rgba(${26 - params.cool * 14}, ${30 - params.cool * 6}, ${36 + params.cool * 10}, ${d * params.murk * 0.75})`
-  ctx.fillRect(0, 0, W, H)
-
-  // compose drifting layers, then bias them toward the ground
-  fctx.clearRect(0, 0, fw, fh)
-  fctx.globalCompositeOperation = 'lighter'
   const v = rt.phase('drift', 40 * params.drift)
-  layer(noiseA, v * 0.6, v * 0.08, 1.6, d * 0.5)
-  layer(noiseB, -v * 0.35, v * 0.05, 2.2, d * 0.4)
-  layer(noiseA, v * 1.15, -v * 0.06, 0.9, d * 0.35)
-  fctx.globalAlpha = 1
-  fctx.globalCompositeOperation = 'destination-in'
-  const g = fctx.createLinearGradient(0, 0, 0, fh)
-  g.addColorStop(0, `rgba(0,0,0,${1 - params.height * 0.85})`)
-  g.addColorStop(0.55, `rgba(0,0,0,${1 - params.height * 0.35})`)
-  g.addColorStop(1, 'rgba(0,0,0,1)')
-  fctx.fillStyle = g
-  fctx.fillRect(0, 0, fw, fh)
-  fctx.globalCompositeOperation = 'source-over'
-
-  ctx.save()
-  ctx.filter = 'blur(6px)'
-  const warm = 1 - params.cool
-  ctx.globalAlpha = 1
-  // tint the fog itself via a colored underlay of the same mask
-  ctx.drawImage(fogBuf, 0, 0, W, H)
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.restore()
-  // gentle color cast over the fogged scene
-  ctx.fillStyle = `rgba(${200 * warm + 150 * params.cool}, ${205 * warm + 175 * params.cool}, ${195 * warm + 235 * params.cool}, ${d * 0.1})`
-  ctx.fillRect(0, 0, W, H)
-
+  gf.render({ mirror: params.mirror, time: now * 0.001 }, (u) => {
+    const d = Math.min(1, params.density * (1 + rt.beat.state.pulse * 0.3))
+    const fw = Math.max(2, gf.width >> 1)
+    const fh = Math.max(2, gf.height >> 1)
+    const big = Math.max(fw, fh)
+    const lay = (name, ox, oy, scale) => {
+      const t = big * scale
+      u.v3(name, ((ox % t) + t) % t, ((oy % t) + t) % t, t)
+    }
+    lay('u_l0', v * 0.6, v * 0.08, 1.6)
+    lay('u_l1', -v * 0.35, v * 0.05, 2.2)
+    lay('u_l2', v * 1.15, -v * 0.06, 0.9)
+    u.v3('u_la', d * 0.5, d * 0.4, d * 0.35)
+    u.v2('u_buf', fw, fh)
+    u.v3('u_grad', 1 - params.height * 0.85, 1 - params.height * 0.35, 1)
+    const c = params.cool
+    u.v3('u_murk', (26 - c * 14) / 255, (30 - c * 6) / 255, (36 + c * 10) / 255)
+    u.f('u_murkA', d * params.murk * 0.75)
+    const warm = 1 - c
+    u.v3('u_cast', (200 * warm + 150 * c) / 255, (205 * warm + 175 * c) / 255, (195 * warm + 235 * c) / 255)
+    u.f('u_castA', d * 0.1)
+  })
   requestAnimationFrame(frame)
 }
-
-window.addEventListener('resize', resize)
-resize()
 requestAnimationFrame(frame)

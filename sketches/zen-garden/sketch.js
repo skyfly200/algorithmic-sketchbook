@@ -11,8 +11,14 @@
  * Left alone, the garden tends itself: an unseen monk rakes slow meandering
  * paths (pausing whenever you take over), the light drifts through the day on
  * a time.sin mapping, and now and then a stone is set or retired.
+ *
+ * The height field stays in JS (raking writes a few cells per frame) and only
+ * the edited rectangle is uploaded to a float texture. Shading runs on the GPU:
+ * one pass at grid resolution when the sand or the light changed, one pass that
+ * scales it to the canvas and draws the stones (soft shadow + lit body).
  */
 import { createRuntime } from '../_lib/runtime.js'
+import { createGLPipe } from '../_lib/glpipe.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -31,36 +37,58 @@ rt.mapInput('time.sin', 'light', 0.5)
 rt.mapInput('audio.volume', 'auto', 0.5)
 
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
-const buf = document.createElement('canvas')
-const bctx = buf.getContext('2d')
+// Made here first with antialias off: the sand is blitted onto the canvas, which a
+// multisampled drawing buffer would refuse. glpipe then gets this same context.
+canvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: new URLSearchParams(location.search).get('capture') === '1' })
+const pipe = createGLPipe({ rt, src: null, canvas })
+const gl = pipe.gl
 
 let W, H, gsc, gw, gh
-let height, grain, img
+let height, grain
 let dirty = true
+let present = true // the canvas needs redrawing (stones or sand changed)
 const stones = []
-
-function build() {
-  W = canvas.width = window.innerWidth * rt.pixelRatio
-  H = canvas.height = window.innerHeight * rt.pixelRatio
-  gsc = Math.max(1.6, 2 * rt.pixelRatio) / rt.detail
-  gw = Math.max(120, Math.floor(W / gsc))
-  gh = Math.max(120, Math.floor(H / gsc))
-  buf.width = gw
-  buf.height = gh
-  img = bctx.createImageData(gw, gh)
-  height = new Float32Array(gw * gh)
-  grain = new Float32Array(gw * gh)
-  for (let i = 0; i < gw * gh; i++) grain[i] = rt.rng() // static sand tooth
-  stones.length = 0
+// grid rectangle edited since the last upload (inclusive), or empty
+let dx0 = Infinity, dy0 = Infinity, dx1 = -1, dy1 = -1
+function touch(x0, y0, x1, y1) {
+  dx0 = Math.max(0, Math.min(dx0, x0)); dy0 = Math.max(0, Math.min(dy0, y0))
+  dx1 = Math.min(gw - 1, Math.max(dx1, x1)); dy1 = Math.min(gh - 1, Math.max(dy1, y1))
   dirty = true
 }
 
-function hslArr(h, s, l) {
-  const k = (n) => (n + h * 12) % 12
-  const a = s * Math.min(l, 1 - l)
-  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
-  return [f(0), f(8), f(4)]
+// height and grain as R32F textures (exact texelFetch reads, no filtering)
+function floatTex() {
+  const t = { tex: gl.createTexture() }
+  gl.bindTexture(gl.TEXTURE_2D, t.tex)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  return t
+}
+const heightTex = floatTex()
+const grainTex = floatTex()
+let shadeT = null
+
+function build() {
+  W = pipe.width // glpipe sized the canvas (its listener runs first)
+  H = pipe.height
+  gsc = Math.max(1.6, 2 * rt.pixelRatio) / rt.detail
+  gw = Math.max(120, Math.floor(W / gsc))
+  gh = Math.max(120, Math.floor(H / gsc))
+  height = new Float32Array(gw * gh)
+  grain = new Float32Array(gw * gh)
+  for (let i = 0; i < gw * gh; i++) grain[i] = rt.rng() // static sand tooth
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+  gl.bindTexture(gl.TEXTURE_2D, heightTex.tex)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, gw, gh, 0, gl.RED, gl.FLOAT, height)
+  gl.bindTexture(gl.TEXTURE_2D, grainTex.tex)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, gw, gh, 0, gl.RED, gl.FLOAT, grain)
+  pipe.release(shadeT)
+  shadeT = pipe.target({ width: gw, height: gh })
+  stones.length = 0
+  dx0 = dy0 = Infinity; dx1 = dy1 = -1
+  dirty = true
 }
 
 // Carve a band of parallel grooves along a stroke segment (grid coords).
@@ -82,7 +110,8 @@ function rakeSeg(ax, ay, bx, by) {
       height[gy * gw + gx] = -params.depth * Math.cos((w / sp) * Math.PI * 2) * edge
     }
   }
-  dirty = true
+  const m = halfW + 1
+  touch(Math.floor(Math.min(ax, bx) - m), Math.floor(Math.min(ay, by) - m), Math.ceil(Math.max(ax, bx) + m), Math.ceil(Math.max(ay, by) + m))
 }
 
 // Concentric ripples around a stone.
@@ -99,71 +128,147 @@ function ripples(cx, cy, R) {
       height[gy * gw + gx] = -params.depth * Math.cos((d / sp) * Math.PI * 2) * fade
     }
   }
-  dirty = true
+  touch((cx | 0) - r - 1, (cy | 0) - r - 1, (cx | 0) + r + 1, (cy | 0) + r + 1)
 }
 
 function placeStone(gx, gy) {
   const r = (14 + rt.random(0, 16)) * params.stoneSize
   stones.push({ x: gx, y: gy, r, ry: r * rt.random(0.62, 0.82), rot: rt.random(-0.4, 0.4), tone: rt.random(0.3, 0.55) })
   ripples(gx, gy, r / gsc + params.spacing / gsc * 3.2)
+  present = true
 }
 
-// Shade the height field: grazing light so grooves emboss into ridged sand.
+const HEAD = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform vec2 u_res;
+out vec4 outColor;
+`
+// Shade the height field at grid resolution: grazing light so grooves emboss
+// into ridged sand. Row 0 of the textures is the top row of the garden.
+const SHADE = HEAD + `
+uniform sampler2D u_height, u_grain;
+uniform vec3 u_sandRgb, u_l;
+float hAt(ivec2 p) { return texelFetch(u_height, p, 0).r + texelFetch(u_grain, p, 0).r * 0.12; }
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  ivec2 mx = ivec2(u_res) - 1;
+  float h = hAt(p);
+  float hl = p.x > 0 ? hAt(p - ivec2(1, 0)) : h;
+  float hr = p.x < mx.x ? hAt(p + ivec2(1, 0)) : h;
+  float hu = p.y > 0 ? hAt(p - ivec2(0, 1)) : h;
+  float hd = p.y < mx.y ? hAt(p + ivec2(0, 1)) : h;
+  const float zScale = 4.5;
+  vec3 n = normalize(vec3((hl - hr) * zScale, (hu - hd) * zScale, 1.0));
+  float diff = max(0.0, dot(n, u_l));
+  float v = 0.42 + diff * 0.7 + (texelFetch(u_grain, p, 0).r - 0.5) * 0.05; // ambient + light + tooth
+  outColor = vec4(min(vec3(1.0), u_sandRgb * v), 1.0);
+}`
+// One stone (soft cast shadow + lit body), drawn inside a scissor box around it
+// and blended over the sand (premultiplied alpha), in placement order.
+const STONE = HEAD + `
+uniform vec4 u_stone;   // x, y (canvas px, top-down), r, ry
+uniform vec2 u_stone2;  // rotation, tone
+// coverage of an ellipse with radii rad at local point q, ~1 px anti-aliased edge
+float ellipse(vec2 q, vec2 rad) {
+  float k = length(q / rad);
+  float g = length(q / (rad * rad));
+  float d = (k - 1.0) * k / max(g, 1e-6); // distance to the rim in px (first order)
+  return clamp(0.5 - d, 0.0, 1.0);
+}
+void main() {
+  vec2 frag = vec2(gl_FragCoord.x, u_res.y - gl_FragCoord.y);
+  float r = u_stone.z, ry = u_stone.w;
+  vec2 d = frag - u_stone.xy;
+  float c = cos(u_stone2.x), sn = sin(u_stone2.x);
+  vec2 q = vec2(d.x * c + d.y * sn, -d.x * sn + d.y * c); // into the stone's rotated frame
+  // soft cast shadow toward the light-away side
+  float sh = 0.28 * ellipse(q - vec2(r * 0.28, ry * 0.34), vec2(r, ry) * 1.02);
+  // rock body, lit from upper-left: a two-circle radial gradient like Canvas2D's
+  float cov = ellipse(q, vec2(r, ry));
+  vec3 g = vec3(0.0);
+  if (cov > 0.0) {
+    vec2 c0 = vec2(-r * 0.4, -ry * 0.45);
+    float r0 = r * 0.1;
+    vec2 cd = -c0, pd = q - c0;
+    float dr = r - r0;
+    float A = dot(cd, cd) - dr * dr, B = dot(pd, cd) + r0 * dr, C = dot(pd, pd) - r0 * r0;
+    float t;
+    if (abs(A) < 1e-4) t = C / (2.0 * B);
+    else {
+      float sq = sqrt(max(0.0, B * B - A * C));
+      float t1 = (B + sq) / A, t2 = (B - sq) / A;
+      t = max(t1, t2);
+      if (r0 + dr * t < 0.0) t = min(t1, t2);
+    }
+    t = clamp(t, 0.0, 1.0);
+    vec3 g0 = vec3(150.0, 150.0, 158.0), g1 = vec3(90.0, 90.0, 98.0), g2 = vec3(40.0, 40.0, 46.0);
+    g = (t < 0.6 ? mix(g0, g1, t / 0.6) : mix(g1, g2, (t - 0.6) / 0.4)) * u_stone2.y / 255.0;
+  }
+  // body over shadow, premultiplied
+  outColor = vec4(g * cov, cov + sh * (1.0 - cov));
+}`
+const shadeP = pipe.program(SHADE)
+const stoneP = pipe.program(STONE)
+
+function hslArr(h, s, l) {
+  const k = (n) => (n + h * 12) % 12
+  const a = s * Math.min(l, 1 - l)
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
+  return [f(0), f(8), f(4)]
+}
+
+// Upload the edited rectangle of the height field, then re-shade the sand.
 function shade() {
-  const d = img.data
+  if (dx1 >= dx0 && dy1 >= dy0) {
+    gl.bindTexture(gl.TEXTURE_2D, heightTex.tex)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, gw)
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, dx0)
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, dy0)
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, dx0, dy0, dx1 - dx0 + 1, dy1 - dy0 + 1, gl.RED, gl.FLOAT, height)
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0)
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0)
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0)
+    dx0 = dy0 = Infinity; dx1 = dy1 = -1
+  }
   const [sr, sg, sb] = hslArr(params.sand, 0.36, 0.66)
   const lz = 0.3 + params.light * 0.7
   const ln = 1 / Math.hypot(-0.6, -0.55, lz)
-  const lx = -0.6 * ln, ly = -0.55 * ln, lzz = lz * ln
-  const zScale = 4.5
-  for (let y = 0; y < gh; y++) {
-    for (let x = 0; x < gw; x++) {
-      const i = y * gw + x
-      const h = height[i] + grain[i] * 0.12
-      const hl = x > 0 ? height[i - 1] + grain[i - 1] * 0.12 : h
-      const hr = x < gw - 1 ? height[i + 1] + grain[i + 1] * 0.12 : h
-      const hu = y > 0 ? height[i - gw] + grain[i - gw] * 0.12 : h
-      const hd = y < gh - 1 ? height[i + gw] + grain[i + gw] * 0.12 : h
-      let nx = (hl - hr) * zScale, ny = (hu - hd) * zScale, nz = 1
-      const il = 1 / Math.sqrt(nx * nx + ny * ny + 1)
-      nx *= il; ny *= il; nz *= il
-      const diff = Math.max(0, nx * lx + ny * ly + nz * lzz)
-      const v = 0.42 + diff * 0.7 + (grain[i] - 0.5) * 0.05 // ambient + light + tooth
-      d[i * 4] = Math.min(255, sr * v * 255)
-      d[i * 4 + 1] = Math.min(255, sg * v * 255)
-      d[i * 4 + 2] = Math.min(255, sb * v * 255)
-      d[i * 4 + 3] = 255
-    }
-  }
-  bctx.putImageData(img, 0, 0)
+  pipe.run(shadeP, { u_height: heightTex, u_grain: grainTex }, shadeT, (u) => {
+    u.v3('u_sandRgb', sr, sg, sb)
+    u.v3('u_l', -0.6 * ln, -0.55 * ln, lz * ln)
+  })
   dirty = false
+  present = true
 }
 
-function drawStones() {
-  for (const st of stones) {
-    const x = st.x * gsc, y = st.y * gsc, r = st.r, ry = st.ry
-    ctx.save()
-    ctx.translate(x, y)
-    ctx.rotate(st.rot)
-    // Soft cast shadow toward the light-away side.
-    ctx.globalAlpha = 0.28
-    ctx.fillStyle = '#000'
-    ctx.beginPath()
-    ctx.ellipse(r * 0.28, ry * 0.34, r * 1.02, ry * 1.02, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.globalAlpha = 1
-    // Rock body, lit from upper-left.
-    const g = ctx.createRadialGradient(-r * 0.4, -ry * 0.45, r * 0.1, 0, 0, r)
-    const t = st.tone
-    g.addColorStop(0, `rgb(${(150 * t) | 0},${(150 * t) | 0},${(158 * t) | 0})`)
-    g.addColorStop(0.6, `rgb(${(90 * t) | 0},${(90 * t) | 0},${(98 * t) | 0})`)
-    g.addColorStop(1, `rgb(${(40 * t) | 0},${(40 * t) | 0},${(46 * t) | 0})`)
-    ctx.fillStyle = g
-    ctx.beginPath()
-    ctx.ellipse(0, 0, r, ry, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.restore()
+// Scale the shaded sand up to the canvas (a filtered blit, no shader), then the
+// stones, each touching only the pixels in its own box.
+function drawGarden() {
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, shadeT.fbo)
+  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null)
+  gl.blitFramebuffer(0, 0, gw, gh, 0, H, W, 0, gl.COLOR_BUFFER_BIT, gl.LINEAR) // row 0 = top
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null)
+  if (stones.length) {
+    gl.enable(gl.BLEND)
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+    gl.enable(gl.SCISSOR_TEST)
+    for (const st of stones) {
+      const x = st.x * gsc, y = st.y * gsc, R = st.r * 1.5 + 2 // shadow reach ~1.46 r
+      const x0 = Math.max(0, Math.floor(x - R)), x1 = Math.min(W, Math.ceil(x + R))
+      const y0 = Math.max(0, Math.floor(H - y - R)), y1 = Math.min(H, Math.ceil(H - y + R))
+      if (x1 <= x0 || y1 <= y0) continue
+      gl.scissor(x0, y0, x1 - x0, y1 - y0)
+      pipe.run(stoneP, {}, null, (u) => {
+        u.v4('u_stone', x, y, st.r, st.ry)
+        u.v2('u_stone2', st.rot, st.tone)
+      })
+    }
+    gl.disable(gl.SCISSOR_TEST)
+    gl.disable(gl.BLEND)
   }
+  present = false
 }
 
 // --- the unseen monk: autonomous raking when the visitor is idle ------------
@@ -203,6 +308,7 @@ function stepMonk(now, dt) {
     monk.nextStone = 18 + rt.random(0, 20)
     if (stones.length >= 6) {
       const old = stones.shift()
+      present = true
       ripples(old.x, old.y, old.r / gsc + (params.spacing / gsc) * 2.5)
     } else {
       placeStone(rt.random(0.15, 0.85) * gw, rt.random(0.15, 0.85) * gh)
@@ -211,6 +317,7 @@ function stepMonk(now, dt) {
 }
 
 let lastLight = -1
+let lastSand = -1
 let lastNow = 0
 function frame(now) {
   rt.tick(now)
@@ -218,15 +325,14 @@ function frame(now) {
   lastNow = now
   stepMonk(now, dt)
   // Mapped params (the drifting sun) re-shade the standing field.
-  if (Math.abs(params.light - lastLight) > 0.004) {
+  if (Math.abs(params.light - lastLight) > 0.004 || params.sand !== lastSand) {
     lastLight = params.light
+    lastSand = params.sand
     dirty = true
   }
   if (dirty) shade()
-  ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
-  ctx.drawImage(buf, 0, 0, W, H)
-  drawStones()
+  // nothing changed: the canvas keeps showing the last frame
+  if (present) drawGarden()
   requestAnimationFrame(frame)
 }
 
@@ -260,7 +366,7 @@ window.addEventListener('pointerup', (e) => {
   down = false
 })
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'c' || e.key === 'C') { height.fill(0); stones.length = 0; dirty = true }
+  if (e.key === 'c' || e.key === 'C') { height.fill(0); stones.length = 0; touch(0, 0, gw - 1, gh - 1) }
 })
 
 function resize() {

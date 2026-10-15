@@ -13,6 +13,7 @@
 import { createRuntime } from '../_lib/runtime.js'
 import { createMotionPublisher } from '../_lib/motion-bus.js'
 import { createSource } from '../_lib/source.js'
+import { createFrameRing } from '../_lib/framering.js'
 
 const rt = createRuntime()
 const params = rt.params({
@@ -82,23 +83,19 @@ const maskCtx = maskCanvas.getContext('2d')
 let lastNow = 0
 let frameDt = 16.7
 
-// Ring buffer of past frames for the delay line.
+// Ring buffer of past frames for the delay line. It holds only as many frames as
+// the active delay needs (not the slider's max), under a memory cap.
 const MAX_DELAY = 30
-let ring = []
-let head = 0
+const ring = createFrameRing()
+// Freeze keeps its own copy of the reference, so the ring can resize under it.
+const frozenCanvas = document.createElement('canvas')
 let frozen = null
 let wasFrozen = false
 
 function resize() {
   canvas.width = window.innerWidth * rt.pixelRatio
   canvas.height = window.innerHeight * rt.pixelRatio
-  ring = Array.from({ length: MAX_DELAY }, () => {
-    const c = document.createElement('canvas')
-    c.width = canvas.width
-    c.height = canvas.height
-    return c
-  })
-  head = 0
+  ring.resize(canvas.width, canvas.height)
   frozen = null
 }
 
@@ -108,9 +105,9 @@ function drawSource(target, tw = canvas.width, th = canvas.height) {
   src.draw(target, tw, th, { mirror: params.mirror })
 }
 
-// Cover-fit an already-rasterized full-frame ring canvas onto a target.
-function drawFrame(target, frame, tw, th) {
-  target.drawImage(frame, 0, 0, canvas.width, canvas.height, 0, 0, tw, th)
+// Stretch a ring / frozen frame (stored at its own size) over a target.
+function drawFrame(target, frame, tw = canvas.width, th = canvas.height) {
+  target.drawImage(frame, 0, 0, tw, th)
 }
 
 function frame(now) {
@@ -136,14 +133,21 @@ function frame(now) {
       activeDelay = Math.round(rt.beat.state.interval / frameDt)
     }
     activeDelay = Math.min(MAX_DELAY - 1, Math.max(1, activeDelay))
+    ring.need(activeDelay)
 
     if (params.freeze) {
-      if (!wasFrozen || !frozen) frozen = ring[(head - 1 + MAX_DELAY) % MAX_DELAY]
+      if (!wasFrozen || !frozen) {
+        const last = ring.get(1)
+        frozenCanvas.width = last.width
+        frozenCanvas.height = last.height
+        frozenCanvas.getContext('2d').drawImage(last, 0, 0)
+        frozen = frozenCanvas
+      }
     } else {
       frozen = null
     }
     wasFrozen = params.freeze
-    const reference = frozen ?? ring[(head - activeDelay + MAX_DELAY) % MAX_DELAY]
+    const reference = frozen ?? ring.get(activeDelay)
 
     // Maintain the small motion mask for the bus (motion bright, static black).
     // Scaling both frames by `gain` scales their difference by gain too.
@@ -170,7 +174,7 @@ function frame(now) {
       ctx.filter = gain !== 1 ? `brightness(${gain})` : 'none'
       drawSource(ctx)
       ctx.globalCompositeOperation = 'difference'
-      ctx.drawImage(reference, 0, 0)
+      drawFrame(ctx, reference)
       ctx.filter = 'none'
       ctx.globalCompositeOperation = 'source-over'
 
@@ -197,7 +201,7 @@ function frame(now) {
       drawSource(ctx)
       ctx.filter = 'invert(1)'
       ctx.globalAlpha = params.blend
-      ctx.drawImage(reference, 0, 0)
+      drawFrame(ctx, reference)
       ctx.filter = 'none'
       ctx.globalAlpha = 1
     }
@@ -212,10 +216,7 @@ function frame(now) {
 
     // Record the clean current frame into the delay line (skip while frozen).
     if (!frozen) {
-      const slot = ring[head].getContext('2d')
-      slot.clearRect(0, 0, canvas.width, canvas.height)
-      drawSource(slot)
-      head = (head + 1) % MAX_DELAY
+      ring.push((c, w, h) => drawSource(c, w, h))
     }
   }
 

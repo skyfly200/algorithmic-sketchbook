@@ -6,11 +6,21 @@
 // lenticular lenses, pouchy mammatus, dappled mackerel sky, and electric-blue
 // noctilucent wisps) — and the sun rakes across so tops glow and undersides
 // shade.
+//
+// The fbm field is still baked once in JS (same seeded permutation), then lives
+// in a float texture; every pixel's density, lighting and colour is a fragment
+// shader. The cloud picture is rendered into a buffer under screen size (clouds
+// are soft; the old path used 240 px across) and scaled up, so the cost stays small on weak GPUs.
 import { createRuntime } from '../_lib/runtime.js'
+import { createGLPipe } from '../_lib/glpipe.js'
 
 const rt = createRuntime()
 const canvas = document.getElementById('canvas')
-const ctx = canvas.getContext('2d')
+// Made here first with antialias off: the buffer is blitted onto the canvas, which a
+// multisampled drawing buffer would refuse. glpipe then gets this same context.
+canvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: new URLSearchParams(location.search).get('capture') === '1' })
+const pipe = createGLPipe({ rt, src: null, canvas })
+const gl = pipe.gl
 
 const params = rt.params({
   type: { value: 'Cumulus', type: 'select', options: ['Cumulus', 'Stratus', 'Cirrus', 'Storm', 'Lenticular', 'Mammatus', 'Mackerel', 'Noctilucent'], label: 'Cloud type' },
@@ -44,137 +54,147 @@ const field = new Float32Array(FS * FS)
     field[y * FS + x] = n
   }
 }
-function sampleField(u, v) {
-  const x = ((u % 1) + 1) % 1 * FS, y = ((v % 1) + 1) % 1 * FS
-  const xi = x | 0, yi = y | 0, xf = x - xi, yf = y - yi
-  const x1 = (xi + 1) % FS, y1 = (yi + 1) % FS
-  const a = field[yi * FS + xi], b = field[yi * FS + x1], c = field[y1 * FS + xi], d = field[y1 * FS + x1]
-  return (a * (1 - xf) + b * xf) * (1 - yf) + (c * (1 - xf) + d * xf) * yf
-}
-
-let W = 0, H = 0, PR = 1, GW = 0, GH = 0, img = null, low = null, lctx = null
-function resize() {
-  PR = rt.pixelRatio
-  W = canvas.width = Math.floor(window.innerWidth * PR)
-  H = canvas.height = Math.floor(window.innerHeight * PR)
-  GW = Math.round(240 * (0.5 + 0.5 * rt.detail)); GH = Math.max(60, Math.round(GW * (H / W)))
-  low = document.createElement('canvas'); low.width = GW; low.height = GH
-  lctx = low.getContext('2d'); img = lctx.createImageData(GW, GH)
-}
-
-function smooth01(e0, e1, x) {
-  let t = (x - e0) / (e1 - e0); t = t < 0 ? 0 : t > 1 ? 1 : t
-  return t * t * (3 - 2 * t)
-}
-const gauss = (x, c, w) => Math.exp(-((x - c) / w) * ((x - c) / w))
+// the field as a repeating, linearly filtered R16F texture
+const fieldTex = { tex: gl.createTexture() }
+gl.bindTexture(gl.TEXTURE_2D, fieldTex.tex)
+gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, FS, FS, 0, gl.RED, gl.FLOAT, field)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
 
 // Per-type look: horizontal stretch, a density curve over the fbm value, an
 // optional altitude band (confines the cloud in the sky), a fine ripple carve,
-// and lighting/colour flags. The last four are the rarer cloud types.
-const TYPE_DEF = {
-  Cumulus: { stretch: 1, curve: (d) => Math.pow(d, 1.8) * 1.4 },
-  // flat, featureless grey overcast sheet — low contrast, a dull veil everywhere
-  Stratus: { stretch: 1.6, dull: true, curve: (d) => Math.min(1, 0.35 + d * 0.55) },
-  // high fibrous mare's-tails — strongly wind-stretched and carved into streaks
-  Cirrus: { stretch: 4.5, fiber: true, curve: (d) => Math.pow(d, 1.8) * 1.1,
-    band: (y) => smooth01(0.75, 0.35, y) },
-  Storm: { stretch: 1, storm: true, curve: (d) => Math.pow(d, 1.3) * 1.6 },
-  // smooth stacked lens discs (a "UFO" cloud over a mountain), strongly stretched
-  Lenticular: { stretch: 5, curve: (d) => Math.pow(smooth01(0.35, 1, d), 1.1),
-    band: (y) => Math.min(1, gauss(y, 0.4, 0.07) + 0.75 * gauss(y, 0.53, 0.05) + 0.5 * gauss(y, 0.29, 0.05)) },
-  // dark lumpy pouches hanging under a storm, lit from beneath
-  Mammatus: { stretch: 1.1, storm: true, litBelow: true, ripple: 5.5, curve: (d) => Math.pow(d, 1.2) * 1.5,
-    band: (y) => smooth01(0.22, 0.5, y) },
-  // mackerel sky — regular rows of small dappled altocumulus puffs
-  Mackerel: { stretch: 1.25, rows: 8, ripple: 3.6, curve: (d) => Math.pow(d, 1.05) * 1.35 },
-  // noctilucent — thin electric-blue wisps glowing high in a twilight sky
-  Noctilucent: { stretch: 4.5, glow: true, curve: (d) => Math.pow(d, 2.4) * 1.15,
-    band: (y) => gauss(y, 0.26, 0.13) },
-}
-const TYPES = Object.keys(TYPE_DEF)
+// and lighting/colour flags. The last four are the rarer cloud types. The
+// curves and bands are in the shader (cloud() below), indexed by type.
+const TYPES = ['Cumulus', 'Stratus', 'Cirrus', 'Storm', 'Lenticular', 'Mammatus', 'Mackerel', 'Noctilucent']
 
-let drift = 0
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform vec2 u_res;
+out vec4 outColor;
+uniform sampler2D u_field;
+uniform int u_typeA, u_typeB;
+uniform float u_blend, u_cover, u_drift, u_vt, u_sky;
+uniform vec2 u_light;
+const float FS = ${FS}.0;
+
+// bilinear sample of the tileable field, texel corners at integer positions
+// like the old JS sampler (hence the half-texel shift)
+float F(float u, float v) { return texture(u_field, vec2(u, v) + 0.5 / FS).r; }
+float smooth01(float e0, float e1, float x) {
+  float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+  return t * t * (3.0 - 2.0 * t);
+}
+float gauss(float x, float c, float w) { float k = (x - c) / w; return exp(-k * k); }
+
+// density + lighting + colour for one type at a pixel: rgb in 0..255, a = density
+vec4 cloud(int T, float nx, float ny) {
+  float stretch = T == 1 ? 1.6 : T == 2 ? 4.5 : T == 4 ? 5.0 : T == 5 ? 1.1 : T == 6 ? 1.25 : T == 7 ? 4.5 : 1.0;
+  bool storm = T == 3 || T == 5, glow = T == 7, dull = T == 1, litBelow = T == 5;
+  float u = nx / stretch + u_drift;
+  float v = ny * 1.4;
+  float n1 = F(u, v);
+  float n2 = F(u + 0.13, v + u_vt);
+  float n = n1 * 0.6 + n2 * 0.4;
+  // cover lowers the density floor: at cover->1 almost the whole sky clouds
+  // over into a dense overcast; at low cover only the fbm peaks poke through.
+  float lo = 0.62 - u_cover * 0.62;
+  float e = smooth01(lo, lo + 0.3, n);
+  float d;
+  if (T == 0) d = pow(e, 1.8) * 1.4;
+  else if (T == 1) d = min(1.0, 0.35 + e * 0.55);      // flat, featureless grey overcast sheet
+  else if (T == 2) d = pow(e, 1.8) * 1.1;              // high fibrous mare's-tails
+  else if (T == 3) d = pow(e, 1.3) * 1.6;
+  else if (T == 4) d = pow(smooth01(0.35, 1.0, e), 1.1); // smooth stacked lens discs
+  else if (T == 5) d = pow(e, 1.2) * 1.5;              // dark pouches lit from beneath
+  else if (T == 6) d = pow(e, 1.05) * 1.35;            // mackerel sky
+  else d = pow(e, 2.4) * 1.15;                         // noctilucent wisps
+  // altitude bands
+  if (T == 2) d *= smooth01(0.75, 0.35, ny);
+  else if (T == 4) d *= min(1.0, gauss(ny, 0.4, 0.07) + 0.75 * gauss(ny, 0.53, 0.05) + 0.5 * gauss(ny, 0.29, 0.05));
+  else if (T == 5) d *= smooth01(0.22, 0.5, ny);
+  else if (T == 7) d *= gauss(ny, 0.26, 0.13);
+  // rows of puffs (mackerel / altocumulus): a regular horizontal banding
+  if (T == 6) d *= 0.35 + 0.65 * pow(abs(sin(ny * 3.14159265 * 8.0)), 0.6);
+  // fibrous carve (cirrus): fine wind-stretched streaks
+  if (T == 2) { float fb = F(u * 0.6 + 5.0, v * 7.0 + 2.0); d *= 0.25 + 0.75 * smooth01(0.4, 0.66, fb); }
+  float ripple = T == 5 ? 5.5 : T == 6 ? 3.6 : 0.0;
+  if (ripple > 0.0) { float rip = F(u * ripple + 11.0, v * ripple + 3.0); d *= 0.22 + 0.78 * smooth01(0.4, 0.62, rip); }
+  // overcast fill: at very high cover, lift the thin gaps so it reads solid
+  if (u_cover > 0.8) d = d + (u_cover - 0.8) * 3.5 * (1.0 - d) * smooth01(lo - 0.05, lo + 0.15, n);
+  d = min(1.0, d);
+  // lighting: brighter where the field rises toward the light (below for mammatus)
+  float s = litBelow ? -1.0 : 1.0;
+  float nA = F(u + u_light.x * 0.02, v + u_light.y * 0.02 * s);
+  float shade = max(storm ? 0.28 : 0.42, min(1.0, 0.6 + (n - nA) * 2.0 * s));
+  vec3 c;
+  if (storm) { float val = 90.0 * (0.4 + shade * 0.6); c = vec3(val, val, val * 1.05); }
+  else if (glow) { float val = 235.0 * shade; c = vec3(val * 0.55, val * 0.82, val * 1.15); }
+  else if (dull) { float val = 200.0 * (0.6 + shade * 0.4); c = vec3(val, val, val * 1.03); }
+  else { float val = 235.0 * shade; c = vec3(val, val * 0.99, val * 0.98); }
+  return vec4(c, d);
+}
+
+void main() {
+  float nx = floor(gl_FragCoord.x) / u_res.x;
+  float ny = (u_res.y - 1.0 - floor(gl_FragCoord.y)) / u_res.y; // top-down
+  // sky gradient
+  vec3 skyTop = vec3(60.0 + u_sky * 60.0, 110.0 + u_sky * 20.0, 190.0 - u_sky * 40.0);
+  vec3 skyBot = vec3(150.0 + u_sky * 60.0, 180.0 - u_sky * 30.0, 210.0 - u_sky * 40.0);
+  vec3 sky = mix(skyTop, skyBot, ny);
+  vec4 A = cloud(u_typeA, nx, ny);
+  if (u_blend > 0.01) A = mix(A, cloud(u_typeB, nx, ny), u_blend);
+  vec3 col = mix(sky, A.rgb, A.a);
+  outColor = vec4(min(col, 255.0) / 255.0, 1.0);
+}`
+const cloudP = pipe.program(FRAG)
+
+// integrated rate, so a modulated rate never jumps the phase
+const phase = (key, rate) => rt.phase(key, rate)
+
+let W = 0, H = 0, GW = 0, GH = 0, img = null
+function resize() {
+  W = pipe.width; H = pipe.height // glpipe sized the canvas (its listener runs first)
+  // render the clouds a little under screen size, scaled with the quality setting
+  GW = Math.min(W, Math.round(400 * (0.5 + 0.5 * rt.detail)))
+  GH = Math.max(60, Math.round(GW * (H / W)))
+  pipe.release(img)
+  img = pipe.target({ width: GW, height: GH })
+}
+
 function frame(now) {
   rt.tick(now)
   const t = now * 0.001
-  drift += params.wind * 0.002 // gentler wind (was ~3× faster)
+  // wind drift (0.12 × wind per second = the old 0.002 per frame at 60 fps).
+  // Kept modulo 10 so it stays precise: every texture lookup scales u by a
+  // factor (1, 0.6, 5.5, 3.6) that turns a shift of 10 into whole field tiles.
+  const drift = phase('drift', params.wind * 0.12) % 10
   const sunA = (params.sun * Math.PI) / 180
-  const lx = Math.cos(sunA) * 0.6, ly = -Math.sin(sunA) * 0.6
-
-  // sky gradient
-  const sk = params.sky
-  const skyTop = [60 + sk * 60, 110 + sk * 20, 190 - sk * 40]
-  const skyBot = [150 + sk * 60, 180 - sk * 30, 210 - sk * 40]
-  const g = ctx.createLinearGradient(0, 0, 0, H)
-  g.addColorStop(0, `rgb(${skyTop[0]},${skyTop[1]},${skyTop[2]})`)
-  g.addColorStop(1, `rgb(${skyBot[0]},${skyBot[1]},${skyBot[2]})`)
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
 
   // auto-evolve the type by cross-blending toward the next one
   const typeIdx = Math.max(0, TYPES.indexOf(params.type))
   const nextIdx = (typeIdx + 1) % TYPES.length
-  const blend = params.evolve > 0.01 ? (0.5 + 0.5 * Math.sin(rt.phase('evolve', 0.05 * params.evolve))) * params.evolve : 0
-  const defA = TYPE_DEF[TYPES[typeIdx]], defB = TYPE_DEF[TYPES[nextIdx]]
-  const cover = params.cover
+  const ev = phase('evolve', 0.05 * params.evolve)
+  const blend = params.evolve > 0.01 ? (0.5 + 0.5 * Math.sin(ev)) * params.evolve : 0
 
-  // density + lighting + colour for one type at a pixel
-  function cloud(def, x, y) {
-    const u = (x / GW) / def.stretch + drift
-    const v = (y / GH) * 1.4
-    const n1 = sampleField(u, v)
-    const n2 = sampleField(u + 0.13, v + t * 0.004)
-    const n = n1 * 0.6 + n2 * 0.4
-    // cover lowers the density floor: at cover→1 almost the whole sky clouds
-    // over into a dense overcast; at low cover only the fbm peaks poke through.
-    const lo = 0.62 - cover * 0.62
-    let d = def.curve(smooth01(lo, lo + 0.3, n))
-    if (def.band) d *= def.band(y / GH)
-    // rows of puffs (mackerel / altocumulus): a regular horizontal banding
-    if (def.rows) d *= 0.35 + 0.65 * Math.pow(Math.abs(Math.sin((y / GH) * Math.PI * def.rows)), 0.6)
-    // fibrous carve (cirrus mare's-tails): fine wind-stretched streaks
-    if (def.fiber) { const fb = sampleField(u * 0.6 + 5, v * 7 + 2); d *= 0.25 + 0.75 * smooth01(0.4, 0.66, fb) }
-    if (def.ripple) { const rip = sampleField(u * def.ripple + 11, v * def.ripple + 3); d *= 0.22 + 0.78 * smooth01(0.4, 0.62, rip) }
-    // overcast fill: at very high cover, lift the thin gaps so it reads solid
-    if (cover > 0.8) d = d + (cover - 0.8) * 3.5 * (1 - d) * smooth01(lo - 0.05, lo + 0.15, n)
-    d = Math.min(1, d)
-    // lighting: brighter where the field rises toward the light (below for mammatus)
-    const s = def.litBelow ? -1 : 1
-    const nA = sampleField(u + lx * 0.02, v + ly * 0.02 * s)
-    const shade = Math.max(def.storm ? 0.28 : 0.42, Math.min(1, 0.6 + (n - nA) * 2.0 * s))
-    let r, gc, b
-    if (def.storm) { const val = 90 * (0.4 + shade * 0.6); r = val; gc = val; b = val * 1.05 }
-    else if (def.glow) { const val = 235 * shade; r = val * 0.55; gc = val * 0.82; b = val * 1.15 }
-    else if (def.dull) { const val = 200 * (0.6 + shade * 0.4); r = val; gc = val; b = val * 1.03 } // flat grey overcast
-    else { const val = 235 * shade; r = val; gc = val * 0.99; b = val * 0.98 }
-    return { d, r, g: gc, b }
-  }
-
-  const d = img.data
-  for (let y = 0; y < GH; y++) {
-    const f2 = y / GH
-    const sr = skyTop[0] + (skyBot[0] - skyTop[0]) * f2
-    const sg = skyTop[1] + (skyBot[1] - skyTop[1]) * f2
-    const sb = skyTop[2] + (skyBot[2] - skyTop[2]) * f2
-    for (let x = 0; x < GW; x++) {
-      const A = cloud(defA, x, y)
-      let a = A.d, cr = A.r, cg = A.g, cb = A.b
-      if (blend > 0.01) {
-        const B = cloud(defB, x, y)
-        a = a * (1 - blend) + B.d * blend
-        cr = cr * (1 - blend) + B.r * blend
-        cg = cg * (1 - blend) + B.g * blend
-        cb = cb * (1 - blend) + B.b * blend
-      }
-      const i = (y * GW + x) * 4
-      d[i] = sr * (1 - a) + cr * a
-      d[i + 1] = sg * (1 - a) + cg * a
-      d[i + 2] = sb * (1 - a) + cb * a
-      d[i + 3] = 255
-    }
-  }
-  lctx.putImageData(img, 0, 0)
-  ctx.imageSmoothingEnabled = true
-  ctx.drawImage(low, 0, 0, W, H)
+  pipe.run(cloudP, { u_field: fieldTex }, img, (u) => {
+    u.i('u_typeA', typeIdx)
+    u.i('u_typeB', nextIdx)
+    u.f('u_blend', blend)
+    u.f('u_cover', params.cover)
+    u.f('u_drift', drift)
+    u.f('u_vt', (t * 0.004) % 1)
+    u.f('u_sky', params.sky)
+    u.v2('u_light', Math.cos(sunA) * 0.6, -Math.sin(sunA) * 0.6)
+  })
+  // scale up to the canvas: a filtered blit, no shader pass
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, img.fbo)
+  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null)
+  gl.blitFramebuffer(0, 0, GW, GH, 0, 0, W, H, gl.COLOR_BUFFER_BIT, gl.LINEAR)
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null)
   requestAnimationFrame(frame)
 }
 window.addEventListener('resize', resize)

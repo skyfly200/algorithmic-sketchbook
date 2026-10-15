@@ -45,8 +45,9 @@ export const CHAINABLE_SLUGS = [
   'pinch', 'spherize', 'ripple', 'polar-coordinates', 'twist', 'displace', 'warp',
   'funhouse-mirror', 'kaleidoscope',
   'median', 'oil-paint', 'difference-of-gaussians', 'directional-sharpen', 'detail-upscale',
-  // with baked textures (LUT, dirt, damage overlay)
-  'curves', 'camera-lens', 'polaroid',
+  // with baked textures (LUT, dirt, damage overlay, noise tiles, drop / streak maps)
+  'curves', 'camera-lens', 'polaroid', 'fog', 'nebula-gasses', 'light-leaves', 'shaky-film',
+  'lens-flare', 'rain-window',
   // stateful (u_prev / u_prevIn history, see sketches/_lib/glhistory.js)
   'feedback', 'interlace',
 ]
