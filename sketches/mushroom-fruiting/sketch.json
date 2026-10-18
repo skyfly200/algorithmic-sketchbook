@@ -1,7 +1,18 @@
 {
   "title": "Mushroom Fruiting",
-  "description": "A fungal colony seen in cross-section. Mycelium spreads through the substrate as a branching web of fine hyphae; pins break through the surface and fruit into recognisable species — scarlet white-warted fly agaric, pot-bellied brown porcini, tall shaggy ink caps that deliquesce into black drips, clustered grey oyster shelves, golden wavy-edged chanterelles, and tiered turkey-tail bracket polypores on buried wood. Each grows, matures and drops drifting spores, then ages and withers while new flushes keep coming. Tick exactly which species you want to fruit. Click to inoculate a fresh flush; beats trigger a colony-wide flush. Growth speed, fruiting density, size, spore release, mycelium spread and substrate damp are live and mappable.",
-  "tags": ["earth", "biology", "fungi", "growth", "generative", "audio-reactive"],
-  "tech": ["canvas2d"],
+  "description": "A forest-floor fungal colony seen from low down, where every fruiting body is generated from its own genome. Cap profile, rim waviness, colour, warts, shaggy scales, zones and striations, gill count and colour, pores or forked ridges, stem curve, bulb, ring and volva are all drawn per fruit around a species archetype, so no two are alike: scarlet fly agarics with veil flakes and skirts, fat porcini with netted stems, shaggy ink caps that blacken and drip, oyster shelves and banded turkey-tail, conk or sulphur brackets on mossy stumps and logs, golden chanterelle funnels, glowing bonnet clusters, and fully random 'wild' species. Each is drawn in pseudo-3D from slightly below so the gills show, grows from a pin, opens, sheds spores, ages and collapses while mycelium spreads through the soil. Depth mist, light direction, damp gloss, variation, bioluminescence, growth, density, size, spores and mycelium spread are live and mappable. Click to inoculate a flush; beats trigger a colony-wide flush.",
+  "tags": [
+    "audio-reactive",
+    "biology",
+    "earth",
+    "fungi",
+    "generative",
+    "growth",
+    "nature",
+    "procedural"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
   "created": "2026-07-23"
 }
