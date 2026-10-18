@@ -1,0 +1,16 @@
+{
+  "title": "Fractal Cube",
+  "description": "A Menger sponge ray-marched in real time: a cube with its centre and face-centres carved out, again and again in every remaining sub-cube, leaving an infinitely porous lattice. It never sits still by default: an auto zoom swings from a wide view to a close long-lens dive into the holes and back, and an auto morph slowly drifts twist, tumble, fold scale, stretch and sub-cube size so the shape keeps changing (both have amount and speed controls, and set to 0 they stop). Written as a kaleidoscopic IFS (fold, sort, rotate, scale, offset), so beyond the classic sponge it grows twisted, tumbled, stretched, shrunken and rounded variants. Live params cover recursion depth, the shape knobs, the auto motion, orbit speed, camera turn / tilt / distance / lens, colouring (orbit trap, level, facing or height), hue and hue drift, palette spread, saturation, shine, ambient occlusion, halo glow and fog. The pointer steers the camera, loudness nudges the orbit and beats flare the halo.",
+  "tags": [
+    "shader",
+    "fractal",
+    "3d",
+    "raymarching",
+    "audio-reactive"
+  ],
+  "tech": [
+    "webgl",
+    "glsl"
+  ],
+  "created": "2026-10-15"
+}
