@@ -1597,12 +1597,21 @@ function startWire(n, e, port = 0) {
   wire.x = p.x
   wire.y = p.y
 }
+// Whether the wire in flight may land on input `port` of node `n`. Geometry
+// and image streams don't mix: a geometry out only feeds a geometry in (the
+// Camera), and an image out never lands on a geometry input. Also drives the
+// enlarged "drop here" look of compatible ports while dragging.
+function canDropWire(n, port) {
+  if (!wire.active || wire.from === n.id || wire.kind === 'control') return false
+  return (wire.kind === 'geometry') === (inKind(n, port) === 'geometry')
+}
+// a control wire in flight can land on any other node's param jacks
+function canDropLink(n) {
+  return wire.active && wire.kind === 'control' && wire.from !== n.id
+}
 function endWire(n, port) {
   if (!wire.active || wire.from === n.id || wire.kind === 'control') return
-  // geometry and image streams don't mix: a geometry out only feeds a geometry
-  // in (the Camera), and an image out never lands on a geometry input
-  const fromNode = nodes.find((x) => x.id === wire.from)
-  if (fromNode && (outKind(fromNode) === 'geometry') !== (inKind(n, port) === 'geometry')) {
+  if (!canDropWire(n, port)) {
     wire.active = false
     return
   }
@@ -4543,7 +4552,7 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
         :key="n.id"
         :data-node-id="n.id"
         class="node"
-        :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked, 'node--slow': nodeSlow(n), 'node--error': nodeIssueSev.get(n.id) === 'error', 'node--warn': nodeIssueSev.get(n.id) === 'warning' }"
+        :class="{ 'node--selected': selectedSet.has(n.id) || selected === n.id, 'node--locked': n.locked, 'node--slow': nodeSlow(n), 'node--error': nodeIssueSev.get(n.id) === 'error', 'node--warn': nodeIssueSev.get(n.id) === 'warning', 'node--jack-target': canDropLink(n) }"
         :style="{ left: n.x + 'px', top: n.y + 'px', width: nodeW(n) + 'px', zIndex: selected === n.id || n.id === frontNodeId ? 20 : (selectedSet.has(n.id) ? 14 : undefined) }"
         @pointerdown.capture="frontNodeId = n.id"
       >
@@ -4604,7 +4613,7 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
           v-for="i in TYPES[n.type].ins"
           :key="'in' + i"
           class="port"
-          :class="inKind(n, i - 1) === 'matte' ? 'port--matte' : inKind(n, i - 1) === 'geometry' ? 'port--geometry' : 'port--image'"
+          :class="[inKind(n, i - 1) === 'matte' ? 'port--matte' : inKind(n, i - 1) === 'geometry' ? 'port--geometry' : 'port--image', { 'port--target': canDropWire(n, i - 1) }]"
           :style="{
             left: '-7px',
             top: HEAD_H + (THUMB_H * i) / (TYPES[n.type].ins + 1) - 7 + 'px',
@@ -5300,6 +5309,18 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
   cursor: crosshair; z-index: 13;
 }
 .ldot:hover { border-color: #ffd9a0; }
+/* while a wire is being dragged, the inputs it can land on grow and glow so
+   they're easier to hit; incompatible ones stay as they are. `scale` (not
+   transform) composes with the matte diamond's rotate, and scales the hit area. */
+.port--target, .node--jack-target .pjack, .node--jack-target .ldot {
+  scale: 1.6; z-index: 15; background: #2a2f40;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18), 0 0 10px rgba(255, 255, 255, 0.35);
+  transition: scale 0.12s ease-out;
+}
+.port--target { border-color: #fff; }
+.port--geometry.port--target { border-color: #b6f5da; }
+.node--jack-target .pjack, .node--jack-target .ldot { border-color: #ffd9a0; box-shadow: 0 0 0 3px rgba(224, 160, 96, 0.25), 0 0 10px rgba(224, 160, 96, 0.5); }
+.port--target:hover, .node--jack-target .pjack:hover, .node--jack-target .ldot:hover { scale: 2; }
 .port-label {
   position: absolute; z-index: 13; pointer-events: none;
   font: 10px system-ui, sans-serif; color: #e0a060;
