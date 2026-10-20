@@ -1704,7 +1704,10 @@ function effectSrc(n) {
   // A per-node seed drives the sketch's generative variation; changing it
   // reloads the frame with a fresh look (the node's random seed input).
   const seed = n.params.seed ? `&seed=${encodeURIComponent(n.params.seed)}` : ''
-  return s ? `${s.url}?capture=1&preview=1&quality=high&nomap=1${seed}${inputParams(settings)}` : ''
+  // feed=1 (Filter nodes): the sketch starts on black, not its demo picture, so
+  // the demo can't show through before the first input frame arrives.
+  const feed = n.type === 'filter' ? '&feed=1' : ''
+  return s ? `${s.url}?capture=1&preview=1&quality=high&nomap=1${feed}${seed}${inputParams(settings)}` : ''
 }
 function randSeed() { return Math.floor(Math.random() * 1e9).toString(36) }
 function randHex() { return '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0') }

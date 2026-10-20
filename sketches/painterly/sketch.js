@@ -20,7 +20,7 @@ const STYLES = ['Watercolour', 'Oil', 'Charcoal', 'Ink', 'Pastel', 'Spray']
 
 const rt = createRuntime()
 const params = rt.params({
-  style: { value: 'Watercolour', type: 'select', options: STYLES, label: 'Medium' },
+  style: { value: 'Oil', type: 'select', options: STYLES, label: 'Medium' },
   brush: { value: 1, min: 0.4, max: 3, step: 0.05, label: 'Brush size' },
   sizeVary: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Brush size variation' },
   lengthVary: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Stroke length variation' },
@@ -38,6 +38,7 @@ precision highp float;
 in vec2 v_uv;
 uniform sampler2D u_bake0;   // baked cells, coarse layer
 uniform sampler2D u_bake1;   // baked cells, fine layer
+uniform sampler2D u_src;     // mipmapped source, for the underpainting
 uniform vec2 u_res;
 uniform float u_cell0;
 uniform float u_cell1;
@@ -76,7 +77,7 @@ void layer(inout vec3 col, vec2 px, float base, float cell, float seed, float mi
   vec2 cid0 = floor(px / cell);
 
   float wMax = base * 0.5 * (1.0 + 0.8 * u_sizeVary) * (u_style == 0 ? 1.6 : 1.2);
-  float halfLenMax = 1.6 * cell;
+  float halfLenMax = 2.4 * cell;
   float bound = (u_style == 5) ? base * 2.6 : halfLenMax + wMax;
 
   for (int j = -2; j <= 2; j++) {
@@ -117,16 +118,16 @@ void layer(inout vec3 col, vec2 px, float base, float cell, float seed, float mi
       }
 
       float ang = ah.r * 6.2831853 - 1.5707963 + (h3 - 0.5) * 0.4 * u_texAmt;
-      float len = max(base * 0.4, base * (1.2 + grad * 2.0) * u_length * lvar);
+      float len = max(base * 0.8, base * (2.2 + grad * 2.5) * u_length * lvar);
       float halfLen = min(len * 0.5, halfLenMax);
       float wdt = base * 0.5 * svar;
 
       vec3 sc = c;
       float a = 0.9;
       float lw = wdt;
-      if (u_style == 0) { a = 0.22; lw = wdt * 1.6; sc = c * 0.7 + 0.3; }
-      else if (u_style == 4) { a = 0.5; lw = wdt * 1.2; sc = c * 0.75 + vec3(0.92, 0.90, 0.88) * 0.25; }
-      else if (u_style == 1) { a = 0.92; lw = wdt; }
+      if (u_style == 0) { a = 0.5; lw = wdt * 1.3; sc = clamp((c - 0.5) * 1.05 + 0.5, 0.0, 1.0); }
+      else if (u_style == 4) { a = 0.62; lw = wdt * 1.2; sc = c * 0.85 + vec3(0.92, 0.90, 0.88) * 0.15; }
+      else if (u_style == 1) { a = 0.95; lw = wdt * 0.9; sc = clamp((c - 0.5) * 1.08 + 0.5, 0.0, 1.0); }
       else if (u_style == 2) { sc = vec3(30.0, 28.0, 32.0) / 255.0; a = min(0.7, dark * 0.7 + grad * u_edges); }
       else {   // ink: linework only where there is an edge or a deep shadow
         float on = grad * 3.0 * u_edges + max(0.0, dark - 0.55) * 1.5;
@@ -174,6 +175,12 @@ void main() {
   float tooth = vnoise(px / (1.5 * u_pr)) * 0.6 + vnoise(px / (4.0 * u_pr)) * 0.4;
   vec3 paperGround = ground * (0.955 + 0.09 * tooth);
   vec3 col = paperGround;
+  // underpainting: a heavily blurred wash of the picture, so gaps between strokes are tinted, not bare paper
+  if (u_style != 3 && u_style != 2 && u_style != 5) {
+    float L = max(u_res.x, u_res.y);
+    vec3 wash = textureLod(u_src, v_uv, max(log2(L / 40.0), 0.0)).rgb;
+    col = mix(col, wash * (0.9 + 0.1 * tooth), 0.85);
+  }
 
   layer(col, px, u_base, u_cell0, 0.0, -1.0, u_bake0);
   if (u_style != 5) layer(col, px, u_base * 0.5, u_cell1, 17.0, 0.05, u_bake1);   // finer pass re-inks the edges
@@ -263,7 +270,7 @@ function frame(now) {
       const cell1 = (base * 0.5) / Math.sqrt(1.6 * params.density)
       bakeLayer(layers[0], cell0)
       bakeLayer(layers[1], cell1)
-      pipe.run(pMain, { u_bake0: layers[0].target, u_bake1: layers[1].target }, null, (u) => {
+      pipe.run(pMain, { u_bake0: layers[0].target, u_bake1: layers[1].target, u_src: pipe.source }, null, (u) => {
         u.i('u_style', Math.max(0, STYLES.indexOf(params.style)))
         u.f('u_base', base)
         u.f('u_cell0', cell0)
