@@ -35,6 +35,12 @@ export function createRenderers({ cover, inputCanvas, inputVer = () => 0, pval, 
         .then((bmp) => { s.iframe?.contentWindow?.postMessage({ type: 'mixer:frame', bitmap: bmp }, '*', [bmp]) })
         .catch(() => {})
         .finally(() => (s.feeding = false))
+    } else if (!input && s.iframe?.contentWindow && nowMs - (s.demoAt ?? 0) > 1000) {
+      // Nothing wired in: the sketch started on black (feed=1), so ask it for its
+      // demo picture (repeated in case it wasn't listening yet; a no-op once on it).
+      s.demoAt = nowMs
+      s.fedVer = undefined // re-feed at once when an input is wired
+      s.iframe.contentWindow.postMessage({ type: 'source:demo' }, '*')
     }
     try {
       const cv = s.iframe?.contentDocument?.querySelector('canvas')

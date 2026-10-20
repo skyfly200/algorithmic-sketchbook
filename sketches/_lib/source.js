@@ -29,7 +29,13 @@ import { DEMOS } from './demos.js'
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
 
 export function createSource(opts = {}) {
-  const preview = new URLSearchParams(location.search).get('preview') === '1'
+  const query = new URLSearchParams(location.search)
+  const preview = query.get('preview') === '1'
+  // ?feed=1: a compositor (Patch's Filter node) will feed this page its input.
+  // Start on black rather than the demo, so the demo never shows through while
+  // the first frame is on its way; the host asks for the demo with a
+  // `source:demo` message when nothing is wired in.
+  const fed = query.get('feed') === '1'
   const chooser = document.getElementById('chooser')
 
   const state = {
@@ -178,6 +184,10 @@ export function createSource(opts = {}) {
   // Mixer/Patch feed: the parent posts the composite below this layer.
   window.addEventListener('message', (e) => {
     const d = e.data
+    if (d?.type === 'source:demo') {
+      if (state.kind !== 'demo') useDemo()
+      return
+    }
     if (!d || d.type !== 'mixer:frame' || !d.bitmap) return
     const bmp = d.bitmap
     if (!mixerCanvas) mixerCanvas = document.createElement('canvas')
@@ -235,7 +245,16 @@ export function createSource(opts = {}) {
   // camera/upload behind a small unobtrusive "source" button (bottom-left).
   // Inside a preview iframe (Patch/Mixer/Autopilot) there's no chooser at all
   // — the compositor feeds the source.
-  useDemo()
+  if (fed) {
+    // a black placeholder, so every filter runs normally until the feed arrives
+    mixerCanvas = document.createElement('canvas')
+    mixerCanvas.width = 160
+    mixerCanvas.height = 90
+    const c = mixerCanvas.getContext('2d')
+    c.fillStyle = '#000'
+    c.fillRect(0, 0, 160, 90)
+    set(mixerCanvas, 160, 90, 'mixer')
+  } else useDemo()
   hideChooser()
   if (!preview && chooser) {
     const btn = document.createElement('button')
