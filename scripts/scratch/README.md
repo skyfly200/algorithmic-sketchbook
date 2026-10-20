@@ -34,3 +34,5 @@ that things work and look right. Screenshots go to `scripts/scratch/out/`
 `chain-fuzz.mjs` and `shoot.mjs` start the dev server on port 5199.
 
 | `mem-map.mjs [label filter]` | Needs `npm run build`. Memory (PSS of this script's Chromium process tree) and JS heap for the gallery, single sketches and seeded Patch graphs. `RES='1280 × 720'` sets the Patch compositor size; `CHROME=<path>` picks the browser. Software renderer, so GPU memory shows up as process memory and the CPU column is meaningless. |
+| `mushroom-shots.mjs [species,…]` | Screenshots of `mushroom-fruiting` on the dev server (port 5198). `all` is the normal scene; a species name turns every other species off. `SPEC=1` uses the sketch's `?specimens=` row (one species at six frozen growth stages); `TIMES`, `CLIP=x,y,w,h`, `DPR`, `SEED`, `VAR` (variation) and `CHROME` tune it. |
+| `mushroom-perf.mjs` | Rough fps / worst frame for `mushroom-fruiting` at growth 3 (port 5197). |
