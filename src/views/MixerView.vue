@@ -23,6 +23,9 @@ import perfScores from '../registry/perf.json'
 import { slugCost } from '../lib/patch/graph.js'
 import { planStack, StackThrottle, TRANSPARENT_SKETCHES } from '../lib/stackScheduler.js'
 import { mixToPatch, handOffToPatch } from '../lib/mixToPatch'
+import { scoreSketch } from '../lib/sketchSearch.js'
+// v-autocomplete filter: search title, tags, tech and description, not just the title.
+const matchSketch = (value, query, item) => scoreSketch(item?.raw ?? {}, query) > 0
 import { isLog, toPos, fromPos, tidy } from '../../sketches/_lib/paramScale.js'
 
 const router = useRouter()
@@ -461,11 +464,14 @@ onBeforeUnmount(() => {
             :title="layer.on ? 'Hide layer' : 'Show layer'"
             @click="layer.on = !layer.on"
           />
-          <v-select
+          <v-autocomplete
             v-model="layer.slug"
             :items="options"
             item-title="title"
             item-value="slug"
+            :custom-filter="matchSketch"
+            placeholder="Search sketches"
+            auto-select-first
             density="compact"
             hide-details
             class="flex-grow-1"
