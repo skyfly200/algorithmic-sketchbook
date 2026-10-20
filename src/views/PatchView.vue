@@ -2907,22 +2907,26 @@ let bgCursor = 0
 // Should this node be re-rendered on this compositor pass?
 // Idle sampling for a freshly evaluated effect node (see the idle section near the top).
 const idleCv = document.createElement('canvas')
-idleCv.width = 128
-idleCv.height = 72
+idleCv.width = 48
+idleCv.height = 27
 const idleCtx = idleCv.getContext('2d', { willReadFrequently: true })
 idleCtx.imageSmoothingQuality = 'high'
 const IDLE_GRACE_MS = 2500 // a frame that has only just loaded may not have drawn yet
 function idleEligible(n) {
   return freezeStatic.value && !micOn.value && n.type === 'effect' && !!n.params.slug && !nodeModulated(n)
 }
+// The readback stalls the compositor until the GPU has finished the node's frame, so at most one
+// runs per pass (a node that misses its turn is simply sampled on the next pass).
+let idleSampledPass = -1
 function idleSample(n, s, now) {
   if (!idleEligible(n)) {
     if (idle.phase(n.id) !== 'live') idle.wake(n.id, now)
     return
   }
-  if (!idle.wantSample(n.id, now)) return
+  if (idleSampledPass === passToggle || !idle.wantSample(n.id, now)) return
   const f = frameList.find((x) => x.nodeId === n.id)
   if (!f?.ready || now - f.born < IDLE_GRACE_MS) return
+  idleSampledPass = passToggle
   idleCtx.drawImage(s.out, 0, 0, idleCv.width, idleCv.height)
   idle.observe(n.id, hashPixels(idleCtx.getImageData(0, 0, idleCv.width, idleCv.height).data), now)
 }

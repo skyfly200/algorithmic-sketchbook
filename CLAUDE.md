@@ -217,8 +217,8 @@ Two ways to stop paying for effect nodes (iframes) whose work is wasted. Both ar
 (toolbar toggles, `patch.freezeStatic` / `patch.autoBake` in localStorage) and both stay out of the way of anything that
 could react to the outside: they apply only to effect nodes with **no control links, no mappings, and the mic off**.
 
-- **Freeze static nodes** (`lib/patch/idle.js`, `StaticTracker`): a 128x72 hash of the node's output is sampled every
-  250 ms; identical for ~1 s freezes it. `shouldEval` returns false (no copy, no `s.ver` bump, so downstream blends and
+- **Freeze static nodes** (`lib/patch/idle.js`, `StaticTracker`): a 48x27 hash of the node's output (at most one readback per compositor pass) is sampled every
+  600 ms; identical for ~1.2 s freezes it. `shouldEval` returns false (no copy, no `s.ver` bump, so downstream blends and
   filters skip too) and the iframe is paused through **`applyDeckPause`** (`want = deckWant || frozen || baked`): never post
   `sketch:pause` for these yourself, the deck policy resets `f.paused` every pass. A frozen node is re-probed every ~2 s.
   Anything that can change a picture calls `idle.wake` / `wakeAll`: `postToEffect` of a param / mapping / scene / state /

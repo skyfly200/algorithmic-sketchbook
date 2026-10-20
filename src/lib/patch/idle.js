@@ -6,7 +6,7 @@
 // `probeMs`, sampled once more, and goes back to frozen only if the picture is still the same.
 // Anything that can change a node's picture from outside (a param, a link, a mapping, audio, a
 // resize, a reloaded iframe) calls wake(), which starts the node over as live.
-export const IDLE_DEFAULTS = { sampleMs: 250, freezeMs: 1000, probeEveryMs: 2000, probeMs: 200 }
+export const IDLE_DEFAULTS = { sampleMs: 600, freezeMs: 1200, probeEveryMs: 2000, probeMs: 200 }
 
 /** FNV-1a over RGBA bytes, with the low `shift` bits dropped so +-1 level dither does not count. */
 export function hashPixels(data, shift = 2) {
