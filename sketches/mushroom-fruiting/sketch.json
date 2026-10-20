@@ -1,15 +1,18 @@
 {
   "title": "Mushroom Fruiting",
-  "description": "A forest-floor fungal colony seen from low down, where every fruiting body is generated from its own genome. Cap profile, rim waviness, colour, warts, shaggy scales, zones and striations, gill count and colour, pores or forked ridges, stem curve, bulb, ring and volva are all drawn per fruit around a species archetype, so no two are alike: scarlet fly agarics with veil flakes and skirts, fat porcini with netted stems, shaggy ink caps that blacken and drip, oyster shelves and banded turkey-tail, conk or sulphur brackets on mossy stumps and logs, golden chanterelle funnels, glowing bonnet clusters, and fully random 'wild' species. Each is drawn in pseudo-3D from slightly below so the gills show, grows from a pin, opens, sheds spores, ages and collapses while mycelium spreads through the soil. Depth mist, light direction, damp gloss, variation, bioluminescence, growth, density, size, spores and mycelium spread are live and mappable. Click to inoculate a flush; beats trigger a colony-wide flush.",
+  "description": "A slow walk through a Colorado forest floor, seen from low down, where every fruiting body is generated from its own genome. Porcini, fly agaric, shaggy mane, chanterelle, oyster, lion's mane, turkey tail, psilocybe, marasmius fairy rings, mycena (including glowing ones), xylaria, eyelash cups, wood ear, cordyceps, conks and sulphur shelves each keep their own anatomy, and an 'imaginary mushrooms' option still invents fully random species. Nothing lasts: fruits rot, dry out, deliquesce, get eaten by slugs and deer, or get picked by foragers (click one for its Latin name and what is happening to it). Dead aspens, cottonwoods, Gambel oaks, lodgepole and ponderosa pines, spruces, Douglas-firs and subalpine firs stand as snags, fall, and crumble into the soil, hosting the wood fungi as they decay. The camera drifts sideways through the woods, wind carries the spores, and fruits are spaced to avoid overlap. Scroll speed and direction, wind, spacing, grazing, foraging, dead trees, wood decay, depth mist, light, damp, variation, bioluminescence and every species switch are live and mappable. Click the ground to inoculate a flush; beats trigger a colony-wide flush.",
   "tags": [
     "audio-reactive",
     "biology",
+    "decay",
     "earth",
     "fungi",
     "generative",
     "growth",
     "nature",
-    "procedural"
+    "procedural",
+    "trees",
+    "wind"
   ],
   "tech": [
     "canvas2d"
