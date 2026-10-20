@@ -24,6 +24,7 @@ const disableAll = ref(false)
 const cardEl = ref(null)
 const cardH = ref(220) // measured card height, for clamping into view
 const step = computed(() => props.steps[idx.value] || null)
+const nextLabel = computed(() => (step.value?.cta && !onLast.value ? step.value.cta : onLast.value ? 'Done' : 'Next'))
 const onLast = computed(() => idx.value >= props.steps.length - 1)
 
 function measure() {
@@ -68,8 +69,14 @@ function next() { if (onLast.value) done(); else idx.value++ }
 function back() { if (idx.value > 0) idx.value-- }
 function done() { emit('finish', { disableAll: disableAll.value }); emit('update:modelValue', false) }
 
+// A step whose target is hidden (the nav collapses into a menu on phones) shows
+// `fallback` instead of a body that points at a button that isn't there.
+const bodyText = computed(() => (!rect.value && step.value?.target && step.value.fallback) || step.value?.body)
+
 function onKey(e) {
   if (!props.modelValue) return
+  // A focused button/checkbox handles Enter/Space itself; don't also advance.
+  if (e.target?.closest?.('button, input, a') && (e.key === 'Enter' || e.key === ' ')) return
   if (e.key === 'Escape') done()
   else if (e.key === 'ArrowRight' || e.key === 'Enter') next()
   else if (e.key === 'ArrowLeft') back()
@@ -104,7 +111,7 @@ onBeforeUnmount(() => {
     <div ref="cardEl" class="tour-card" :style="cardStyle" @pointerdown.stop>
       <button v-if="!onLast" class="tour-x" title="Skip the tour (Esc)" @click="done">✕</button>
       <div class="tour-title">{{ step?.title }}</div>
-      <div class="tour-body">{{ step?.body }}</div>
+      <div class="tour-body">{{ bodyText }}</div>
       <!-- Optional keyboard-shortcuts list for a step (used on the last slide). -->
       <ul v-if="step?.shortcuts?.length" class="tour-keys">
         <li v-for="k in step.shortcuts" :key="k.keys">
@@ -120,7 +127,7 @@ onBeforeUnmount(() => {
         <span class="tour-spacer" />
         <button v-if="!onLast" class="tour-skip" @click="done">Skip</button>
         <button v-if="idx > 0" class="tour-btn" @click="back">Back</button>
-        <button class="tour-btn tour-btn--go" @click="next">{{ onLast ? 'Done' : 'Next' }}</button>
+        <button class="tour-btn tour-btn--go" @click="next">{{ nextLabel }}</button>
       </div>
     </div>
   </div>
