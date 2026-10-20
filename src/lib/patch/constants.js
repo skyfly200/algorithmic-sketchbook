@@ -160,7 +160,7 @@ export const NL_EXAMPLES = [
 
 // Guided-tour steps for the Patch view (TourOverlay reads target/title/body/pad).
 export const PATCH_TOUR_STEPS = [
-  { title: 'Patch — the studio', body: 'A node compositor: wire generator effects through filters and blends into an Output, then project it. This is the deep end.' },
+  { title: 'Patch: the studio', body: 'A node compositor. Effects are boxes; you wire them through filters and blends into one Output box, then project it. Tip: press the dice button first to deal a working patch and poke at it.', cta: 'Show me' },
   { target: '[data-tour="patch-add"]', title: 'Build the graph', body: 'Add effects, filters, text, media, masks and blends from here, then drag a node’s right port to another’s left port to wire them.', pad: 8 },
   { target: '[data-tour="patch-random"]', title: 'Randomize', body: 'Deal out a whole new random-but-sensible patch in one click (undoable). It draws from the effect pool you set in Settings.' },
   { target: '[data-tour="patch-mask"]', title: 'Projection mapping', body: 'Add a Polygon node (wire it into a Mask), then turn this on and drag the polygon’s corners on the output to fit it to a real surface.' },
