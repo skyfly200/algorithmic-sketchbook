@@ -1,0 +1,7 @@
+{
+  "title": "Haunted Static",
+  "description": "A dead channel with something in it. Snow drifts over the picture and thickens into cold patches that wander across the screen; inside them a pale, bluish wraith of the real picture surfaces and fades. Static amount, grain size and drift speed are log sliders; interference bands shove the lines sideways. Static reacts to volume, apparitions to beats.",
+  "tags": ["spooky", "static", "filter", "horror", "analog", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-10-20"
+}

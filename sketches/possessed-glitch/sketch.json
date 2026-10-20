@@ -1,0 +1,7 @@
+{
+  "title": "Possessed Glitch",
+  "description": "A picture being taken over: horizontal blocks tear sideways, colour channels split, a dim doppelgänger swims behind the image and it flashes to a negative for a frame. Glitches arrive in clusters — calm stretches broken by violent seizures that thicken the tearing and crush the contrast. Tearing, channel split and glitch rate are log sliders; seizures react to beats.",
+  "tags": ["spooky", "glitch", "filter", "horror", "audio-reactive"],
+  "tech": ["webgl", "glsl"],
+  "created": "2026-10-20"
+}
