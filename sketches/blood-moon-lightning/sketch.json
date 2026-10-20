@@ -1,0 +1,7 @@
+{
+  "title": "Blood Moon & Lightning",
+  "description": "A blood-red moon behind drifting storm clouds and a dead-tree ridge while branching lightning forks down the sky, flashing the clouds. Beats call down a bolt. Strike rate, branching, flash and moon glow, redness and cloud speed are live and mappable.",
+  "tags": ["spooky", "lightning", "moon", "storm", "audio-reactive"],
+  "tech": ["canvas2d"],
+  "created": "2026-10-20"
+}
