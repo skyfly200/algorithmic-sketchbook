@@ -13,6 +13,7 @@ export const FILTER_SLUGS = [
   'kuwahara', 'emboss', 'sharpen', 'tilt-shift', 'gradient-map',
   'solarize', 'duotone', 'invert', 'vignette', 'crystallize', 'mosaic', 'pixelate', 'displace', 'ripple', 'pinch', 'spherize', 'polar-coordinates', 'glowing-edges',
   'median', 'oil-paint', 'difference-of-gaussians', 'directional-sharpen', 'detail-upscale',
+  'possessed-glitch', 'haunted-static',
 ]
 export const FILTER_SLUG_SET = new Set(FILTER_SLUGS)
 export function isFilterSketch(sketch) {
@@ -50,5 +51,7 @@ export const CHAINABLE_SLUGS = [
   'lens-flare', 'rain-window',
   // stateful (u_prev / u_prevIn history, see sketches/_lib/glhistory.js)
   'feedback', 'interlace',
+  // spooky
+  'possessed-glitch', 'haunted-static',
 ]
 export const CHAINABLE_SLUG_SET = new Set(CHAINABLE_SLUGS)

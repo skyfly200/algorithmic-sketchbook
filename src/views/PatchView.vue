@@ -85,7 +85,7 @@ const filterOptions = computed(() =>
 // Effects group by their tags/tech (the gallery's CATEGORIES); filters group by
 // a small slug-based taxonomy since their tags don't map to those themes.
 const FILTER_GROUPS = [
-  { label: 'Stylize', keys: ['pointillism', 'halftone', 'painterly', 'crt', 'vhs-defects', 'interlace', 'rolling-shutter', 'shaky-film', 'oil-paint', 'median', 'difference-of-gaussians', 'detail-upscale'] },
+  { label: 'Stylize', keys: ['pointillism', 'halftone', 'painterly', 'crt', 'vhs-defects', 'interlace', 'rolling-shutter', 'shaky-film', 'oil-paint', 'median', 'difference-of-gaussians', 'detail-upscale', 'possessed-glitch', 'haunted-static'] },
   { label: 'Optical', keys: ['camera-lens', 'lens-flare', 'kaleidoscope', 'warp', 'channel-offset', 'polarization', 'light-leaves', 'blur'] },
   { label: 'Atmosphere', keys: ['fog', 'mist', 'glow', 'nebula-gasses', 'uv-light'] },
   { label: 'Colour & tone', keys: ['color-filter', 'strobe', 'film-tone', 'brightness-contrast'] },
