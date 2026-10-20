@@ -64,6 +64,7 @@ import { BakeAdvisor, BakeBudget, bakeKey, bakeEligibility } from '../lib/patch/
 import { bakeNode, createLoopPlayer } from '../lib/patch/baker.js'
 import { diagnoseDeck, sortIssues, problemCount, worstByNode, issueSignature, runtimeIssue } from '../lib/patch/diagnostics.js'
 import ProblemsPanel from '../components/patch/ProblemsPanel.vue'
+import SketchPicker from '../components/patch/SketchPicker.vue'
 
 const router = useRouter()
 const store = useSketchStore()
@@ -4659,11 +4660,12 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
         <div v-show="bodyShown(n)" class="node-body">
           <template v-if="n.type === 'effect' || n.type === 'filter'">
             <div class="d-flex ga-1 align-center">
-              <select v-model="n.params.slug" class="flex-grow-1" @change="persist" @pointerdown.stop>
-                <optgroup v-for="g in (n.type === 'filter' ? filterGroups : effectGroups)" :key="g.label" :label="g.label">
-                  <option v-for="o in g.items" :key="o.slug" :value="o.slug">{{ o.title }}</option>
-                </optgroup>
-              </select>
+              <SketchPicker
+                v-model="n.params.slug"
+                :groups="n.type === 'filter' ? filterGroups : effectGroups"
+                :kind="n.type"
+                @change="persist()"
+              />
               <button
                 class="knob-btn"
                 title="Randomize — reseed and roll every parameter for a fresh look"
