@@ -27,6 +27,7 @@ import { FILTER_SLUGS } from '../registry/filters'
 import { handOffToPatch } from '../lib/mixToPatch'
 import { StackThrottle } from '../lib/stackScheduler.js'
 import { mediaLibrary, mediaById, sharedCameraOn, sharedCameraStream, startSharedCamera, stopSharedCamera } from '../stores/media'
+import { isLog, toPos, fromPos, tidy } from '../../sketches/_lib/paramScale.js'
 
 const router = useRouter()
 const store = useSketchStore()
@@ -1405,13 +1406,13 @@ function driftOptions() {
   const keys = numericParams(c)
   const name = pick(keys)
   const sp = c.schema[name]
-  const span = (sp.max - sp.min) || 1
   if (!c._drift) c._drift = {}
-  const cur = +c.values[name]
+  // drift in slider position, so a log-taper param wanders evenly along its track
+  const cur = toPos(+c.values[name], sp)
   let target = c._drift[name]
-  if (target == null || Math.abs(target - cur) < span * 0.04) c._drift[name] = target = sp.min + Math.random() * span
+  if (target == null || Math.abs(target - cur) < 0.04) c._drift[name] = target = Math.random()
   const next = cur + (target - cur) * 0.16
-  setParam(c, name, +next.toFixed(4))
+  setParam(c, name, isLog(sp) ? tidy(fromPos(next, sp), sp) : +fromPos(next, sp).toFixed(4))
 }
 
 // --- main loop --------------------------------------------------------------
@@ -1773,7 +1774,8 @@ onBeforeUnmount(() => {
                   </label>
                   <label v-else>
                     {{ spec.label ?? name }}
-                    <input type="range" :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :value="c.values[name]" @input="setParam(c, name, +$event.target.value)" />
+                    <input v-if="isLog(spec)" type="range" min="0" max="1" step="0.001" :value="toPos(c.values[name], spec)" @input="setParam(c, name, tidy(fromPos(+$event.target.value, spec), spec))" />
+                    <input v-else type="range" :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :value="c.values[name]" @input="setParam(c, name, +$event.target.value)" />
                   </label>
                 </template>
                 <div class="map-head">

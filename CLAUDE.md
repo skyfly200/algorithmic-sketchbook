@@ -52,6 +52,14 @@ All templates import it. In a sketch:
   at the centre — Patch loads sketches with default mappings off. Declaring params gives the sketch a
   controls panel in the viewer (sliders, mapping editor, saveable scenes) via
   postMessage — no extra wiring needed.
+- Log sliders: add `scale: 'log'` to a param whose useful values bunch up at the low end (an
+  intensity like tape snow, a size or radius or rate spanning 20-100x). With `min > 0` it is a true
+  log scale; with `min: 0` it is a pseudo-log that still reaches 0 (`logRange`, default 100). The
+  slider position, a mapping's `amount` and `{ center: true }` all work in 0..1 *position*, so
+  0.5 is still the centre and a mapping swings it both ways across the full travel. Use
+  `toPos` / `fromPos` / `tidy` from `sketches/_lib/paramScale.js` for anything else that turns a
+  param into a slider position. Prefer it for new params where it fits; keep linear for angles,
+  mixes, counts and anything bipolar.
 - Animating with a param as a rate: use `rt.phase('key', params.speed)` (∫ speed dt,
   advanced once per `rt.tick`), never `t * params.speed`. A mapped or dragged param
   otherwise jumps the phase by t × Δspeed, which strobes after a few minutes.
@@ -209,8 +217,8 @@ Two ways to stop paying for effect nodes (iframes) whose work is wasted. Both ar
 (toolbar toggles, `patch.freezeStatic` / `patch.autoBake` in localStorage) and both stay out of the way of anything that
 could react to the outside: they apply only to effect nodes with **no control links, no mappings, and the mic off**.
 
-- **Freeze static nodes** (`lib/patch/idle.js`, `StaticTracker`): a 128x72 hash of the node's output is sampled every
-  250 ms; identical for ~1 s freezes it. `shouldEval` returns false (no copy, no `s.ver` bump, so downstream blends and
+- **Freeze static nodes** (`lib/patch/idle.js`, `StaticTracker`): a 48x27 hash of the node's output (at most one readback per compositor pass) is sampled every
+  600 ms; identical for ~1.2 s freezes it. `shouldEval` returns false (no copy, no `s.ver` bump, so downstream blends and
   filters skip too) and the iframe is paused through **`applyDeckPause`** (`want = deckWant || frozen || baked`): never post
   `sketch:pause` for these yourself, the deck policy resets `f.paused` every pass. A frozen node is re-probed every ~2 s.
   Anything that can change a picture calls `idle.wake` / `wakeAll`: `postToEffect` of a param / mapping / scene / state /

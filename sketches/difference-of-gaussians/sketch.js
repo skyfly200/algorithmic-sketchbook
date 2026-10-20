@@ -16,7 +16,7 @@ const params = rt.params({
   ratio: { value: 1.6, min: 1.1, max: 4, step: 0.05, label: 'Wide / narrow ratio' },
   gain: { value: 4, min: 0.5, max: 16, step: 0.1, label: 'Gain' },
   threshold: { value: 0.02, min: -0.1, max: 0.2, step: 0.005, label: 'Line threshold' },
-  softness: { value: 8, min: 1, max: 40, step: 0.5, label: 'Line sharpness' },
+  softness: { value: 8, min: 1, max: 40, step: 0.5, scale: 'log', label: 'Line sharpness' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },
 })
 rt.mapInput('audio.volume', 'gain', 0.4)

@@ -46,7 +46,7 @@ const params = rt.params({
   forking: { value: 0.6, min: 0, max: 1.6, step: 0.05, label: 'Forking / break' },
   curve: { value: 0.44, min: -1.2, max: 1.2, step: 0.05, label: 'Curve (stripes)' },
   width: { value: 0.5, min: 0.2, max: 0.85, step: 0.01, label: 'Mark width' },
-  crisp: { value: 0.06, min: 0.004, max: 0.32, step: 0.004, label: 'Softness' },
+  crisp: { value: 0.06, min: 0.004, max: 0.32, step: 0.004, scale: 'log', label: 'Softness' },
   orient: { value: 0, min: 0, max: 180, step: 1, label: 'Orientation' },
   flow: { value: 0, min: 0, max: 1, step: 0.02, label: 'Flow (morph)' },
   texture: { value: 0.4, min: 0, max: 1, step: 0.02, label: 'Fur grain' },

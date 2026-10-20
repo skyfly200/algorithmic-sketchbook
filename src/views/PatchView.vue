@@ -49,6 +49,7 @@ import CurveEditor from '../components/CurveEditor.vue'
 import perfScores from '../registry/perf.json'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
+import { isLog, toPos, fromPos, tidy } from '../../sketches/_lib/paramScale.js'
 import { BRIDGE_DOWNLOAD_URL, BRIDGE_DOCS_ROUTE, needsBridge } from '../lib/bridge.js'
 import { createMidiInput, createLeapInput, createArtnetInput, createRemoteInput } from '../../sketches/_lib/inputs.js'
 import { mediaLibrary, mediaState, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, sharedCameraStream, flipSharedCamera, startSharedScreen, stopSharedScreen, sharedScreenOn, sharedScreenStream } from '../stores/media.js'
@@ -1395,10 +1396,9 @@ function applyLinks(now) { // per deck; the caller clears liveParams once per ti
     if (tgt.type === 'effect' || tgt.type === 'filter') {
       const spec = effectControls.get(tgt.id)?.schema?.[l.param]
       if (spec && typeof spec.min === 'number') {
-        const span = spec.max - spec.min || 1
         const base = effectControls.get(tgt.id).values[l.param] // the knob value
-        const bn = (base - spec.min) / span
-        const live = spec.min + clamp(bn + v * depth, 0, 1) * span
+        // in slider position, so a log-taper param moves the way its knob does
+        const live = fromPos(toPos(base, spec) + v * depth, spec)
         // post the live value only — never write it back into the knob's value
         postToEffect(tgt.id, { type: 'sketch:set-param', name: l.param, value: live })
       }
@@ -1726,7 +1726,7 @@ function rollEffectParams(n) {
     if (spec.type === 'bool') values[name] = Math.random() < 0.5
     else if (spec.type === 'color') values[name] = randHex()
     else if (spec.type === 'select' && spec.options?.length) values[name] = spec.options[Math.floor(Math.random() * spec.options.length)]
-    else if (typeof spec.min === 'number') values[name] = stepQuant(spec.min, spec.max)
+    else if (typeof spec.min === 'number') values[name] = isLog(spec) ? tidy(fromPos(Math.random(), spec), spec) : stepQuant(spec.min, spec.max)
   }
   effectControls.set(n.id, { ...c, values })
   for (const [k, v] of Object.entries(values)) postToEffect(n.id, { type: 'sketch:set-param', name: k, value: v })
@@ -2908,22 +2908,26 @@ let bgCursor = 0
 // Should this node be re-rendered on this compositor pass?
 // Idle sampling for a freshly evaluated effect node (see the idle section near the top).
 const idleCv = document.createElement('canvas')
-idleCv.width = 128
-idleCv.height = 72
+idleCv.width = 48
+idleCv.height = 27
 const idleCtx = idleCv.getContext('2d', { willReadFrequently: true })
 idleCtx.imageSmoothingQuality = 'high'
 const IDLE_GRACE_MS = 2500 // a frame that has only just loaded may not have drawn yet
 function idleEligible(n) {
   return freezeStatic.value && !micOn.value && n.type === 'effect' && !!n.params.slug && !nodeModulated(n)
 }
+// The readback stalls the compositor until the GPU has finished the node's frame, so at most one
+// runs per pass (a node that misses its turn is simply sampled on the next pass).
+let idleSampledPass = -1
 function idleSample(n, s, now) {
   if (!idleEligible(n)) {
     if (idle.phase(n.id) !== 'live') idle.wake(n.id, now)
     return
   }
-  if (!idle.wantSample(n.id, now)) return
+  if (idleSampledPass === passToggle || !idle.wantSample(n.id, now)) return
   const f = frameList.find((x) => x.nodeId === n.id)
   if (!f?.ready || now - f.born < IDLE_GRACE_MS) return
+  idleSampledPass = passToggle
   idleCtx.drawImage(s.out, 0, 0, idleCv.width, idleCv.height)
   idle.observe(n.id, hashPixels(idleCtx.getImageData(0, 0, idleCv.width, idleCv.height).data), now)
 }
@@ -4718,7 +4722,7 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
                 <label v-else>
                   <span class="pjack" :ref="(el) => bindJack(n.id, name, el)" :data-jack-node="n.id" :data-jack-param="name" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, name)" />
                   {{ spec.label ?? name }}
-                  <NumSlider :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :model-value="effectControls.get(n.id).values[name]" @update:model-value="setEffectParam(n.id, name, $event)" />
+                  <NumSlider :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :scale="spec.scale" :log-range="spec.logRange" :model-value="effectControls.get(n.id).values[name]" @update:model-value="setEffectParam(n.id, name, $event)" />
                 </label>
               </template>
 

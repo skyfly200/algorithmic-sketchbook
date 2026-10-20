@@ -10,6 +10,7 @@ import { inputParams } from '../lib/inputParams'
 // Single source of truth for mapping sources (audio/mouse/tilt/midi/leap/artnet).
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
 import { recordFps } from '../registry/localPerf'
+import { isLog, toPos, fromPos, tidy } from '../../sketches/_lib/paramScale.js'
 
 const props = defineProps({
   slug: { type: String, required: true },
@@ -53,9 +54,7 @@ function randomizeParams() {
     else if (spec.type === 'select' && Array.isArray(spec.options) && spec.options.length)
       setParam(name, spec.options[Math.floor(Math.random() * spec.options.length)])
     else if (typeof spec.min === 'number') {
-      const step = spec.step || (spec.max - spec.min) / 100 || 0.01
-      const v = spec.min + Math.round((Math.random() * (spec.max - spec.min)) / step) * step
-      setParam(name, +v.toFixed(6))
+      setParam(name, tidy(fromPos(Math.random(), spec), spec))
     }
   }
 }
@@ -126,6 +125,7 @@ function setParam(name, value) {
 // track reset to 0.
 function isBipolar(spec) { return typeof spec.min === 'number' && spec.min < 0 && spec.max > 0 }
 function setParamSnapped(name, spec, value) {
+  if (isLog(spec)) return setParam(name, tidy(fromPos(value, spec), spec)) // slider reports a 0..1 position
   if (isBipolar(spec) && Math.abs(value) < (spec.max - spec.min) * 0.05) value = 0
   setParam(name, value)
 }
@@ -475,10 +475,10 @@ onUnmounted(() => {
                 <template v-else>
                   <span class="param-label">{{ spec.label ?? name }}</span>
                   <v-slider
-                    :model-value="controls.values[name]"
-                    :min="spec.min"
-                    :max="spec.max"
-                    :step="spec.step ?? 0.01"
+                    :model-value="isLog(spec) ? toPos(controls.values[name], spec) : controls.values[name]"
+                    :min="isLog(spec) ? 0 : spec.min"
+                    :max="isLog(spec) ? 1 : spec.max"
+                    :step="isLog(spec) ? 0.001 : (spec.step ?? 0.01)"
                     density="compact"
                     hide-details
                     thumb-label
@@ -487,7 +487,9 @@ onUnmounted(() => {
                     :title="isBipolar(spec) ? 'double-click to recentre at 0' : undefined"
                     @update:model-value="(v) => setParamSnapped(name, spec, v)"
                     @dblclick="isBipolar(spec) && setParam(name, 0)"
-                  />
+                  >
+                    <template v-if="isLog(spec)" #thumb-label>{{ tidy(controls.values[name], spec) }}</template>
+                  </v-slider>
                 </template>
               </div>
             </v-expansion-panel-text>

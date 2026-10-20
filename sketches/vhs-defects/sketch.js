@@ -23,17 +23,18 @@ import { createGLPipe } from '../_lib/glpipe.js'
 
 const rt = createRuntime()
 const params = rt.params({
-  tracking: { value: +rt.random(0.25, 0.9).toFixed(2), min: 0, max: 2, step: 0.02, label: 'Tracking jitter' },
-  chroma: { value: +rt.random(0.4, 1.1).toFixed(2), min: 0, max: 2, step: 0.02, label: 'Chroma bleed' },
-  noise: { value: +rt.random(0.2, 0.7).toFixed(2), min: 0, max: 1.5, step: 0.02, label: 'Tape snow' },
-  dropouts: { value: 0.5, min: 0, max: 2, step: 0.05, label: 'Dropouts' },
-  scan: { value: 0.5, min: 0, max: 1, step: 0.02, label: 'Scanlines' },
-  roll: { value: 0.3, min: 0, max: 1.5, step: 0.02, label: 'Vertical hold' },
-  wear: { value: +rt.random(0.25, 0.75).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Desaturate / wear' },
+  tracking: { value: +rt.random(0.1, 0.35).toFixed(2), min: 0, max: 2, step: 0.02, label: 'Tracking jitter' },
+  chroma: { value: +rt.random(0.2, 0.6).toFixed(2), min: 0, max: 2, step: 0.02, label: 'Chroma bleed' },
+  // log taper: the useful snow is all in the first tenth of the range
+  noise: { value: +rt.random(0.03, 0.15).toFixed(3), min: 0, max: 1.5, step: 0.001, scale: 'log', label: 'Tape snow' },
+  dropouts: { value: 0.25, min: 0, max: 2, step: 0.05, label: 'Dropouts' },
+  scan: { value: 0.35, min: 0, max: 1, step: 0.02, label: 'Scanlines' },
+  roll: { value: 0.12, min: 0, max: 1.5, step: 0.02, label: 'Vertical hold' },
+  wear: { value: +rt.random(0.15, 0.45).toFixed(2), min: 0, max: 1, step: 0.02, label: 'Desaturate / wear' },
 })
 // Music: beats knock the tracking, loudness raises the snow.
-rt.mapInput('audio.pulse', 'tracking', 0.8)
-rt.mapInput('audio.volume', 'noise', 0.5)
+rt.mapInput('audio.pulse', 'tracking', 0.5)
+rt.mapInput('audio.volume', 'noise', 0.2) // a fraction of the log slider's travel
 
 const canvas = document.getElementById('canvas')
 
@@ -221,8 +222,8 @@ function frame(now) {
     pipe.run(pDown, { u_src: pipe.source }, low, (u) => u.f('u_lod', Math.max(0, Math.log2(pipe.width / tw))))
 
     const drops = []
-    const nDrop = Math.random() < params.dropouts * 0.5 ? Math.min(6, 1 + ((Math.random() * params.dropouts * 3) | 0)) : 0
-    for (let k = 0; k < nDrop; k++) drops.push([Math.random() * tw | 0, Math.random() * th | 0, tw * (0.05 + Math.random() * 0.25), 0.5 + Math.random() * 0.4])
+    const nDrop = Math.random() < params.dropouts * 0.12 ? Math.min(4, 1 + ((Math.random() * params.dropouts * 2) | 0)) : 0
+    for (let k = 0; k < nDrop; k++) drops.push([Math.random() * tw | 0, Math.random() * th | 0, tw * (0.03 + Math.random() * 0.15), 0.3 + Math.random() * 0.35])
     pipe.run(pTape, { u_low: low }, tape, (u) => {
       u.f('u_tracking', params.tracking)
       u.f('u_chroma', params.chroma)

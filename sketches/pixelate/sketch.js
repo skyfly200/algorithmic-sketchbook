@@ -9,7 +9,7 @@ const idx = (list, v) => Math.max(0, list.indexOf(v))
 const rt = createRuntime()
 const params = rt.params({
   shape: { value: 'Square', type: 'select', options: SHAPES, label: 'Pixel shape' },
-  size: { value: 14, min: 2, max: 96, step: 1, label: 'Pixel size' },
+  size: { value: 14, min: 2, max: 96, step: 1, scale: 'log', label: 'Pixel size' },
   aspect: { value: 1, min: 0.25, max: 4, step: 0.05, label: 'Pixel aspect (w/h)' },
   gap: { value: 0, min: 0, max: 0.8, step: 0.01, label: 'Gap' },
   levels: { value: 0, min: 0, max: 16, step: 1, label: 'Colour levels (0 = off)' },

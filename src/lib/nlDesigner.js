@@ -6,6 +6,7 @@
 // unit-tested; the Patch view wraps parseDesignerIntent() to plumb it into the
 // editable preview, and (optionally) an AI "smart mode" can replace it.
 
+import { fromPos } from '../../sketches/_lib/paramScale.js'
 // slug → extra spoken/written phrases that don't appear in the title or slug
 export const NL_SYN = {
   glow: ['bloom', 'halo', 'soft glow'], 'vhs-defects': ['vhs', 'tape', 'video tape'],
@@ -269,7 +270,7 @@ export function resolveEffectMods(schema, mods = {}, color = null) {
     const span = spec.max - spec.min || 1
     let applied = false
     for (const [cat, re] of Object.entries(NL_MOD_PARAMS)) {
-      if (mods[cat] && re.test(label)) { out.push([name, +(spec.min + span * (mods[cat] > 0 ? 0.8 : 0.2)).toFixed(4)]); applied = true; break }
+      if (mods[cat] && re.test(label)) { out.push([name, +fromPos(mods[cat] > 0 ? 0.8 : 0.2, spec).toFixed(4)]); applied = true; break }
     }
     if (!applied && color && /\bhue\b/.test(label)) out.push([name, spec.max <= 361 ? color.hue : +(color.hue / 360).toFixed(3)])
   }
