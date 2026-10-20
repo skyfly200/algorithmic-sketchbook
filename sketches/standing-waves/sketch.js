@@ -26,7 +26,7 @@ const params = rt.params({
   waves3: { value: 20, min: 0, max: 40, step: 1, label: 'Waves (mode 3)' },
   amplitude3: { value: 0, min: 0, max: 0.4, step: 0.01, label: 'Amplitude 3 (0 = off)' },
   radialNodes: { value: 3, min: 0, max: 9, step: 1, label: 'Radial nodes (membrane)' },
-  speed: { value: 1, min: 0.05, max: 4, step: 0.05, label: 'Vibration speed' },
+  speed: { value: 1, min: 0.05, max: 4, step: 0.05, scale: 'log', label: 'Vibration speed' },
   spin: { value: 0.15, min: -2, max: 2, step: 0.05, label: 'Spin' },
   outline: { value: 0, min: 0, max: 0.2, step: 0.005, label: 'Outline (0 = filled)' },
   hue: { value: 190, min: 0, max: 360, step: 1, label: 'Hue' },

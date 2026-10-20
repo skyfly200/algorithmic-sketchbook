@@ -10,7 +10,7 @@ const params = rt.params({
   gain: { value: 4, min: 0.5, max: 16, step: 0.1, label: 'Edge gain' },
   width: { value: 1.5, min: 0.5, max: 6, step: 0.1, label: 'Edge width' },
   glow: { value: 1.2, min: 0, max: 4, step: 0.05, label: 'Glow' },
-  glowRadius: { value: 10, min: 1, max: 40, step: 0.5, label: 'Glow radius' },
+  glowRadius: { value: 10, min: 1, max: 40, step: 0.5, scale: 'log', label: 'Glow radius' },
   boost: { value: 1.6, min: 0.5, max: 3, step: 0.05, label: 'Colour boost' },
   underlay: { value: 0.08, min: 0, max: 1, step: 0.01, label: 'Original underlay' },
   mirror: { value: false, type: 'bool', label: 'Mirror (selfie)' },

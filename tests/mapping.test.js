@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { shapeSource, applyMapping } from '../sketches/_lib/mapping.js'
+import { isLog, toPos, fromPos, tidy } from '../sketches/_lib/paramScale.js'
 
 const unit = { min: 0, max: 1 }
 
@@ -142,5 +143,48 @@ describe('sketch default mappings: amounts and timing', () => {
     // a vignette factor named t (u_vig * 0.85 * t) is not the clock
       .filter((line) => !/u_vig|u_curve \* 0\.4\)/.test(line))
     expect(hits).toEqual([])
+  })
+})
+
+describe('log-taper params (scale: "log")', () => {
+  const snow = { min: 0, max: 1.5, scale: 'log' }
+  const size = { min: 2, max: 96, scale: 'log' }
+
+  it('toPos / fromPos round-trip and hit the ends', () => {
+    for (const d of [snow, size]) {
+      expect(fromPos(0, d)).toBeCloseTo(d.min)
+      expect(fromPos(1, d)).toBeCloseTo(d.max)
+      for (const u of [0.1, 0.25, 0.5, 0.9]) expect(toPos(fromPos(u, d), d)).toBeCloseTo(u)
+    }
+  })
+
+  it('is a true log scale when min > 0 and puts the geometric mean at the centre', () => {
+    expect(fromPos(0.5, size)).toBeCloseTo(Math.sqrt(2 * 96))
+  })
+
+  it('leaves linear params alone', () => {
+    expect(isLog({ min: 0, max: 1 })).toBe(false)
+    expect(fromPos(0.25, { min: -1, max: 3 })).toBeCloseTo(0)
+  })
+
+  it('a centred mapping swings a log param both ways across its full travel', () => {
+    const m = { amount: 1, center: true }
+    const mid = fromPos(0.5, snow)
+    expect(applyMapping(mid, 0.5, m, snow)).toBeCloseTo(mid)
+    expect(applyMapping(mid, 0, m, snow)).toBeCloseTo(snow.min)
+    expect(applyMapping(mid, 1, m, snow)).toBeCloseTo(snow.max)
+    expect(applyMapping(mid, 0.25, m, snow)).toBeCloseTo(fromPos(0.25, snow))
+    expect(applyMapping(mid, 0.75, m, snow)).toBeCloseTo(fromPos(0.75, snow))
+  })
+
+  it('an additive mapping scales by slider travel and clamps', () => {
+    expect(applyMapping(snow.min, 1, { amount: 0.5 }, snow)).toBeCloseTo(fromPos(0.5, snow))
+    expect(applyMapping(snow.max, 1, { amount: 1 }, snow)).toBeCloseTo(snow.max)
+    expect(applyMapping(0.1, 1, { amount: -1 }, snow)).toBeCloseTo(snow.min)
+  })
+
+  it('tidy keeps 3 significant figures on log params and snaps linear ones to step', () => {
+    expect(tidy(0.123456, snow)).toBe(0.123)
+    expect(tidy(0.37, { min: 0, max: 1, step: 0.05 })).toBeCloseTo(0.35)
   })
 })
