@@ -1,0 +1,13 @@
+{
+  "title": "Tarantula",
+  "description": "A hairy tarantula stalks across moonlit ground on inverse-kinematics legs, freezing and twitching its palps on the beat.",
+  "tags": [
+    "spooky",
+    "creature",
+    "animation"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-10-20"
+}
