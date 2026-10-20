@@ -6,13 +6,19 @@
 // Bipolar sliders (min < 0 < max, e.g. -1..1) read as "centred on zero": they
 // draw a centre tick, snap to 0 within a small dead-zone as you drag, and
 // double-clicking the track recentres them to 0.
+//
+// `scale="log"` makes it a log taper (sketches/_lib/paramScale.js): the native
+// range runs over the 0..1 slider position and is converted to and from the value.
 import { ref, nextTick, computed } from 'vue'
+import { isLog, toPos, fromPos, tidy } from '../../sketches/_lib/paramScale.js'
 
 const props = defineProps({
   modelValue: { type: Number, default: 0 },
   min: { type: Number, default: 0 },
   max: { type: Number, default: 1 },
   step: { type: Number, default: 0.01 },
+  scale: { type: String, default: 'linear' },
+  logRange: { type: Number, default: undefined },
 })
 const emit = defineEmits(['update:modelValue', 'commit'])
 
@@ -23,6 +29,8 @@ const box = ref(null)
 // A slider is "bipolar" when zero sits inside its range — those get the
 // centre tick, zero-snap and double-click-to-recentre affordances.
 const bipolar = computed(() => props.min < 0 && props.max > 0)
+const spec = computed(() => ({ min: props.min, max: props.max, step: props.step, scale: props.scale, logRange: props.logRange }))
+const log = computed(() => isLog(spec.value))
 // Where 0 falls along the track, as a 0..100% offset, for the centre tick.
 const zeroPct = computed(() => ((0 - props.min) / (props.max - props.min)) * 100)
 
@@ -30,9 +38,9 @@ function decimals() {
   const s = String(props.step)
   return s.includes('.') ? s.split('.')[1].length : 0
 }
-function round(v) { return +Number(v).toFixed(decimals()) }
+function round(v) { return log.value ? tidy(Number(v), spec.value) : +Number(v).toFixed(decimals()) }
 function onRange(e) {
-  let v = +e.target.value
+  let v = log.value ? tidy(fromPos(+e.target.value, spec.value), spec.value) : +e.target.value
   // snap to 0 within a small dead-zone (5% of the range) so bipolar sliders
   // land cleanly on centre instead of ±0.01
   if (bipolar.value) {
@@ -69,10 +77,10 @@ function commit() {
         class="rng"
         :class="{ bip: bipolar }"
         type="range"
-        :min="min"
-        :max="max"
-        :step="step"
-        :value="modelValue"
+        :min="log ? 0 : min"
+        :max="log ? 1 : max"
+        :step="log ? 0.001 : step"
+        :value="log ? toPos(modelValue, spec) : modelValue"
         @input="onRange"
         @change="emit('commit')"
         @dblclick="recenter"

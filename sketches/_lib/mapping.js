@@ -3,6 +3,8 @@
 // input source is 0..1; a mapping is { source, param, amount (-1..1), smooth?,
 // gate?, curve?, center? }.
 
+import { isLog, toPos, fromPos } from './paramScale.js'
+
 function clamp(v, a, b) { return v < a ? a : v > b ? b : v }
 
 // Shape a raw 0..1 source value by the mapping's response options, before
@@ -24,7 +26,10 @@ export function shapeSource(v, m) {
 // swings both ways around its base — so the base can sit at the centre, which
 // is also right when the mapping is off (e.g. Patch loads sketches with
 // default mappings disabled).
+// On a log param (`scale: 'log'`, see ./paramScale.js) the amount is a fraction of
+// the slider's travel instead, so the mapping moves the knob the way a hand would.
 export function applyMapping(current, v, m, def) {
   const s = m.center ? v - 0.5 : v
+  if (isLog(def)) return fromPos(toPos(current, def) + s * m.amount, def)
   return clamp(current + s * m.amount * (def.max - def.min), def.min, def.max)
 }

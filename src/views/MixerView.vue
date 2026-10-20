@@ -23,6 +23,7 @@ import perfScores from '../registry/perf.json'
 import { slugCost } from '../lib/patch/graph.js'
 import { planStack, StackThrottle, TRANSPARENT_SKETCHES } from '../lib/stackScheduler.js'
 import { mixToPatch, handOffToPatch } from '../lib/mixToPatch'
+import { isLog, toPos, fromPos, tidy } from '../../sketches/_lib/paramScale.js'
 
 const router = useRouter()
 const store = useSketchStore()
@@ -571,15 +572,17 @@ onBeforeUnmount(() => {
             <template v-else>
               <span class="ctrl-label">{{ spec.label ?? name }}</span>
               <v-slider
-                :model-value="layerControls.get(layer).values[name]"
-                :min="spec.min"
-                :max="spec.max"
-                :step="spec.step ?? 0.01"
+                :model-value="isLog(spec) ? toPos(layerControls.get(layer).values[name], spec) : layerControls.get(layer).values[name]"
+                :min="isLog(spec) ? 0 : spec.min"
+                :max="isLog(spec) ? 1 : spec.max"
+                :step="isLog(spec) ? 0.001 : (spec.step ?? 0.01)"
                 density="compact"
                 hide-details
                 thumb-label
-                @update:model-value="(v) => setLayerParam(layer, name, v)"
-              />
+                @update:model-value="(v) => setLayerParam(layer, name, isLog(spec) ? tidy(fromPos(v, spec), spec) : v)"
+              >
+                <template v-if="isLog(spec)" #thumb-label>{{ tidy(layerControls.get(layer).values[name], spec) }}</template>
+              </v-slider>
             </template>
           </div>
 

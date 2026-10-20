@@ -49,6 +49,7 @@ import CurveEditor from '../components/CurveEditor.vue'
 import perfScores from '../registry/perf.json'
 import { createBeatDetector } from '../../sketches/_lib/beat.js'
 import { INPUT_SOURCES } from '../../sketches/_lib/runtime.js'
+import { isLog, toPos, fromPos, tidy } from '../../sketches/_lib/paramScale.js'
 import { BRIDGE_DOWNLOAD_URL, BRIDGE_DOCS_ROUTE, needsBridge } from '../lib/bridge.js'
 import { createMidiInput, createLeapInput, createArtnetInput, createRemoteInput } from '../../sketches/_lib/inputs.js'
 import { mediaLibrary, mediaState, addMediaFile, addRecordedClip, removeMedia, mediaById, startSharedCamera, stopSharedCamera, sharedCameraOn, sharedCameraStream, flipSharedCamera, startSharedScreen, stopSharedScreen, sharedScreenOn, sharedScreenStream } from '../stores/media.js'
@@ -1394,10 +1395,9 @@ function applyLinks(now) { // per deck; the caller clears liveParams once per ti
     if (tgt.type === 'effect' || tgt.type === 'filter') {
       const spec = effectControls.get(tgt.id)?.schema?.[l.param]
       if (spec && typeof spec.min === 'number') {
-        const span = spec.max - spec.min || 1
         const base = effectControls.get(tgt.id).values[l.param] // the knob value
-        const bn = (base - spec.min) / span
-        const live = spec.min + clamp(bn + v * depth, 0, 1) * span
+        // in slider position, so a log-taper param moves the way its knob does
+        const live = fromPos(toPos(base, spec) + v * depth, spec)
         // post the live value only — never write it back into the knob's value
         postToEffect(tgt.id, { type: 'sketch:set-param', name: l.param, value: live })
       }
@@ -1722,7 +1722,7 @@ function rollEffectParams(n) {
     if (spec.type === 'bool') values[name] = Math.random() < 0.5
     else if (spec.type === 'color') values[name] = randHex()
     else if (spec.type === 'select' && spec.options?.length) values[name] = spec.options[Math.floor(Math.random() * spec.options.length)]
-    else if (typeof spec.min === 'number') values[name] = stepQuant(spec.min, spec.max)
+    else if (typeof spec.min === 'number') values[name] = isLog(spec) ? tidy(fromPos(Math.random(), spec), spec) : stepQuant(spec.min, spec.max)
   }
   effectControls.set(n.id, { ...c, values })
   for (const [k, v] of Object.entries(values)) postToEffect(n.id, { type: 'sketch:set-param', name: k, value: v })
@@ -4713,7 +4713,7 @@ watch(() => D.allNodes().map((n) => (isFrameNode(n) ? n.id + ':' + effectSrc(n) 
                 <label v-else>
                   <span class="pjack" :ref="(el) => bindJack(n.id, name, el)" :data-jack-node="n.id" :data-jack-param="name" title="control input — drop an Input wire here" @pointerdown.stop @pointerup.stop="endLink(n, name)" />
                   {{ spec.label ?? name }}
-                  <NumSlider :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :model-value="effectControls.get(n.id).values[name]" @update:model-value="setEffectParam(n.id, name, $event)" />
+                  <NumSlider :min="spec.min" :max="spec.max" :step="spec.step ?? 0.01" :scale="spec.scale" :log-range="spec.logRange" :model-value="effectControls.get(n.id).values[name]" @update:model-value="setEffectParam(n.id, name, $event)" />
                 </label>
               </template>
 

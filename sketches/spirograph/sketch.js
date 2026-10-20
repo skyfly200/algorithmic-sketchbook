@@ -13,7 +13,7 @@ const params = rt.params({
   // never settles into one static rosette but keeps weaving new petals.
   gear: { value: 59, min: 8, max: 150, step: 1, label: 'Gear teeth (r)' },
   pen: { value: 0.8, min: 0.1, max: 1, step: 0.01, label: 'Pen offset' },
-  speed: { value: 1.5, min: 0.1, max: 12, step: 0.1, label: 'Draw speed' },
+  speed: { value: 1.5, min: 0.1, max: 12, step: 0.1, scale: 'log', label: 'Draw speed' },
   // Evolve continuously precesses the pen offset so successive laps never
   // trace exactly over each other — the figure is always changing.
   evolve: { value: 0.3, min: 0, max: 1, step: 0.02, label: 'Evolve' },
