@@ -8,8 +8,8 @@ const ctx = canvas.getContext('2d')
 
 const params = rt.params({
   speed: { value: 0.5, min: 0.02, max: 3, step: 0.001, label: 'Slither speed', scale: 'log' },
-  count: { value: 22, min: 4, max: 48, step: 1, label: 'Snakes' },
-  length: { value: 0.6, min: 0.2, max: 1, step: 0.01, label: 'Length' },
+  count: { value: 56, min: 4, max: 64, step: 1, label: 'Snakes' },
+  length: { value: 0.8, min: 0.2, max: 1, step: 0.01, label: 'Length' },
   writhe: { value: 0.55, min: 0, max: 1, step: 0.01, label: 'Writhing' },
   scales: { value: 0.7, min: 0, max: 1, step: 0.01, label: 'Scale detail' },
   tongues: { value: 0.6, min: 0, max: 1, step: 0.01, label: 'Tongue flicks' },
@@ -19,8 +19,9 @@ const params = rt.params({
 rt.mapInput('beat.pulse', 'writhe', 0.3)
 rt.mapInput('beat.pulse', 'tongues', 0.4)
 
-const MAX = 48
-const SEGS = 56
+const MAX = 64
+const SEGS = 64
+const CH = 8
 let W = 0
 let H = 0
 let cx = 0
@@ -35,7 +36,7 @@ function rnd(seed) {
 
 function makeSnake(i) {
   const a = rnd(i + 1) * Math.PI * 2
-  const r = rnd(i + 50) * 0.6
+  const r = Math.sqrt(rnd(i + 50)) * 0.95
   const s = {
     seed: i * 7.31,
     hx: Math.cos(a) * r,
@@ -57,39 +58,16 @@ function bakeFloor() {
   floor.width = W
   floor.height = H
   const g = floor.getContext('2d')
-  const R = Math.min(W, H) * 0.47
-  g.fillStyle = '#05060a'
-  g.fillRect(0, 0, W, H)
-  // stone rim
-  const rim = g.createRadialGradient(cx, cy, R * 0.9, cx, cy, R * 1.5)
-  rim.addColorStop(0, '#000')
-  rim.addColorStop(0.15, '#2a2a30')
-  rim.addColorStop(1, '#0a0a0e')
-  g.fillStyle = rim
-  g.fillRect(0, 0, W, H)
-  for (let i = 0; i < 240; i++) {
-    const a = rnd(i) * Math.PI * 2
-    const d = R * (1.02 + rnd(i + 400) * 0.5)
-    g.fillStyle = `rgba(${40 + rnd(i + 9) * 40},${40 + rnd(i + 9) * 40},${46 + rnd(i + 9) * 40},0.35)`
-    g.beginPath()
-    g.ellipse(cx + Math.cos(a) * d, cy + Math.sin(a) * d, R * 0.06 * (0.4 + rnd(i + 2)), R * 0.04 * (0.4 + rnd(i + 3)), a, 0, 7)
-    g.fill()
-  }
-  // dirt floor
+  const R = Math.max(W, H) * 0.7
   const dirt = g.createRadialGradient(cx, cy, 0, cx, cy, R)
-  dirt.addColorStop(0, '#1d1710')
-  dirt.addColorStop(0.8, '#120e0a')
-  dirt.addColorStop(1, '#000')
+  dirt.addColorStop(0, '#241b12')
+  dirt.addColorStop(1, '#0a0705')
   g.fillStyle = dirt
-  g.beginPath()
-  g.arc(cx, cy, R, 0, 7)
-  g.fill()
-  for (let i = 0; i < 300; i++) {
-    const a = rnd(i + 700) * Math.PI * 2
-    const d = Math.sqrt(rnd(i + 800)) * R * 0.95
+  g.fillRect(0, 0, W, H)
+  for (let i = 0; i < 400; i++) {
     g.fillStyle = `rgba(0,0,0,${0.15 + rnd(i) * 0.2})`
     g.beginPath()
-    g.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 2 + rnd(i + 1) * 6 * pr, 0, 7)
+    g.arc(rnd(i + 700) * W, rnd(i + 800) * H, 2 + rnd(i + 1) * 6 * pr, 0, 7)
     g.fill()
   }
 }
@@ -112,24 +90,25 @@ rt.onBeat(({ energy: e }) => {
 })
 
 function step(s, dt, t, R, wr, len) {
+  const ax = W * 0.55, ay = H * 0.55
   // head turns on layered sine noise; writhe scales how sharply
   const n = Math.sin(t * 1.3 + s.seed) + 0.6 * Math.sin(t * 2.9 + s.seed * 2.1)
   s.dir += n * (0.8 + wr * 3.2) * dt
-  const spd = R * (0.18 + 0.12 * Math.sin(t * 0.7 + s.seed * 3)) * (1 + rt.beat.state.pulse * 1.2)
+  const spd = R * 1.3 * (0.18 + 0.12 * Math.sin(t * 0.7 + s.seed * 3)) * (1 + rt.beat.state.pulse * 1.2)
   const d = Math.hypot(s.hx, s.hy)
-  if (d > 0.85) {
+  if (d > 1.0) {
     // herd back toward the middle, turning the short way
     const want = Math.atan2(-s.hy, -s.hx)
     let diff = want - s.dir
     diff = Math.atan2(Math.sin(diff), Math.cos(diff))
     s.dir += diff * Math.min(1, dt * 5)
   }
-  s.hx += Math.cos(s.dir) * spd * dt / R
-  s.hy += Math.sin(s.dir) * spd * dt / R
+  s.hx += Math.cos(s.dir) * spd * dt / ax
+  s.hy += Math.sin(s.dir) * spd * dt / ay
   const p = s.pts
-  p[0].x = s.hx * R
-  p[0].y = s.hy * R
-  const gap = (R * 1.7 * len) / SEGS
+  p[0].x = s.hx * ax
+  p[0].y = s.hy * ay
+  const gap = (R * 2.4 * len) / SEGS
   for (let k = 1; k < SEGS; k++) {
     const dx = p[k - 1].x - p[k].x
     const dy = p[k - 1].y - p[k].y
@@ -141,20 +120,20 @@ function step(s, dt, t, R, wr, len) {
   }
 }
 
-function drawSnake(s, t, R, sc, tg, hue, gl) {
+function drawSnake(s, t, R, sc, tg, hue, gl, k0, k1) {
   const p = s.pts
   const len = SEGS
-  const rad = R * 0.024 * s.girth
+  const rad = R * 0.034 * s.girth
   const h = hue + s.hueOff
   // soft shadow under body
   ctx.fillStyle = 'rgba(0,0,0,0.35)'
-  for (let k = len - 1; k >= 0; k -= 2) {
+  for (let k = k1 - 1; k >= k0; k -= 2) {
     const w = rad * taper(k / len) * 1.2
     ctx.beginPath()
     ctx.arc(cx + p[k].x + w * 0.4, cy + p[k].y + w * 0.5, w, 0, 7)
     ctx.fill()
   }
-  for (let k = len - 1; k >= 0; k--) {
+  for (let k = k1 - 1; k >= k0; k--) {
     const w = rad * taper(k / len)
     const x = cx + p[k].x
     const y = cy + p[k].y
@@ -188,6 +167,7 @@ function drawSnake(s, t, R, sc, tg, hue, gl) {
       }
     }
   }
+  if (k0 > 0) return
   // head
   const a = Math.atan2(p[0].y - p[2].y, p[0].x - p[2].x)
   const hx = cx + p[0].x
@@ -249,9 +229,17 @@ function frame(now) {
   // fewer scale details on slow hardware
   const sc = params.scales * Math.min(1, rt.detail)
   const tg = params.tongues
-  for (const i of order) drawSnake(snakes[i], t, R, sc, tg, params.hue, params.gloom)
+  // chunks of every snake go into one depth-sorted list so bodies weave over and under each other
+  const chunks = []
+  for (const i of order) {
+    for (let k = 0; k < SEGS; k += CH) {
+      chunks.push({ i, k, z: Math.sin(k * 0.17 + snakes[i].seed * 1.7 + t * 0.4) + (k === 0 ? 2 : 0) })
+    }
+  }
+  chunks.sort((a, b) => a.z - b.z)
+  for (const c of chunks) drawSnake(snakes[c.i], t, R, sc, tg, params.hue, params.gloom, c.k, Math.min(SEGS, c.k + CH + 1))
   // darkness closing in from the edges, and a cold pool of light in the middle
-  const v = ctx.createRadialGradient(cx, cy, R * 0.55, cx, cy, R * 1.0)
+  const v = ctx.createRadialGradient(cx, cy, R * 0.9, cx, cy, Math.max(W, H) * 0.75)
   v.addColorStop(0, 'rgba(0,0,0,0)')
   v.addColorStop(1, `rgba(0,0,0,${0.15 + params.gloom * 0.5})`)
   ctx.fillStyle = v
