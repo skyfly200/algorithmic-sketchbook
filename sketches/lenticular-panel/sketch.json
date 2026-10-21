@@ -1,0 +1,7 @@
+{
+  "title": "Lenticular panel",
+  "description": "Lenticular panel — a sheet of cylindrical lenses laid over the picture. Tilting it (Tilt X across the lenses, Tilt Y along them, both centred at 0.5) slides each lens's view of the image sideways and pulls the focus in and out, so the picture swims, splits into slivers and snaps sharp again at the sweet spot. Rotate the sheet to change the lens direction.",
+  "tags": ["filter", "lenticular", "lens", "focus", "distortion"],
+  "tech": ["webgl"],
+  "created": "2026-10-21"
+}

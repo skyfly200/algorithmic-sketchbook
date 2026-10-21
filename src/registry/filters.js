@@ -13,7 +13,7 @@ export const FILTER_SLUGS = [
   'kuwahara', 'emboss', 'sharpen', 'tilt-shift', 'gradient-map',
   'solarize', 'duotone', 'invert', 'vignette', 'crystallize', 'mosaic', 'pixelate', 'displace', 'ripple', 'pinch', 'spherize', 'polar-coordinates', 'glowing-edges',
   'median', 'oil-paint', 'difference-of-gaussians', 'directional-sharpen', 'detail-upscale',
-  'possessed-glitch', 'haunted-static',
+  'possessed-glitch', 'haunted-static', 'lenticular-panel',
 ]
 export const FILTER_SLUG_SET = new Set(FILTER_SLUGS)
 export function isFilterSketch(sketch) {
@@ -44,7 +44,7 @@ export const CHAINABLE_SLUGS = [
   'halftone', 'pointillism', 'crystallize', 'mosaic', 'pixelate', 'stained-glass',
   // geometry
   'pinch', 'spherize', 'ripple', 'polar-coordinates', 'twist', 'displace', 'warp',
-  'funhouse-mirror', 'kaleidoscope',
+  'funhouse-mirror', 'kaleidoscope', 'lenticular-panel',
   'median', 'oil-paint', 'difference-of-gaussians', 'directional-sharpen', 'detail-upscale',
   // with baked textures (LUT, dirt, damage overlay, noise tiles, drop / streak maps)
   'curves', 'camera-lens', 'polaroid', 'fog', 'nebula-gasses', 'light-leaves', 'shaky-film',
