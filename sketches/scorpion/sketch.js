@@ -292,27 +292,64 @@ function frame(now) {
   }
 
   // --- carapace and abdomen (drawn last so legs and tail tuck under) ---
-  for (let i = 0; i < 6; i++) {
-    const [ax, ay] = toWorld(-4 - i * 5.6, 0)
-    const w = 17 - i * 1.5
+  // closed smooth outline through local (x, y) points, mirrored about the spine
+  const CARAPACE = [[37, 0], [33, 5], [27, 8], [24, 14], [16, 18.5], [6, 19], [-2, 15], [-5, 9]]
+  const carapacePath = () => {
+    const full = [...CARAPACE.map(([x, y]) => toWorld(x, y)), toWorld(-6, 0), ...CARAPACE.slice(1).reverse().map(([x, y]) => toWorld(x, -y))]
+    ctx.beginPath()
+    const n = full.length
+    const mid = (i) => [(full[i][0] + full[(i + 1) % n][0]) / 2, (full[i][1] + full[(i + 1) % n][1]) / 2]
+    const m0 = mid(n - 1)
+    ctx.moveTo(m0[0], m0[1])
+    for (let i = 0; i < n; i++) { const m = mid(i); ctx.quadraticCurveTo(full[i][0], full[i][1], m[0], m[1]) }
+    ctx.closePath()
+  }
+  // seven tapering tergite plates, each a lens with a keel and a pale rim
+  for (let i = 0; i < 7; i++) {
+    const c = -3 - i * 5.4, w = 16.5 - i * 1.7, h = 3.2
+    const pts = [toWorld(c + h, 0), toWorld(c + h * 0.7, w * 0.8), toWorld(c, w), toWorld(c - h * 0.8, w * 0.8), toWorld(c - h, 0),
+      toWorld(c - h * 0.8, -w * 0.8), toWorld(c, -w), toWorld(c + h * 0.7, -w * 0.8)]
+    const plate = () => {
+      ctx.beginPath()
+      const n = pts.length
+      const mid = (j) => [(pts[j][0] + pts[(j + 1) % n][0]) / 2, (pts[j][1] + pts[(j + 1) % n][1]) / 2]
+      const m0 = mid(n - 1)
+      ctx.moveTo(m0[0], m0[1])
+      for (let j = 0; j < n; j++) { const m = mid(j); ctx.quadraticCurveTo(pts[j][0], pts[j][1], m[0], m[1]) }
+      ctx.closePath()
+    }
     ctx.globalCompositeOperation = 'lighter'
-    ctx.fillStyle = body(0.2); ellipse(ax, ay, (w + 3) * unit, (w * 0.9 + 3) * unit, heading); ctx.fill()
+    plate(); ctx.strokeStyle = body(0.18); ctx.lineWidth = 2.2 * unit; ctx.stroke()
     ctx.globalCompositeOperation = 'source-over'
-    ctx.fillStyle = dark; ellipse(ax, ay, w * unit, w * 0.9 * unit, heading); ctx.fill()
-    ctx.strokeStyle = body(0.55); ctx.lineWidth = 1.5 * unit
-    ctx.beginPath(); ctx.ellipse(ax, ay, w * unit, w * 0.9 * unit, heading, -2.2, 2.2); ctx.stroke()
+    plate(); ctx.fillStyle = dark; ctx.fill()
+    ctx.strokeStyle = body(0.7); ctx.lineWidth = Math.max(0.6, 0.55 * unit); ctx.stroke()
+    // keel and side pits
+    ctx.strokeStyle = body(0.4); ctx.beginPath()
+    const k0 = toWorld(c + h * 0.8, 0), k1 = toWorld(c - h * 0.8, 0)
+    ctx.moveTo(k0[0], k0[1]); ctx.lineTo(k1[0], k1[1])
+    for (const sd of [-1, 1]) { const q = toWorld(c, sd * w * 0.5), r = toWorld(c, sd * w * 0.7); ctx.moveTo(q[0], q[1]); ctx.lineTo(r[0], r[1]) }
+    ctx.stroke()
   }
   const [cx, cy] = toWorld(16, 0)
   ctx.globalCompositeOperation = 'lighter'
-  ctx.fillStyle = body(0.25); ellipse(cx, cy, 25 * unit, 20 * unit, heading); ctx.fill()
+  carapacePath(); ctx.strokeStyle = body(0.22); ctx.lineWidth = 2.6 * unit; ctx.stroke()
   ctx.globalCompositeOperation = 'source-over'
-  ctx.fillStyle = dark; ellipse(cx, cy, 22 * unit, 17 * unit, heading); ctx.fill()
-  ctx.strokeStyle = body(0.7); ctx.lineWidth = 1.6 * unit
-  ctx.beginPath(); ctx.ellipse(cx, cy, 22 * unit, 17 * unit, heading, 0, 6.2832); ctx.stroke()
+  carapacePath(); ctx.fillStyle = dark; ctx.fill()
+  ctx.strokeStyle = body(0.8); ctx.lineWidth = Math.max(0.6, 0.6 * unit); ctx.stroke()
+  // inner shield ridge lines and the central eye mound
+  ctx.strokeStyle = body(0.4); ctx.beginPath()
+  for (const sd of [-1, 1]) {
+    const q = [toWorld(30, sd * 3), toWorld(20, sd * 9), toWorld(8, sd * 12), toWorld(-2, sd * 8)]
+    ctx.moveTo(q[0][0], q[0][1]); ctx.bezierCurveTo(q[1][0], q[1][1], q[2][0], q[2][1], q[3][0], q[3][1])
+  }
+  ctx.stroke()
+  ctx.globalCompositeOperation = 'lighter'
+  ctx.fillStyle = body(0.35)
+  { const e = toWorld(24, 0); ellipse(e[0], e[1], 3.4 * unit, 2.6 * unit, heading); ctx.fill() }
   // granulated shell: baked speckle clipped to the carapace, plus a median ridge and plate lines
   {
     ctx.save()
-    ctx.beginPath(); ctx.ellipse(cx, cy, 22 * unit, 17 * unit, heading, 0, 6.2832); ctx.clip()
+    carapacePath(); ctx.clip()
     ctx.globalCompositeOperation = 'lighter'
     ctx.globalAlpha = 0.15 + 0.35 * Math.min(1, uv)
     ctx.translate(cx, cy); ctx.rotate(heading)
