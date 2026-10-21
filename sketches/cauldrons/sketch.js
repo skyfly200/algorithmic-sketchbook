@@ -1,4 +1,4 @@
-// Bubbling, glowing cauldrons float under a night sky, shedding rising bubbles.
+// One big bubbling, glowing cauldron floats under a night sky, shedding rising bubbles.
 import { createRuntime } from '../_lib/runtime.js'
 
 const rt = createRuntime()
@@ -6,8 +6,7 @@ const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
 const params = rt.params({
-  cauldrons: { value: 5, min: 1, max: 16, step: 1, label: 'Cauldrons' },
-  size: { value: 1, min: 0.4, max: 2.5, step: 0.05, scale: 'log', label: 'Size' },
+  size: { value: 3, min: 0.8, max: 6, step: 0.05, scale: 'log', label: 'Size' },
   bubbles: { value: 1, min: 0.1, max: 8, step: 0.1, scale: 'log', label: 'Bubbling' },
   glow: { value: 0.8, min: 0.05, max: 3, step: 0.05, scale: 'log', label: 'Brew glow' },
   hue: { value: 120, min: 0, max: 360, step: 1, label: 'Brew hue' },
@@ -20,9 +19,6 @@ function rng(seed) {
 }
 const R = rng(1337)
 const stars = Array.from({ length: 220 }, () => ({ x: R(), y: R() * 0.8, r: 0.4 + R() * 1.2, p: R() * 6.28 }))
-const potSeeds = Array.from({ length: 16 }, () => ({
-  x: 0.06 + R() * 0.88, y: 0.3 + R() * 0.6, bob: R() * 6.28, scale: 0.6 + R() * 0.7,
-}))
 
 let W = 1, H = 1
 let sky = null
@@ -114,17 +110,13 @@ function frame(now) {
 
   const u = Math.min(W, H) / 700 * params.size
   const hue = params.hue
-  const pots = Math.round(params.cauldrons)
   ctx.globalCompositeOperation = 'source-over'
-  for (let i = 0; i < pots; i++) {
-    const s = potSeeds[i]
-    const x = s.x * W
-    const y = s.y * H + Math.sin(t * 0.9 + s.bob) * 10 * u
-    const k = u * s.scale
-    drawCauldron(x, y, k, hue + i * 6, params.glow, t)
-    spawnBubbles(dt / Math.max(1, pots) * 2, x, y, k, hue + i * 6)
-  }
+  const x = W * 0.5
+  const y = H * 0.55 + Math.sin(t * 0.9) * 10 * u
+  drawCauldron(x, y, u, hue, params.glow, t)
+  spawnBubbles(dt * 2, x, y, u, hue)
 
+  // bubbles
   ctx.globalCompositeOperation = 'lighter'
   for (let i = bubbleList.length - 1; i >= 0; i--) {
     const b = bubbleList[i]
