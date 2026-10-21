@@ -235,6 +235,7 @@ function frame(now) {
       const p = legTarget(f, R, params.stride)
       f.x = f.fx = p.x
       f.y = f.fy = p.y
+      f.t = 1
     }
   }
 
@@ -249,9 +250,11 @@ function frame(now) {
   body.a += da * Math.min(1, dt * 6)
   const stalled = now - lastBeat < 300 // a beat makes it freeze for a moment
   const k = stalled ? 0.1 : 1
+  const ox = body.x, oy = body.y
   body.x += (px - body.x) * Math.min(1, dt * 4 * k)
   body.y += (py - body.y) * Math.min(1, dt * 4 * k)
   palpPhase += dt * (stalled ? 40 : 6)
+  const bvx = (body.x - ox) / Math.max(dt, 1e-3), bvy = (body.y - oy) / Math.max(dt, 1e-3)
 
   // gait: alternate leg groups step when their foot is out of range
   const stepDur = Math.max(0.06, 0.25 / Math.max(0.05, params.speed + 0.2))
@@ -268,12 +271,16 @@ function frame(now) {
       f.puff = Math.max(0, (f.puff || 0) - dt * 2.5)
       const off = Math.hypot(rest.x - f.x, rest.y - f.y)
       const partnerDown = feet.every((o) => o === f || o.grp === f.grp || o.t >= 1)
-      if (off > R * 1.1 && partnerDown) {
-        const lead = Math.hypot(body.x - px, body.y - py) < 1 ? 0 : 1
+      // A foot dragged far behind steps at once, even if the other group is mid-step,
+      // so no leg is left trailing when the body moves fast.
+      if (off > R * 2 || (off > R * 1.1 && partnerDown)) {
         f.fx = f.x
         f.fy = f.y
-        f.tx = rest.x + Math.cos(body.a) * R * 0.5 * lead
-        f.ty = rest.y + Math.sin(body.a) * R * 0.5 * lead
+        // land ahead of the rest spot by the distance the body will cover during the step
+        const ahead = Math.min(R * 1.5, Math.hypot(bvx, bvy) * stepDur * 0.5)
+        const bl = Math.hypot(bvx, bvy) || 1
+        f.tx = rest.x + (bvx / bl) * ahead
+        f.ty = rest.y + (bvy / bl) * ahead
         f.t = 0
       }
     }
