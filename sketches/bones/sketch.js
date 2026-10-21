@@ -13,6 +13,7 @@ const params = rt.params({
   size: { value: 0.1, min: 0.02, max: 0.5, step: 0.005, label: 'Bone size', scale: 'log' },
   glow: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Ghost glow' },
   fog: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Fog' },
+  skulls: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Skulls & spine' },
   rattle: { value: 0.5, min: 0, max: 1, step: 0.01, label: 'Beat rattle' },
 })
 rt.mapInput('beat.pulse', 'glow', 0.3)
@@ -44,6 +45,30 @@ function bakeBone(kind) {
       g.moveTo(x + 18, cy + 20)
       g.arc(x, cy + 20, 18, 0, Math.PI * 2)
     }
+  } else if (kind === 2) {
+    // skull: cranium, cheekbones and a jaw
+    const cx = SPR_W / 2
+    g.ellipse(cx, cy - 6, 40, 36, 0, 0, Math.PI * 2)
+    g.moveTo(cx - 24, cy + 20)
+    g.lineTo(cx - 24, cy + 40)
+    g.lineTo(cx + 24, cy + 40)
+    g.lineTo(cx + 24, cy + 20)
+    g.closePath()
+  } else if (kind === 3) {
+    // vertebra: body with a spinous process and two transverse wings
+    g.ellipse(SPR_W / 2, cy, 34, 24, 0, 0, Math.PI * 2)
+    g.moveTo(SPR_W / 2 + 30, cy - 8)
+    g.lineTo(SPR_W - 24, cy - 4)
+    g.lineTo(SPR_W - 24, cy + 6)
+    g.lineTo(SPR_W / 2 + 30, cy + 10)
+    g.moveTo(SPR_W / 2 - 14, cy - 20)
+    g.lineTo(SPR_W / 2 - 40, cy - 40)
+    g.lineTo(SPR_W / 2 - 22, cy - 40)
+    g.lineTo(SPR_W / 2 + 4, cy - 22)
+    g.moveTo(SPR_W / 2 - 14, cy + 20)
+    g.lineTo(SPR_W / 2 - 40, cy + 40)
+    g.lineTo(SPR_W / 2 - 22, cy + 40)
+    g.lineTo(SPR_W / 2 + 4, cy + 22)
   } else {
     // rib: a curved sliver
     g.moveTo(24, cy + 30)
@@ -52,12 +77,36 @@ function bakeBone(kind) {
   }
   g.fill()
   g.stroke()
+  // dark cut-outs: sockets and teeth on the skull, the spinal canal on a vertebra
+  g.fillStyle = 'rgba(8,10,14,0.92)'
+  g.beginPath()
+  if (kind === 2) {
+    g.ellipse(SPR_W / 2 - 16, cy - 6, 10, 12, 0, 0, Math.PI * 2)
+    g.moveTo(SPR_W / 2 + 26, cy - 6)
+    g.ellipse(SPR_W / 2 + 16, cy - 6, 10, 12, 0, 0, Math.PI * 2)
+    g.moveTo(SPR_W / 2, cy + 8)
+    g.lineTo(SPR_W / 2 - 5, cy + 20)
+    g.lineTo(SPR_W / 2 + 5, cy + 20)
+    g.closePath()
+  } else if (kind === 3) {
+    g.ellipse(SPR_W / 2 - 4, cy, 11, 9, 0, 0, Math.PI * 2)
+  }
+  g.fill()
+  if (kind === 2) {
+    g.strokeStyle = 'rgba(40,34,24,0.7)'
+    g.beginPath()
+    for (let x = SPR_W / 2 - 18; x <= SPR_W / 2 + 18; x += 9) {
+      g.moveTo(x, cy + 28)
+      g.lineTo(x, cy + 40)
+    }
+    g.stroke()
+  }
   // speckle so the bone isn't flat plastic
   g.fillStyle = 'rgba(60,50,30,0.25)'
   for (let i = 0; i < 40; i++) g.fillRect(30 + Math.random() * (SPR_W - 60), 20 + Math.random() * (SPR_H - 40), 2, 2)
   return c
 }
-const sprites = [bakeBone(0), bakeBone(1)]
+const sprites = [bakeBone(0), bakeBone(1), bakeBone(2), bakeBone(3)]
 
 let seed = 7
 const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646
@@ -65,6 +114,8 @@ const bones = Array.from({ length: MAX }, () => ({
   x: rand(), y: rand(), z: 0.3 + rand() * 0.7,
   a: rand() * 6.283, spin: (rand() - 0.5) * 2, sway: rand() * 6.283,
   kind: rand() < 0.65 ? 0 : 1,
+  // 0..1 rank: a bone turns into a skull or vertebra once `skulls` passes it
+  rare: rand(), skull: rand() < 0.4,
 }))
 
 let W = 1
@@ -117,7 +168,8 @@ function frame(now) {
       ctx.shadowColor = 'rgba(150,230,210,0.9)'
       ctx.shadowBlur = 30 * params.glow * rt.pixelRatio / Math.max(s, 0.05) * s
     }
-    ctx.drawImage(sprites[b.kind], -SPR_W / 2, -SPR_H / 2)
+    const kind = b.rare < params.skulls ? (b.skull ? 2 : 3) : b.kind
+    ctx.drawImage(sprites[kind], -SPR_W / 2, -SPR_H / 2)
     ctx.restore()
   }
   ctx.globalAlpha = 1
