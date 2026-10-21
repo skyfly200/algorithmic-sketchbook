@@ -1,0 +1,15 @@
+{
+  "title": "Cauldron",
+  "description": "One big glowing cauldron floats and bubbles under a night sky, shedding rising bubbles. Size, bubbling and brew glow are log sliders, brew hue is live, and a beat makes the brew flare.",
+  "tags": [
+    "spooky",
+    "cauldron",
+    "halloween",
+    "night",
+    "witches"
+  ],
+  "tech": [
+    "canvas2d"
+  ],
+  "created": "2026-10-21"
+}
