@@ -262,7 +262,13 @@ function frame(now) {
   for (const f of feet) {
     const rest = legTarget(f, R, params.stride)
     if (f.t < 1) {
-      f.t = Math.min(1, f.t + stepT)
+      // keep re-aiming at the moving rest spot, and hurry a lagging foot along
+      const bl = Math.hypot(bvx, bvy) || 1
+      const ahead = Math.min(R * 1.5, Math.hypot(bvx, bvy) * stepDur * 0.5)
+      f.tx = rest.x + (bvx / bl) * ahead
+      f.ty = rest.y + (bvy / bl) * ahead
+      const lag = Math.hypot(f.tx - f.x, f.ty - f.y) / (R * 2)
+      f.t = Math.min(1, f.t + stepT * (1 + Math.min(2, lag)))
       const e = f.t * f.t * (3 - 2 * f.t)
       f.x = f.fx + (f.tx - f.fx) * e
       f.y = f.fy + (f.ty - f.fy) * e
