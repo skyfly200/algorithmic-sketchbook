@@ -1,6 +1,6 @@
 {
   "title": "Scorpion",
-  "description": "A scorpion prowls across moonlit desert sand, glowing UV-blue-green like the real thing under a blacklight. Eight legs plant and step in alternating tetrapod gait, the claws snap, and the segmented tail sways and curls over its back, striking on every beat. Walk speed, size, tail curl and sway, claw snap, UV glow and moonlight are live and mappable.",
+  "description": "A scorpion prowls across moonlit desert sand, glowing UV-blue-green like the real thing under a blacklight. Eight legs plant and step in alternating tetrapod gait, the claws snap, and the segmented tail sways and curls over its back, striking on every beat. It cycles through prowling, hunting, idling, grooming, claw display, tail strikes and freezing, and its shell is granulated and bristled. Walk speed, size, bristles, restlessness, tail curl and sway, claw snap, UV glow and moonlight are live and mappable.",
   "tags": ["spooky", "scorpion", "creature", "desert", "audio-reactive"],
   "tech": ["canvas2d"],
   "created": "2026-10-20"
